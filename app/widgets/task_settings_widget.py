@@ -238,18 +238,18 @@ class TaskSettingsWidget(QFrame):
         # 禁用水平滚动条
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
+        # print(full_resource_config.resource_tasks)
         # Create draggable container for tasks
         scroll_content = DraggableContainer()
         scroll_content.setObjectName('draggableContainer')
-        # 减小最小宽度
-        scroll_content.setMinimumWidth(200)  # 设置较小的最小宽度
+        scroll_content.setMinimumWidth(200)
 
         scroll_content.layout.setContentsMargins(0, 0, 0, 0)
-        scroll_content.layout.installEventFilter(self)
+        # scroll_content.layout.installEventFilter(self) # This line seems potentially problematic or unnecessary, consider removing if you didn't add it for a specific reason.
         scroll_content.drag.connect(self.on_drag_tasks)
 
-        # 确保内容适应滚动区域宽度
-        scroll_content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
+        # Ensure content expands horizontally and CAN expand vertically beyond its initial hint
+        scroll_content.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.MinimumExpanding) # Changed Vertical Policy
 
         # Get task order information
         task_order_map = {task.task_name: idx for idx, task in enumerate(full_resource_config.resource_tasks)}
@@ -271,7 +271,7 @@ class TaskSettingsWidget(QFrame):
             # Create collapsible widget
             options_widget = CollapsibleWidget(task.task_name)
             options_widget.setObjectName("taskItem")
-            options_widget.setMinimumHeight(40)  # 设置最小高度
+            options_widget.setMinimumHeight(30)  # 设置最小高度
 
             is_task_selected = task.task_name in selected_order
             options_widget.checkbox.setChecked(is_task_selected)
@@ -300,9 +300,8 @@ class TaskSettingsWidget(QFrame):
                 no_options_label.setWordWrap(True)
                 options_widget.content_layout.addWidget(no_options_label)
 
-            scroll_content.layout.addWidget(options_widget)
+            scroll_content.addWidget(options_widget)
 
-        scroll_content.layout.addStretch()
         scroll_area.setWidget(scroll_content)
         self.settings_content_layout.addWidget(scroll_area)
 

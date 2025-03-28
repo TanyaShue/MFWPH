@@ -1,6 +1,6 @@
 from PySide6.QtCore import (
     QPropertyAnimation, QEasingCurve, Qt, QMimeData,
-    QParallelAnimationGroup, QPoint, Property, Signal
+    QParallelAnimationGroup, QPoint, Property, Signal, Slot
 )
 from PySide6.QtGui import QFont, QDrag, QPixmap, QMouseEvent, QCursor, QIcon
 from PySide6.QtWidgets import (
@@ -19,8 +19,7 @@ class CollapsibleWidget(QWidget):
         # 初始化旋转角度属性
         self._rotation_angle = 0
         self._init_ui()
-        self._setup_animations()
-
+        self._setup_animations()  # Call setup animations
     def _init_ui(self):
         # 主布局：标题栏 + 内容区
         self.main_layout = QVBoxLayout(self)
@@ -112,25 +111,34 @@ class CollapsibleWidget(QWidget):
                 transition: transform 0.3s ease;
             }
         """)
+
     def _setup_animations(self):
-        # 准备所有动画，但不启动
+        # Prepare all animations, setting initial start/end values
         self.height_animation = QPropertyAnimation(self.content_widget, b"maximumHeight")
-        self.height_animation.setEasingCurve(QEasingCurve.OutCubic)  # 更平滑的曲线
-        self.height_animation.setDuration(300)  # 稍微延长动画时间
+        self.height_animation.setEasingCurve(QEasingCurve.OutCubic)
+        self.height_animation.setDuration(300)
+
+        self.height_animation.setStartValue(0)
+        self.height_animation.setEndValue(100) # Placeholder, will be updated
 
         self.opacity_animation = QPropertyAnimation(self.opacity_effect, b"opacity")
         self.opacity_animation.setEasingCurve(QEasingCurve.InOutQuad)
         self.opacity_animation.setDuration(250)
+        self.opacity_animation.setStartValue(0.0)
+        self.opacity_animation.setEndValue(1.0)
 
         self.rotate_animation = QPropertyAnimation(self, b"rotation_angle")
-        self.rotate_animation.setEasingCurve(QEasingCurve.OutBack)  # 带有轻微反弹效果
+        self.rotate_animation.setEasingCurve(QEasingCurve.OutBack)
         self.rotate_animation.setDuration(300)
+        self.rotate_animation.setStartValue(0)
+        self.rotate_animation.setEndValue(180)
 
-        # 创建一个并行动画组
         self.animation_group = QParallelAnimationGroup()
         self.animation_group.addAnimation(self.height_animation)
         self.animation_group.addAnimation(self.opacity_animation)
         self.animation_group.addAnimation(self.rotate_animation)
+
+        self.animation_group.finished.connect(self._on_animation_finish)
 
     # 属性访问器，用于旋转箭头
     def _get_rotation_angle(self):
@@ -150,60 +158,61 @@ class CollapsibleWidget(QWidget):
     rotation_angle = Property(float, _get_rotation_angle, _set_rotation_angle)
 
     def toggle_content(self):
-        # 计算内容区展开时应有的高度
-        content_height = self.content_layout.sizeHint().height() + 10
+        content_margins = self.content_layout.contentsMargins()
+        content_height = self.content_layout.sizeHint().height() + content_margins.top() + content_margins.bottom()
+        if content_height < content_margins.top() + content_margins.bottom() + self.content_layout.spacing():
+             content_height = content_margins.top() + content_margins.bottom() + self.content_layout.spacing()
+
 
         if self.is_expanded:
-            # 折叠动画
-            self.height_animation.setStartValue(self.content_widget.height())
-            self.height_animation.setEndValue(0)
-            self.opacity_animation.setStartValue(1.0)
-            self.opacity_animation.setEndValue(0.0)
-            self.rotate_animation.setStartValue(180)
-            self.rotate_animation.setEndValue(0)
+            self.animation_group.setDirection(QPropertyAnimation.Backward)
         else:
-            # 展开动画
-            self.content_widget.setVisible(True)
-            self.height_animation.setStartValue(0)
+            self.content_widget.setVisible(True) # Make visible BEFORE animating height
             self.height_animation.setEndValue(content_height)
-            self.opacity_animation.setStartValue(0.0)
-            self.opacity_animation.setEndValue(1.0)
-            self.rotate_animation.setStartValue(0)
-            self.rotate_animation.setEndValue(180)
+            self.animation_group.setDirection(QPropertyAnimation.Forward)
 
-        # 启动动画组
-        self.animation_group.start()
+        # Toggle state
         self.is_expanded = not self.is_expanded
 
-    # --- 拖动实现代码 ---
+        if self.animation_group.state() == QPropertyAnimation.Running:
+            self.animation_group.stop()
+        self.animation_group.start()
+
+    @Slot() # Explicitly mark as a slot
+    def _on_animation_finish(self):
+        # This slot is called when the animation (either forward or backward) finishes
+        if not self.is_expanded: # If state is collapsed
+            self.content_widget.setVisible(False) # Hide AFTER collapse animation
+
     def drag_handle_mouse_press(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
             self.drag_start_position = event.pos()
+            # Change cursor to grabbing
+            self.drag_handle.setCursor(QCursor(Qt.ClosedHandCursor))
         event.accept()
 
     def drag_handle_mouse_move(self, event: QMouseEvent):
         if not (event.buttons() & Qt.LeftButton):
+            # Reset cursor if mouse button released elsewhere
+            self.drag_handle.setCursor(QCursor(Qt.OpenHandCursor))
             return
-        # 若移动距离未达到拖动的阈值，则不启动拖动
+        # If distance threshold not met
         if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance():
             return
 
-        # 启动拖动操作
+        # Start drag
         drag = QDrag(self)
         mimeData = QMimeData()
-        mimeData.setText(str(id(self)))
+        mimeData.setText(f"{self.title_text}_{id(self)}")
         drag.setMimeData(mimeData)
 
-        # 制作一个带阴影效果的widget快照
         pixmap = QPixmap(self.size())
         self.render(pixmap)
-
-        # 设置拖动图像和热点
         drag.setPixmap(pixmap)
-        drag.setHotSpot(QPoint(pixmap.width() // 2, 10))  # 调整拖动时的手柄位置
+        drag.setHotSpot(QPoint(pixmap.width() // 2, self.header_widget.height() // 2)) # Center hotspot on header
 
-        # 执行拖动，使用 QPixmap 代替不支持的 setOpacity
         drag.exec(Qt.MoveAction)
+        self.drag_handle.setCursor(QCursor(Qt.OpenHandCursor))
 
 
 class DraggableContainer(QWidget):
@@ -212,16 +221,124 @@ class DraggableContainer(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
-        self.layout.setSpacing(10)
+        self.layout.setSpacing(5) # Reduce spacing slightly if needed
+        self.layout.addStretch(1)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.setAcceptDrops(True)
 
-        # 创建一个蓝色提示线，初始时隐藏
         self.drop_indicator = QFrame(self)
-        self.drop_indicator.setStyleSheet("background-color: blue;")
-        self.drop_indicator.setFixedHeight(2)
+        self.drop_indicator.setStyleSheet("background-color: #4285F4; border: none;") # Use a theme color
+        self.drop_indicator.setFixedHeight(3) # Make slightly thicker
         self.drop_indicator.hide()
+    def dragMoveEvent(self, event):
+        event.acceptProposedAction()
+        pos = event.pos()
+        insert_index = -1 # Use -1 to indicate insertion before the stretch
 
+        widget_count = self.layout.count() -1 # Exclude stretch
+        for i in range(widget_count):
+            item = self.layout.itemAt(i)
+            widget = item.widget()
+            if not widget: # Should not happen with current setup, but good practice
+                continue
+
+            geo = widget.geometry()
+            drop_pos_relative = pos.y() - geo.y()
+
+            if drop_pos_relative < geo.height() / 2:
+                insert_index = i
+                break
+            else:
+                 insert_index = i + 1 # Tentatively set to insert after current widget
+        indicator_y = 0
+        if insert_index == 0:
+            # Insert at the very beginning
+             indicator_y = self.layout.contentsMargins().top() # Position at the top margin
+        elif insert_index > 0 and insert_index < widget_count:
+            # Insert between two widgets
+            target_widget = self.layout.itemAt(insert_index).widget()
+            if target_widget:
+                 indicator_y = target_widget.geometry().top() - (self.layout.spacing() // 2)
+        else: # insert_index is widget_count or -1 (meaning insert at the end, before stretch)
+             if widget_count > 0:
+                 last_widget = self.layout.itemAt(widget_count - 1).widget()
+                 if last_widget:
+                     indicator_y = last_widget.geometry().bottom() + (self.layout.spacing() // 2)
+             else: # No widgets exist yet
+                 indicator_y = self.layout.contentsMargins().top()
+
+
+        # Adjust indicator geometry, ensuring it's within bounds
+        indicator_height = self.drop_indicator.height()
+        indicator_y = max(0, min(indicator_y - indicator_height // 2, self.height() - indicator_height))
+
+        self.drop_indicator.setGeometry(0, indicator_y, self.width(), indicator_height)
+        self.drop_indicator.raise_()
+        self.drop_indicator.show()
+
+
+    def dropEvent(self, event):
+        self.drop_indicator.hide()
+        mime_text = event.mimeData().text()
+        try:
+            # Extract the ID part
+            dragged_id_str = mime_text.split('_')[-1]
+            widget_id = int(dragged_id_str)
+        except (IndexError, ValueError):
+            event.ignore()
+            return
+
+        dragged_widget = self.findChild(QWidget, f"taskItem_{widget_id}", Qt.FindDirectChildrenOnly) # More robust find
+        if not dragged_widget:
+             for i in range(self.layout.count() - 1): # Exclude stretch
+                 widget = self.layout.itemAt(i).widget()
+                 if widget and id(widget) == widget_id:
+                     dragged_widget = widget
+                     break
+
+        if dragged_widget:
+            pos = event.pos()
+            insert_index = -1 # Default to end (before stretch)
+
+            widget_count = self.layout.count() - 1 # Exclude stretch
+            for i in range(widget_count):
+                widget = self.layout.itemAt(i).widget()
+                if not widget: continue
+                geo = widget.geometry()
+                if pos.y() < geo.y() + geo.height() / 2:
+                    insert_index = i
+                    break
+            else: # If loop completes without break, insert at the end (before stretch)
+                 insert_index = widget_count
+
+            current_index = self.layout.indexOf(dragged_widget)
+            if current_index != insert_index and not (current_index == insert_index - 1 and insert_index == widget_count):
+                item = self.layout.takeAt(current_index)
+                if current_index < insert_index:
+                     insert_index -= 1
+                self.layout.insertItem(insert_index, item)
+
+
+            event.acceptProposedAction()
+            current_order = self.get_widget_order()
+            self.drag.emit([widget.title_text for widget in current_order]) # Emit signal AFTER drop
+        else:
+            event.ignore()
+
+
+    def get_widget_order(self):
+        widget_list = []
+        for i in range(self.layout.count() - 1): # Exclude stretch item
+            item = self.layout.itemAt(i)
+            widget = item.widget()
+            if isinstance(widget, CollapsibleWidget):
+                widget_list.append(widget)
+        return widget_list
+
+    def addWidget(self, widget):
+        if isinstance(widget, CollapsibleWidget):
+             widget.setObjectName(f"taskItem_{id(widget)}") # Set object name for lookup
+        self.layout.insertWidget(self.layout.count() - 1, widget)
     def dragEnterEvent(self, event):
         if event.mimeData().hasText():
             event.acceptProposedAction()
@@ -229,95 +346,7 @@ class DraggableContainer(QWidget):
         else:
             event.ignore()
 
-    def dragMoveEvent(self, event):
-        event.acceptProposedAction()
-        pos = event.pos()
-        # 默认插入到末尾
-        insert_index = self.layout.count()
-        for i in range(self.layout.count()):
-            item = self.layout.itemAt(i)
-            if not item.widget():
-                continue
-            widget = item.widget()
-            geo = widget.geometry()
-            # 如果鼠标位置在某个控件上半部分，则插入到该控件之前
-            if pos.y() < geo.y() + geo.height() / 2:
-                insert_index = i
-                break
-
-        # 根据插入位置计算提示线的 y 坐标
-        if insert_index == 0:
-            y = 0
-        elif insert_index >= self.layout.count():
-            # 从布局最后向前查找最后一个有效控件
-            last_widget = None
-            for i in range(self.layout.count() - 1, -1, -1):
-                w = self.layout.itemAt(i).widget()
-                if w is not None:
-                    last_widget = w
-                    break
-            if last_widget:
-                y = last_widget.geometry().bottom()
-            else:
-                y = self.height()  # 没有控件时使用容器高度作为默认值
-        else:
-            target_widget = self.layout.itemAt(insert_index).widget()
-            if target_widget:
-                y = target_widget.geometry().y()
-            else:
-                y = self.height()
-
-        # 调整提示线的位置和宽度
-        self.drop_indicator.setGeometry(0, y - 1, self.width(), 2)
-        self.drop_indicator.raise_()
-        self.drop_indicator.show()
 
     def dragLeaveEvent(self, event):
         self.drop_indicator.hide()
         event.accept()
-
-    def dropEvent(self, event):
-        # 隐藏提示线
-        self.drop_indicator.hide()
-        # 从 mimeData 中获取拖动控件的 id
-        widget_id = int(event.mimeData().text())
-        dragged_widget = None
-        for i in range(self.layout.count()):
-            item = self.layout.itemAt(i)
-            widget = item.widget()
-            if widget and id(widget) == widget_id:
-                dragged_widget = widget
-                break
-        if dragged_widget:
-            pos = event.pos()
-            # 根据拖动位置计算插入索引：如果 pos.y() 在某个控件上半部分，则插入到该控件前面
-            insert_index = self.layout.count()  # 默认插入到末尾
-            for i in range(self.layout.count()):
-                widget = self.layout.itemAt(i).widget()
-                if widget:
-                    geo = widget.geometry()
-                    if pos.y() < geo.y() + geo.height() / 2:
-                        insert_index = i
-                        break
-            # 移除再插入拖动控件
-            self.layout.removeWidget(dragged_widget)
-            self.layout.insertWidget(insert_index, dragged_widget)
-
-        event.acceptProposedAction()
-        # 获取并发送当前子组件的顺序列表
-        current_order = self.get_widget_order()
-        self.drag.emit([widget.title_text for widget in current_order])
-
-    # 获取当前容器中的子组件顺序
-    def get_widget_order(self):
-        """
-        返回当前容器中子组件的顺序列表。
-        列表中的每个元素是一个 CollapsibleWidget 对象。
-        """
-        widget_list = []
-        for i in range(self.layout.count()):
-            item = self.layout.itemAt(i)
-            if item and item.widget(): # 确保 item 和 widget 存在
-                widget = item.widget()
-                widget_list.append(widget)
-        return widget_list
