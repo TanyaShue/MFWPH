@@ -24,6 +24,7 @@ class AddResourceDialog(QDialog):
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("addResourceDialog")
         self.setWindowTitle("添加新资源")
         self.setMinimumWidth(500)
 
@@ -32,16 +33,19 @@ class AddResourceDialog(QDialog):
 
         # Resource URL field
         self.url_edit = QLineEdit()
+        self.url_edit.setObjectName("urlEdit")
         self.url_edit.setPlaceholderText("GitHub仓库链接或ZIP文件URL")
         form_layout.addRow("资源链接:", self.url_edit)
 
         # Resource name field
         self.name_edit = QLineEdit()
+        self.name_edit.setObjectName("nameEdit")
         self.name_edit.setPlaceholderText("自动提取 (可选)")
         form_layout.addRow("资源名称:", self.name_edit)
 
         # Description field
         self.desc_edit = QTextEdit()
+        self.desc_edit.setObjectName("descEdit")
         self.desc_edit.setPlaceholderText("资源描述 (可选)")
         self.desc_edit.setMaximumHeight(100)
         form_layout.addRow("描述:", self.desc_edit)
@@ -50,6 +54,7 @@ class AddResourceDialog(QDialog):
 
         # Add buttons
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
+        self.button_box.setObjectName("buttonBox")
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
         self.button_box.button(QDialogButtonBox.Ok).setEnabled(False)
@@ -244,6 +249,7 @@ class UpdateCheckThread(QThread):
 class DownloadPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.setObjectName("downloadPage")
         self.threads = []  # Store thread references
         self._init_ui()
         self.load_resources()
@@ -254,21 +260,22 @@ class DownloadPage(QWidget):
 
         # Page title
         title_label = QLabel("资源下载")
-        title_label.setFont(QFont("Arial", 18, QFont.Bold))
         title_label.setObjectName("pageTitle")
         layout.addWidget(title_label)
 
         # Main frame
         main_frame = QFrame()
+        main_frame.setObjectName("mainFrame")
         main_frame.setFrameShape(QFrame.StyledPanel)
         main_layout = QVBoxLayout(main_frame)
 
         # Top buttons row
         top_buttons_layout = QHBoxLayout()
+        top_buttons_layout.setObjectName("topButtonsLayout")
 
         # Add resource button
         self.add_resource_button = QPushButton("添加新资源")
-        self.add_resource_button.setMinimumHeight(36)
+        self.add_resource_button.setObjectName("add_resource_button")
         self.add_resource_button.setIcon(QIcon("assets/icons/add.png"))
         self.add_resource_button.clicked.connect(self.show_add_resource_dialog)
         top_buttons_layout.addWidget(self.add_resource_button)
@@ -277,9 +284,7 @@ class DownloadPage(QWidget):
 
         # Update all button
         self.update_all_button = QPushButton("一键检查所有更新")
-        self.update_all_button.setMinimumHeight(36)
-        self.update_all_button.setFixedWidth(200)
-        self.update_all_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
+        self.update_all_button.setObjectName("update_all_button")
         self.update_all_button.clicked.connect(self.check_all_updates)
         top_buttons_layout.addWidget(self.update_all_button)
 
@@ -288,11 +293,13 @@ class DownloadPage(QWidget):
         # Resources table
         main_layout.addWidget(self._create_section_label("可用资源"))
         self.resources_table = self._create_table(["资源名称", "版本", "作者", "描述", "操作"])
+        self.resources_table.setObjectName("resourcesTable")
         main_layout.addWidget(self.resources_table)
 
         # Download queue table
         main_layout.addWidget(self._create_section_label("下载队列"))
         self.queue_table = self._create_table(["资源名称", "进度", "速度", "操作"])
+        self.queue_table.setObjectName("queueTable")
         main_layout.addWidget(self.queue_table)
 
         layout.addWidget(main_frame)
@@ -300,13 +307,13 @@ class DownloadPage(QWidget):
     def _create_section_label(self, text):
         """Create a section label with consistent styling"""
         label = QLabel(text)
-        label.setFont(QFont("Arial", 14, QFont.Bold))
         label.setObjectName("sectionTitle")
         return label
 
     def _create_table(self, headers):
         """Create a table with consistent styling"""
         table = QTableWidget(0, len(headers))
+        table.setObjectName("baseTable")
         table.setHorizontalHeaderLabels(headers)
         table.horizontalHeader().setSectionResizeMode(QHeaderView.Stretch)
         table.verticalHeader().setVisible(False)
@@ -395,6 +402,7 @@ class DownloadPage(QWidget):
 
         # Add progress bar
         progress_bar = QProgressBar()
+        progress_bar.setObjectName("downloadProgressBar")
         progress_bar.setRange(0, 100)
         progress_bar.setValue(0)
         progress_bar.setTextVisible(True)
@@ -402,10 +410,12 @@ class DownloadPage(QWidget):
 
         # Add speed label
         speed_label = QLabel("等待中...")
+        speed_label.setObjectName("speedLabel")
         self.queue_table.setCellWidget(row, 2, speed_label)
 
         # Add cancel button
         cancel_btn = QPushButton("取消")
+        cancel_btn.setObjectName("cancelButton")
         cancel_btn.setFixedHeight(30)
         self.queue_table.setCellWidget(row, 3, cancel_btn)
 
@@ -618,8 +628,7 @@ class DownloadPage(QWidget):
 
             # Add check update button
             check_btn = QPushButton("检查更新")
-            check_btn.setFixedHeight(30)
-            check_btn.setStyleSheet("QPushButton { background-color: #f0f0f0; }")
+            check_btn.setObjectName("check_btn")
             check_btn.clicked.connect(lambda checked, r=resource: self.check_resource_update(r))
             self.resources_table.setCellWidget(i, 4, check_btn)
 
@@ -636,9 +645,10 @@ class DownloadPage(QWidget):
 
                 # Handle resource without update source
                 if not resource.resource_update_service:
-                    check_btn.setText("无更新源")
-                    check_btn.setEnabled(False)
-                    check_btn.setStyleSheet("background-color: #E0E0E0;")
+                    no_update_source_btn = QPushButton("无更新源")
+                    no_update_source_btn.setObjectName("no_update_source_btn")
+                    no_update_source_btn.setEnabled(False)
+                    self.resources_table.setCellWidget(row, 4, no_update_source_btn)
                     # Restore button after delay
                     QTimer.singleShot(3000, lambda: self._restore_check_button(resource.resource_name))
                     return
@@ -646,7 +656,8 @@ class DownloadPage(QWidget):
                 # Update button state for normal check
                 check_btn.setText("检查中...")
                 check_btn.setEnabled(False)
-                check_btn.setStyleSheet("background-color: #FFD700;")
+                check_btn.setObjectName("downloading_btn")
+                self.resources_table.setCellWidget(row, 4, check_btn)
                 break
 
         # Create check thread
@@ -673,8 +684,8 @@ class DownloadPage(QWidget):
 
                 if resource:
                     update_btn = QPushButton("更新")
+                    update_btn.setObjectName("update_btn")
                     update_btn.setFixedHeight(30)
-                    update_btn.setStyleSheet("background-color: #4CAF50; color: white;")
                     update_btn.clicked.connect(
                         lambda checked, r=resource, url=download_url, v=latest_version:
                         self.start_update(r, url, v)
@@ -688,11 +699,11 @@ class DownloadPage(QWidget):
             item = self.resources_table.item(row, 0)
             if item and item.text() == resource_name:
                 # Show already latest version
-                check_btn = QPushButton("已是最新版本")
-                check_btn.setFixedHeight(30)
-                check_btn.setEnabled(False)
-                check_btn.setStyleSheet("background-color: #E0E0E0;")
-                self.resources_table.setCellWidget(row, 4, check_btn)
+                latest_version_btn = QPushButton("已是最新版本")
+                latest_version_btn.setObjectName("latest_version_btn")
+                latest_version_btn.setFixedHeight(30)
+                latest_version_btn.setEnabled(False)
+                self.resources_table.setCellWidget(row, 4, latest_version_btn)
 
                 # Restore button after delay
                 QTimer.singleShot(3000, lambda: self._restore_check_button(resource_name))
@@ -713,8 +724,8 @@ class DownloadPage(QWidget):
 
                 if resource:
                     check_btn = QPushButton("检查更新")
+                    check_btn.setObjectName("check_btn")
                     check_btn.setFixedHeight(30)
-                    check_btn.setStyleSheet("QPushButton { background-color: #f0f0f0; }")
                     check_btn.clicked.connect(lambda checked, r=resource: self.check_resource_update(r))
                     self.resources_table.setCellWidget(row, 4, check_btn)
                 break
@@ -733,6 +744,7 @@ class DownloadPage(QWidget):
 
         # Add progress bar
         progress_bar = QProgressBar()
+        progress_bar.setObjectName("downloadProgressBar")
         progress_bar.setRange(0, 100)
         progress_bar.setValue(0)
         progress_bar.setTextVisible(True)
@@ -740,10 +752,12 @@ class DownloadPage(QWidget):
 
         # Add speed label
         speed_label = QLabel("等待中...")
+        speed_label.setObjectName("speedLabel")
         self.queue_table.setCellWidget(row, 2, speed_label)
 
         # Add cancel button
         cancel_btn = QPushButton("取消")
+        cancel_btn.setObjectName("cancelButton")
         cancel_btn.setFixedHeight(30)
         self.queue_table.setCellWidget(row, 3, cancel_btn)
 
@@ -752,9 +766,9 @@ class DownloadPage(QWidget):
             item = self.resources_table.item(i, 0)
             if item and item.text() == resource.resource_name:
                 downloading_btn = QPushButton("下载中...")
+                downloading_btn.setObjectName("downloading_btn")
                 downloading_btn.setFixedHeight(30)
                 downloading_btn.setEnabled(False)
-                downloading_btn.setStyleSheet("background-color: #FFD700;")
                 self.resources_table.setCellWidget(i, 4, downloading_btn)
                 break
 
@@ -777,7 +791,7 @@ class DownloadPage(QWidget):
         """Check updates for all resources"""
         self.update_all_button.setText("正在检查更新...")
         self.update_all_button.setEnabled(False)
-        self.update_all_button.setStyleSheet("background-color: #FFD700;")
+        self.update_all_button.setObjectName("downloading_btn")
 
         # Get all resources
         resources = global_config.get_all_resource_configs()
@@ -787,8 +801,8 @@ class DownloadPage(QWidget):
 
         if not resources_with_update:
             self.update_all_button.setText("一键检查所有更新")
+            self.update_all_button.setObjectName("update_all_button")
             self.update_all_button.setEnabled(True)
-            self.update_all_button.setStyleSheet("")
 
             # Show message box for no resources with update sources
             QMessageBox.information(self, "检查更新", "没有找到配置了更新源的资源")
@@ -810,12 +824,12 @@ class DownloadPage(QWidget):
         if updates_found == 0:
             # No updates found
             self.update_all_button.setText("一键检查所有更新")
-            self.update_all_button.setStyleSheet("")
+            self.update_all_button.setObjectName("update_all_button")
             QMessageBox.information(self, "检查更新", f"已检查 {total_checked} 个资源，所有资源均为最新版本。")
         else:
             # Updates found, change button to update all
             self.update_all_button.setText(f"一键更新 ({updates_found})")
-            self.update_all_button.setStyleSheet("background-color: #4CAF50; color: white;")
+            self.update_all_button.setObjectName("update_all_btn_updates_available")
             self.update_all_button.clicked.disconnect()
             self.update_all_button.clicked.connect(self._update_all_resources)
 

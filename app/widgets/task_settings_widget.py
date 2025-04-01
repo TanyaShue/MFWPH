@@ -338,9 +338,10 @@ class TaskSettingsWidget(QFrame):
                 self.device_config.device_name if hasattr(self.device_config, 'device_name') else "未知设备",
                 f"创建资源配置失败: {str(e)}"
             )
+
     def update_resource_status(self, resource_name, enabled):
-        """Update the resource status in the UI when it changes in ResourceWidget"""
-        # Only update if this is the currently selected resource
+        """更新 UI 中的资源状态"""
+
         if self.selected_resource_name == resource_name and self.status_dot and self.status_text:
             # Update status dot color
             self.status_dot.setStyleSheet(
@@ -441,7 +442,7 @@ class TaskSettingsWidget(QFrame):
                     widget.setPlaceholderText("输入文本...")
         else:
             widget = QLabel("不支持的选项类型")
-            widget.setStyleSheet("color: #ea4335; font-style: italic;")
+            widget.setObjectName("notImportOptionLabel")
             widget.setWordWrap(True)
 
         option_layout.addWidget(widget)

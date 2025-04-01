@@ -45,7 +45,7 @@ class CollapsibleWidget(QWidget):
         # 拖动句柄 - 设置为占据所有剩余空间
         self.drag_handle = QLabel("≡")  # 使用 ≡ 作为拖动图标
         self.drag_handle.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Expanding)
-        self.drag_handle.setStyleSheet("background: transparent; color: #80868b; font-size: 16px; padding-left: 5px;")
+        self.drag_handle.setObjectName("drag_handle")
         self.drag_handle.setCursor(QCursor(Qt.OpenHandCursor))
         self.drag_handle.setAlignment(Qt.AlignLeft | Qt.AlignVCenter)  # 左对齐并垂直居中
         self.drag_handle.mousePressEvent = self.drag_handle_mouse_press
@@ -86,32 +86,6 @@ class CollapsibleWidget(QWidget):
         self.toggle_button.clicked.connect(self.toggle_content)
         self.title_label.mousePressEvent = lambda event: self.toggle_content()
 
-        # 样式设置
-        self.setStyleSheet("""
-            #collapsibleHeader {
-                background-color: #f5f5f5;
-                border: 1px solid #ddd;
-                border-radius: 4px;
-                transition: background-color 0.3s;
-            }
-            #collapsibleHeader:hover {
-                background-color: #e9e9e9;
-            }
-            #collapsibleContent {
-                background-color: #fcfcfc;
-                border-left: 1px solid #ddd;
-                margin-left: 15px;
-                margin-right: 15px;  /* Add right margin to make content narrower */
-                border-bottom-left-radius: 4px;
-                border-bottom-right-radius: 4px;
-            }
-            #toggleButton {
-                border: none;
-                background: transparent;
-                transition: transform 0.3s ease;
-            }
-        """)
-
     def _setup_animations(self):
         # Prepare all animations, setting initial start/end values
         self.height_animation = QPropertyAnimation(self.content_widget, b"maximumHeight")
@@ -146,14 +120,7 @@ class CollapsibleWidget(QWidget):
 
     def _set_rotation_angle(self, angle):
         self._rotation_angle = angle
-        # 根据角度旋转按钮上的文本
-        self.toggle_button.setStyleSheet(f"""
-            #toggleButton {{
-                border: none;
-                background: transparent;
-                transform: rotate({angle}deg);
-            }}
-        """)
+
 
     rotation_angle = Property(float, _get_rotation_angle, _set_rotation_angle)
 
@@ -227,7 +194,7 @@ class DraggableContainer(QWidget):
         self.setAcceptDrops(True)
 
         self.drop_indicator = QFrame(self)
-        self.drop_indicator.setStyleSheet("background-color: #4285F4; border: none;") # Use a theme color
+        self.drop_indicator.setObjectName("drop_indicator")
         self.drop_indicator.setFixedHeight(3) # Make slightly thicker
         self.drop_indicator.hide()
     def dragMoveEvent(self, event):

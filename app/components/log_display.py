@@ -62,13 +62,8 @@ class LogDisplay(QFrame):
         self.log_text.setPlaceholderText("暂无日志记录")
         # Set line spacing and text formatting
         self.log_text.document().setDocumentMargin(8)
-        # Apply CSS styling for better spacing and wrapping
-        self.log_text.setStyleSheet("""
-            QTextEdit {
-                line-height: 150%;
-                padding: 5px;
-            }
-        """)
+        self.log_text.setObjectName("log_text")
+
 
         main_layout.addWidget(self.log_text)
 
