@@ -7,7 +7,6 @@ from enum import Enum
 from typing import Optional
 
 from PySide6.QtCore import QObject, Signal, Slot, QThreadPool, QRunnable, QMutexLocker, QRecursiveMutex, Qt
-from maa.agent_client import AgentClient
 from maa.controller import AdbController
 from maa.custom_action import CustomAction
 from maa.custom_recognition import CustomRecognition
@@ -159,12 +158,6 @@ class TaskExecutor(QObject):
             self.resource_path = resource_path
             self.resource = Resource()
             self.resource.post_bundle(resource_path).wait()
-            self.agent=AgentClient()
-            self.agent.bind(self.resource)
-            self.agent.create_socket("111-222-333-444")
-            self.agent.connect()
-            if not self.agent.connect():
-                print("连接失败")
             log_manager.log_device_info(self.device_name, f"资源初始化成功: {resource_path}")
             return True
         except Exception as e:
