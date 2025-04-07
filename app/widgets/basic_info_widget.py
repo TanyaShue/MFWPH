@@ -6,6 +6,7 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
     QFrame
 )
+from qasync import asyncSlot
 
 from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager
@@ -79,17 +80,11 @@ class BasicInfoWidget(QFrame):
             status_label = QLabel("状态:")
             status_label.setObjectName("infoLabel")
 
-            # 创建状态指示器和状态文本，但先不设置内容
-            self.status_indicator = QLabel()
-            self.status_indicator.setFixedSize(12, 12)
-            self.status_indicator.setObjectName("statusIndicator")
-
             self.status_value = QLabel()
             self.status_value.setObjectName("statusText")
             self.status_value.setWordWrap(True)  # 允许文本换行
 
             status_layout.addWidget(status_label)
-            status_layout.addWidget(self.status_indicator)
             status_layout.addWidget(self.status_value)
             status_layout.addStretch()
 
@@ -120,7 +115,7 @@ class BasicInfoWidget(QFrame):
 
         layout.addWidget(content_widget)
 
-
+        layout.addStretch()
         # Action buttons
         button_layout = QHBoxLayout()
         button_layout.setContentsMargins(0, 10, 0, 0)
@@ -135,13 +130,13 @@ class BasicInfoWidget(QFrame):
         settings_btn.setObjectName("secondaryButton")
         settings_btn.setIcon(QIcon("assets/icons/settings.svg"))
         settings_btn.clicked.connect(self.open_settings_dialog)
+        button_layout.addStretch()
 
         button_layout.addWidget(run_btn)
         button_layout.addWidget(settings_btn)
         button_layout.addStretch()
 
         layout.addLayout(button_layout)
-        layout.addStretch()
 
     def connect_signals(self):
         """连接信号到状态更新函数"""
@@ -195,7 +190,7 @@ class BasicInfoWidget(QFrame):
         if not self.device_config:
             return
 
-        # 1. 更新定时任务状态
+        # 1. 更新定时任务显示栏：仅显示下次定时执行时间
         schedule_text = ""
         next_run_time = None
 
@@ -205,13 +200,14 @@ class BasicInfoWidget(QFrame):
             device_tasks = [task for task in tasks_info if task['device_name'] == self.device_name]
 
             if device_tasks:
-                schedule_times = [task['time'] for task in device_tasks]
-                schedule_text = f"已启用，执行时间: {', '.join(schedule_times)}"
-
                 # 找出最近的下次执行时间
-                next_run_times = [datetime.strptime(task['next_run'], '%Y-%m-%d %H:%M:%S') for task in device_tasks]
+                next_run_times = [datetime.strptime(task['next_run'], '%Y-%m-%d %H:%M:%S') for task in device_tasks if
+                                  task.get('next_run')]
                 if next_run_times:
                     next_run_time = min(next_run_times)
+                    schedule_text = f"下次定时执行: {next_run_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                else:
+                    schedule_text = "已启用，但未设置具体执行时间"
             else:
                 schedule_text = "已启用，但未设置具体执行时间"
         else:
@@ -219,7 +215,7 @@ class BasicInfoWidget(QFrame):
 
         self.schedule_value.setText(schedule_text)
 
-        # 2. 更新任务运行状态
+        # 2. 更新任务运行状态（移除定时任务信息）
         status_text = ""
         is_active = task_manager.is_device_active(self.device_name)
 
@@ -231,16 +227,12 @@ class BasicInfoWidget(QFrame):
 
                 if status == "idle":
                     status_text = "空闲"
-                    self.status_indicator.setObjectName("statusIndicatorNormal")
                 elif status == "running":
                     status_text = "正在执行任务"
-                    self.status_indicator.setObjectName("statusIndicatorRunning")
                 elif status == "error":
                     status_text = f"错误: {device_state.error or '未知错误'}"
-                    self.status_indicator.setObjectName("statusIndicatorError")
                 elif status == "stopping":
                     status_text = "正在停止"
-                    self.status_indicator.setObjectName("statusIndicatorWarning")
 
                 # 添加当前任务信息
                 if device_state.current_task:
@@ -253,28 +245,22 @@ class BasicInfoWidget(QFrame):
                     status_text += f"，队列中还有 {queue_length} 个任务"
         else:
             status_text = "未运行"
-            self.status_indicator.setObjectName("statusIndicatorIdle")
-
-        # 添加下次执行时间信息
-        if next_run_time:
-            status_text += f"\n下次定时执行: {next_run_time.strftime('%Y-%m-%d %H:%M:%S')}"
 
         self.status_value.setText(status_text)
 
-        # 刷新样式
-        self.status_indicator.style().unpolish(self.status_indicator)
-        self.status_indicator.style().polish(self.status_indicator)
 
-    def run_device_tasks(self):
+    @asyncSlot()
+    async def run_device_tasks(self):
         """Run device tasks and log the action"""
         try:
             if self.device_config:
                 # Log the start of task execution
                 log_manager.log_device_info(self.device_name, f"开始执行设备任务")
                 # Execute tasks
-                task_manager.run_device_all_resource_task(self.device_config)
+                success = await task_manager.run_device_all_resource_task(self.device_config)
                 # Log completion
-                log_manager.log_device_info(self.device_name, f"设备任务执行完成")
+                if success:
+                    log_manager.log_device_info(self.device_name, f"设备任务执行完成")
                 # Update status display
                 self.update_status_display()
 
@@ -322,7 +308,6 @@ class BasicInfoWidget(QFrame):
                     # Check if it has the navigation method
                     if hasattr(main_window, 'show_previous_device_or_home'):
                         main_window.show_previous_device_or_home(original_device_name)
-
 
     def refresh_ui(self, device_config=None):
         """Refresh widget with updated device config"""

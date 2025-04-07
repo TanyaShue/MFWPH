@@ -3,3 +3,5 @@ pyside6
 pyinstaller
 requests
 psutil
+asyncify
+qasync

@@ -28,20 +28,13 @@ class TaskStatus(Enum):
     CANCELED = "canceled"  # 已取消
 
 
-class TaskPriority(Enum):
-    """任务优先级枚举"""
-    HIGH = 0  # 高优先级
-    NORMAL = 1  # 普通优先级
-    LOW = 2  # 低优先级
-
 
 class Task:
     """统一任务表示"""
 
-    def __init__(self, task_data: RunTimeConfigs, priority: TaskPriority = TaskPriority.NORMAL):
+    def __init__(self, task_data: RunTimeConfigs):
         self.id = f"task_{id(self)}"  # 唯一任务ID
         self.data = task_data  # 任务数据
-        self.priority = priority  # 任务优先级
         self.status = TaskStatus.PENDING  # 任务状态
         self.created_at = datetime.now()  # 创建时间
         self.started_at = None  # 开始时间
@@ -233,8 +226,6 @@ class TaskExecutor(QObject):
                     self.state.current_task = None
                 return
 
-            # Sort by priority and get the next task
-            self._task_queue.sort(key=lambda t: t.priority.value)
             task = self._task_queue.pop(0)
             self._running_task = task
             current_dir = os.getcwd()
@@ -282,8 +273,7 @@ class TaskExecutor(QObject):
                 self._running_task = None
                 self.process_next_task_signal.emit()
 
-    def submit_task(self, task_data: RunTimeConfigs | list[RunTimeConfigs],
-                    priority: TaskPriority = TaskPriority.NORMAL) -> str | list[str]:
+    def submit_task(self, task_data: RunTimeConfigs | list[RunTimeConfigs]) -> str | list[str]:
         """Submit task to execution queue
 
         If task_data is a single RunTimeConfigs, returns the task id (str),
@@ -299,18 +289,18 @@ class TaskExecutor(QObject):
             # If the input is a list, create tasks for each config
             if isinstance(task_data, list):
                 for data in task_data:
-                    task = Task(data, priority)
+                    task = Task(data)
                     self._task_queue.append(task)
                     self.task_queued.emit(task.id)
                     log_manager.log_device_info(self.device_name,
-                                                f"任务 {task.id} 已提交到设备 {self.device_name} 队列，优先级 {priority.name}")
+                                                f"任务 {task.id} 已提交到设备 {self.device_name} 队列")
                     task_ids.append(task.id)
             else:
-                task = Task(task_data, priority)
+                task = Task(task_data)
                 self._task_queue.append(task)
                 self.task_queued.emit(task.id)
                 log_manager.log_device_info(self.device_name,
-                                            f"任务 {task.id} 已提交到设备 {self.device_name} 队列，优先级 {priority.name}")
+                                            f"任务 {task.id} 已提交到设备 {self.device_name} 队列")
                 task_ids.append(task.id)
 
             # If no task is currently running, trigger task processing

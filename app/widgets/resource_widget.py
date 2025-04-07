@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QCheckBox
 )
+from qasync import asyncSlot
 
 from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager
@@ -170,16 +171,18 @@ class ResourceWidget(QFrame):
         """Emit signal to show settings for the selected resource"""
         self.resource_selected.emit(resource_name)
 
-    def run_all_resources(self):
+    @asyncSlot()
+    async def run_all_resources(self):
         """Run all enabled resources for this device"""
         try:
             if self.device_config:
                 # Log the start of task execution
                 log_manager.log_device_info(self.device_name, f"开始执行所有资源任务")
                 # Execute tasks
-                task_manager.run_device_all_resource_task(self.device_config)
-                # Log completion
-                log_manager.log_device_info(self.device_name, f"所有资源任务执行完成")
+                success =await task_manager.run_device_all_resource_task(self.device_config)
+                if success:
+                    # Log completion
+                    log_manager.log_device_info(self.device_name, f"所有资源任务执行完成")
         except Exception as e:
             # Log error
             log_manager.log_device_error(self.device_name, f"运行任务时出错: {str(e)}")

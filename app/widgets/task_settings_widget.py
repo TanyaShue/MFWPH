@@ -602,16 +602,16 @@ class TaskSettingsWidget(QFrame):
         placeholder_layout.setAlignment(Qt.AlignCenter)
         placeholder_layout.setSpacing(15)
 
-        placeholder_icon = QLabel()
-        placeholder_icon.setPixmap(QIcon("assets/icons/settings-gear.svg").pixmap(48, 48))
-        placeholder_icon.setAlignment(Qt.AlignCenter)
-
         initial_message = QLabel("请从左侧资源列表中选择一个资源进行设置")
         initial_message.setAlignment(Qt.AlignCenter)
         initial_message.setObjectName("placeholderText")
 
-        placeholder_layout.addWidget(placeholder_icon)
+        sub_message = QLabel("点击资源列表中的设置按钮来配置任务")
+        sub_message.setAlignment(Qt.AlignCenter)
+        sub_message.setObjectName("subText")
+
         placeholder_layout.addWidget(initial_message)
+        placeholder_layout.addWidget(sub_message)
 
         self.settings_content_layout.addWidget(placeholder_widget)
 

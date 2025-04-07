@@ -31,12 +31,6 @@ class DeviceInfoPage(QWidget):
         # Set widget style
         self.setObjectName("content_widget")
 
-        # Title
-        title_label = QLabel(f"设备: {self.device_name}")
-        title_label.setFont(QFont("Arial", 18, QFont.Bold))
-        title_label.setFixedHeight(40)  # Set fixed height for the title
-        main_layout.addWidget(title_label)
-
         # Main horizontal splitter (3 parts)
         self.horizontal_splitter = QSplitter(Qt.Horizontal)
         self.horizontal_splitter.setObjectName("horizontalSplitter")
@@ -86,10 +80,6 @@ class DeviceInfoPage(QWidget):
         self.horizontal_splitter.setSizes([400, 400, 300])
 
         main_layout.addWidget(self.horizontal_splitter)
-
-    def run_device_tasks(self):
-        """Run device tasks - delegate to basic info widget"""
-        self.basic_info_widget.run_device_tasks()
 
     def refresh_ui(self):
         """Refresh all UI components with updated device config"""

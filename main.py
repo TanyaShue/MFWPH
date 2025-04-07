@@ -1,8 +1,10 @@
+import asyncio
 import os
 import sys
 
 import psutil
 from PySide6.QtWidgets import QApplication
+from qasync import QEventLoop
 
 from app.models.logging.log_manager import log_manager
 
@@ -99,6 +101,8 @@ if __name__ == "__main__":
     setup_sys_redirection()
 
     app = QApplication(sys.argv)
+    loop = QEventLoop(app)
+    asyncio.set_event_loop(loop)
     app.aboutToQuit.connect(kill_processes)
 
     window = MainWindow()
