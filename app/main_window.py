@@ -11,7 +11,6 @@ from app.models.config.global_config import global_config
 from app.pages.device_info_page import DeviceInfoPage
 from app.pages.download_page import DownloadPage
 from app.pages.home_page import HomePage
-from app.pages.info_page import InfoPage
 from app.pages.settings_page import SettingsPage
 from app.utils.theme_manager import theme_manager
 from app.widgets.add_device_dialog import AddDeviceDialog
@@ -108,9 +107,6 @@ class MainWindow(QMainWindow):
         self.settings_btn = NavigationButton("设置", "assets/icons/settings.svg")
         sidebar_layout.addWidget(self.settings_btn)
 
-        # Add info button
-        self.info_btn = NavigationButton("软件信息", "assets/icons/info.svg")
-        sidebar_layout.addWidget(self.info_btn)
 
         main_layout.addWidget(sidebar)
 
@@ -125,7 +121,6 @@ class MainWindow(QMainWindow):
         self.pages = {
             "home": HomePage(),
             "download": DownloadPage(),
-            "info": InfoPage(),
             "settings": SettingsPage()
         }
 
@@ -137,7 +132,6 @@ class MainWindow(QMainWindow):
         self.home_btn.clicked.connect(lambda: self.show_page("home"))
         self.download_btn.clicked.connect(lambda: self.show_page("download"))
         self.settings_btn.clicked.connect(lambda: self.show_page("settings"))
-        self.info_btn.clicked.connect(lambda: self.show_page("info"))
 
         # Connect signals
         self.pages["home"].device_added.connect(self.refresh_device_list)
@@ -243,7 +237,6 @@ class MainWindow(QMainWindow):
         self.home_btn.setChecked(False)
         self.download_btn.setChecked(False)
         self.settings_btn.setChecked(False)
-        self.info_btn.setChecked(False)
 
         # Uncheck all device buttons except the selected one
         for i in range(self.device_buttons_layout.count()):
@@ -277,7 +270,6 @@ class MainWindow(QMainWindow):
         self.home_btn.setChecked(page_name == "home")
         self.download_btn.setChecked(page_name == "download")
         self.settings_btn.setChecked(page_name == "settings")
-        self.info_btn.setChecked(page_name == "info")
 
         # Uncheck all device buttons
         for i in range(self.device_buttons_layout.count()):
@@ -329,8 +321,7 @@ class MainWindow(QMainWindow):
                 self.download_btn.setChecked(True)
             elif self.current_page == "settings":
                 self.settings_btn.setChecked(True)
-            elif self.current_page == "info":
-                self.info_btn.setChecked(True)
+
 
     def refresh_device_list(self):
         """Refresh the device list in the navigation bar"""

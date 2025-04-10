@@ -103,7 +103,7 @@ def update_devices_json(version, build_time):
         return False
 
 def main():
-    parser = argparse.ArgumentParser(description='Build script for MAA_YYS')
+    parser = argparse.ArgumentParser(description='Build script for MFWPH')
     parser.add_argument('--version', '-v', help='Version number to use')
     parser.add_argument('--keep-files', '-k', action='store_true',
                         help='Keep intermediate files in dist directory')
@@ -115,11 +115,11 @@ def main():
     build_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     version = args.version or extract_version()
 
-    package_name = f"MAA_YYS_{version}"
+    package_name = f"MFWPH_{version}"
     zip_filename = f"{package_name}_{build_time}.zip"
     zip_filepath = os.path.join(dist_dir, zip_filename)
 
-    print(f"Starting build process for MAA_YYS version {version}")
+    print(f"Starting build process for MFWPH version {version}")
     os.makedirs(dist_dir, exist_ok=True)
 
     # Update version in devices.json
