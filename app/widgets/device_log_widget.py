@@ -36,18 +36,10 @@ class DeviceLogWidget(QFrame):
 
         layout.addLayout(header_layout)
 
-        # Log display
-        log_container = QFrame()
-        log_container.setObjectName("logContainer")
-        log_container.setFrameShape(QFrame.StyledPanel)
-
-        log_layout = QVBoxLayout(log_container)
-        log_layout.setContentsMargins(0, 0, 0, 0)
 
         # Create and configure log display with device logs
         self.log_display = LogDisplay()
         self.log_display.setObjectName("logDisplay")
         self.log_display.show_device_logs(self.device_name)
 
-        log_layout.addWidget(self.log_display)
-        layout.addWidget(log_container)
+        layout.addWidget(self.log_display)

@@ -41,7 +41,7 @@ class LogDisplay(QFrame):
         header_layout = QHBoxLayout()
 
         # Log display title
-        title_label = QLabel("系统日志")
+        title_label = QLabel("设备日志")
         title_label.setFont(QFont("Arial", 12, QFont.Bold))
         header_layout.addWidget(title_label)
 

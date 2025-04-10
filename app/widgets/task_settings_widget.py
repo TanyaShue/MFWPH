@@ -477,7 +477,7 @@ class TaskSettingsWidget(QFrame):
 
         # Log the change with more details
         status_text = "已选择" if is_selected else "已取消选择"
-        device_name = resource_config.device_name if hasattr(resource_config, 'device_name') else "未知设备"
+        device_name = self.device_config.device_name if hasattr(self.device_config, 'device_name') else "未知设备"
         resource_name = resource_config.resource_name if hasattr(resource_config, 'resource_name') else "未知资源"
         log_manager.log_device_info(device_name, f"资源 [{resource_name}] 的任务 [{task_name}] {status_text}")
 
