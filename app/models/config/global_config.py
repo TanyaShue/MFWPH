@@ -161,7 +161,7 @@ class GlobalConfig:
                     pipeline_override=pipeline_override
                 )
                 runtime_configs.append(runtime_config)
-
+        print(f"RuntimeConfigs: {runtime_configs}")
         # 通过 source_file（包含文件名）计算出资源加载目录
         resource_path = Path(resource_config.source_file).parent if resource_config.source_file else Path()
         return RunTimeConfigs(task_list=runtime_configs, resource_path=resource_path)
@@ -224,7 +224,6 @@ class GlobalConfig:
                     if resource.resource_name == resource_name:
                         device_resources.append(resource)
 
-        # 后续代码保持不变
         for option_name in task.option:
             option = next((opt for opt in resource_config.options if opt.name == option_name), None)
             if option is None:
@@ -250,7 +249,7 @@ class GlobalConfig:
                 merge_dicts(final_pipeline_override, choice_override)
 
             elif isinstance(option, BoolOption):
-                if option_value and option.pipeline_override:
+                if option.pipeline_override:
                     # 对于布尔选项，将值转换为实际布尔值
                     bool_value = self._parse_bool_value(option_value)
                     processed_override = self._replace_placeholder(option.pipeline_override, str(option_value),
