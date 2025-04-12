@@ -10,3 +10,5 @@
 /dist/
 /build/
 */.idea/
+__pycache__/
+MFWPH_*.spec

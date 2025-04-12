@@ -37,6 +37,7 @@ class AddDeviceDialog(QDialog):
         self.schedule_time_widgets = []    # 存储各个时间组件
         self.time_container_layouts = []   # 存储各行容器的布局
 
+        self.setObjectName("addDeviceDialog")
         self.setWindowTitle("编辑设备" if edit_mode else "添加设备")
         self.setMinimumSize(500, 500)
 
@@ -53,14 +54,17 @@ class AddDeviceDialog(QDialog):
 
         # 创建滚动区域
         scroll_area = QScrollArea()
+        scroll_area.setObjectName("addDeviceScrollArea")
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
         scroll_content = QWidget()
+        scroll_content.setObjectName("scroll_content")
         scroll_layout = QVBoxLayout(scroll_content)
 
         # 设备搜索区域
         search_group = QGroupBox("设备搜索")
+        search_group.setObjectName("addDeviceGroupBox")
         search_layout = QVBoxLayout()
         search_btn_layout = QHBoxLayout()
         self.search_btn = QPushButton("搜索设备")
@@ -83,6 +87,7 @@ class AddDeviceDialog(QDialog):
 
         # 设备基本信息
         info_group = QGroupBox("设备信息")
+        info_group.setObjectName("addDeviceGroupBox")
         form_layout = QFormLayout()
         self.name_edit = QLineEdit()
         self.adb_path_edit = QLineEdit()
@@ -101,6 +106,7 @@ class AddDeviceDialog(QDialog):
 
         # 高级设置
         advanced_group = QGroupBox("高级设置")
+        advanced_group.setObjectName("addDeviceGroupBox")
         advanced_layout = QVBoxLayout()
 
         # 定时启动区域
@@ -186,6 +192,7 @@ class AddDeviceDialog(QDialog):
         time_layout.setContentsMargins(0, 0, 0, 0)
         time_layout.setSpacing(2)
         time_edit = QTimeEdit()
+        time_edit.setObjectName("time_edit")
         time_edit.setTime(QTime(8, 0))
         del_btn = QPushButton()
         del_btn.setIcon(QIcon("assets/icons/delete.svg"))
