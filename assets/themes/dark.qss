@@ -8,11 +8,12 @@
 /* 主要背景色 */
 QMainWindow { background-color: #202124; }
 QWidget#settingsPage { background-color: #202124; }
-
+QWidget#addDeviceDialog { background-color: #202124; }
 /* 深色背景元素 */
 QWidget#content_widget, #titleContainer, #sidebar, #infoFrame, #resourceFrame, #taskSettingsFrame,
 #logFrame, #contentCard, #deviceCard, #summaryFrame, #taskItem, #logContainer, #logDisplay,
 QTabWidget::pane, QWidget#contentCard, QWidget#optionWidget, QListWidget#settingsCategories,
+QGroupBox#addDeviceGroupBox, QScrollArea#addDeviceScrollArea, #scroll_content,
 QFrame#featureItem, QComboBox, QLineEdit, QTextEdit, QSpinBox, QCheckBox::indicator, QTableWidget, QToolTip {
     background-color: #2d2e30;
 }
@@ -324,27 +325,31 @@ QPushButton:disabled {
     min-height: 40px;
 }
 QPushButton#add_resource_button {
-    min-height: 36px;
+    min-height: 30px;
 }
 QPushButton#update_all_button {
-    min-height: 36px;
-    fixed-width: 200px;
-    qproperty-sizePolicy: Fixed, Fixed;
+    min-height: 30px;
+    min-width: 200px;
+    max-width: 200px;
 }
 QPushButton#check_btn {
-    fixed-height: 30px;
+    min-height: 12px;
+    max-height: 12px;
 }
 QPushButton#update_btn {
-    fixed-height: 30px;
+    min-height: 12px;
+    max-height: 12px;
     background-color: #34a853;
     color: white;
 }
 QPushButton#downloading_btn {
-    fixed-height: 30px;
+    min-height: 12px;
+    max-height: 12px;
     background-color: #a37200;
 }
 QPushButton#no_update_source_btn, QPushButton#latest_version_btn, QPushButton#check_failed_btn {
-    fixed-height: 30px;
+    min-height: 12px;
+    max-height: 12px;
     background-color: #444746;
 }
 QPushButton#githubButton {
@@ -400,6 +405,26 @@ QComboBox QAbstractItemView, QLineEdit, QTextEdit {
 #optionComboBox QAbstractItemView { selection-color: #9aa0a6; }
 QLineEdit, QTextEdit {
     selection-background-color: #1a3966;
+}
+
+QTimeEdit#time_edit {
+    background-color: #35363a;
+    color: #e8eaed;
+}
+QTimeEdit#time_edit::up-button,
+QTimeEdit#time_edit::down-button {
+    background-color: #35363a;
+    border: 1px solid #5f6368;
+}
+QTimeEdit#time_edit::up-button {
+    image: url(assets/icons/white-up-arrow.svg);
+}
+QTimeEdit#time_edit::down-button {
+    image: url(assets/icons/white-down-arrow.svg);
+}
+QTimeEdit#time_edit::up-button:hover,
+QTimeEdit#time_edit::down-button:hover {
+    background-color: #3c4043;
 }
 
 /* 复选框样式 */
