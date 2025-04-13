@@ -38,14 +38,14 @@ class HomePage(QWidget):
         main_layout = QVBoxLayout(self)
 
         # Title
-        title_label = QLabel("设备管理系统")
+        title_label = QLabel("MFWPH")
         title_label.setFont(QFont("Arial", 18, QFont.Bold))
         title_label.setObjectName("pageTitle")
         title_label.setAlignment(Qt.AlignCenter)
         main_layout.addWidget(title_label)
 
         # Welcome message
-        welcome_label = QLabel("欢迎使用设备管理系统")
+        welcome_label = QLabel("欢迎使用MFWPH")
         welcome_label.setAlignment(Qt.AlignCenter)
         welcome_label.setFont(QFont("Arial", 14))
         main_layout.addWidget(welcome_label)

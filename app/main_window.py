@@ -20,7 +20,7 @@ from core.tasker_manager import task_manager
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowTitle("设备管理系统")
+        self.setWindowTitle("MFWPH")
         self.setMinimumSize(1200, 800)
 
         # Track the currently active button and page
