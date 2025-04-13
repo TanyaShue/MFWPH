@@ -284,6 +284,7 @@ class DownloadPage(QWidget):
 
         # Update all button
         self.update_all_button = QPushButton("一键检查所有更新")
+        self.update_all_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
         self.update_all_button.setObjectName("update_all_button")
         self.update_all_button.clicked.connect(self.check_all_updates)
         top_buttons_layout.addWidget(self.update_all_button)
