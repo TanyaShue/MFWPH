@@ -107,7 +107,6 @@ class MainWindow(QMainWindow):
         self.settings_btn = NavigationButton("设置", "assets/icons/settings.svg")
         sidebar_layout.addWidget(self.settings_btn)
 
-
         main_layout.addWidget(sidebar)
 
         # Create content widget
@@ -144,6 +143,11 @@ class MainWindow(QMainWindow):
 
         # Update scroll area visibility
         self.update_scroll_area_visibility()
+
+    # 添加一个方法作为HomePage的add_device的别名，以兼容现有代码
+    def add_device(self):
+        """添加设备的别名方法，调用open_add_device_dialog"""
+        self.open_add_device_dialog()
 
     def load_devices(self):
         """Load devices from config and create navigation buttons"""
@@ -247,8 +251,9 @@ class MainWindow(QMainWindow):
                 if button_id:
                     btn.setChecked(btn.property("device_btn_id") == button_id)
                 else:
-                    # Fallback for compatibility with existing code
-                    btn.setChecked(btn.toolTip() == device_name and i == 0)
+                    # 在没有button_id的情况下，尝试匹配设备名称
+                    # 由于NavigationButton使用了tooltip存储名称，我们需要检查tooltip
+                    btn.setChecked(btn.toolTip() == device_name)
 
         # Clear existing content
         self.clear_content()
@@ -296,7 +301,8 @@ class MainWindow(QMainWindow):
         if result:
             # Reload devices after adding a new one
             self.load_devices()
-            # Notify others that a device was added
+
+            # 通知主页面设备已添加，触发主页面设备卡片刷新
             self.pages["home"].device_added.emit()
 
         # Restore the current page/device selection after dialog closes
@@ -321,7 +327,6 @@ class MainWindow(QMainWindow):
                 self.download_btn.setChecked(True)
             elif self.current_page == "settings":
                 self.settings_btn.setChecked(True)
-
 
     def refresh_device_list(self):
         """Refresh the device list in the navigation bar"""

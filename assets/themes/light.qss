@@ -6,13 +6,11 @@
 }
 
 /* 主要背景色 */
-QMainWindow { background-color: #f5f5f5; }
-QWidget#settingsPage { background-color: #f5f5f5; }
-QWidget#addDeviceDialog { background-color: #f5f5f5; }
+QMainWindow  {background-color: #f5f5f5; }
 
 /* 白色背景元素 */
 QWidget#content_widget, #titleContainer, #sidebar, #infoFrame, #resourceFrame, #taskSettingsFrame,
-#logFrame, #contentCard, #deviceCard, #summaryFrame, #taskItem, #logContainer, #logDisplay,
+#logFrame, #contentCard,  #summaryFrame, #taskItem, #logContainer, #logDisplay,
 QTabWidget::pane, QWidget#contentCard, QWidget#optionWidget, QListWidget#settingsCategories,
 QGroupBox#addDeviceGroupBox, QScrollArea#addDeviceScrollArea, #scroll_content,
 QFrame#featureItem, QComboBox, QLineEdit, QTextEdit, QSpinBox, QCheckBox::indicator, QTableWidget, QToolTip {
@@ -38,7 +36,7 @@ QToolButton, #helpButton, QPushButton#githubButton, #deviceButtonsContainer {
 }
 
 /* 边框样式 */
-#titleContainer { border-bottom: 1px solid #e0e0e0; }
+
 #sidebar {
     border-right: 1px solid #e0e0e0;
     min-width: 60px;
@@ -59,7 +57,7 @@ QListWidget#settingsCategories {
 /* 圆角样式 */
 QFrame, #taskItem, #logDisplay, QComboBox, QLineEdit, QTextEdit, QSpinBox, QGroupBox { border-radius: 4px; }
 QFrame { border-radius: 6px; }
-#contentCard, #deviceCard, #taskItem, #logContainer, QComboBox, QLineEdit, QTextEdit, QSpinBox,
+#contentCard, #taskItem, #logContainer, QComboBox, QLineEdit, QTextEdit, QSpinBox,
 QGroupBox, QTabWidget::pane, QToolTip {
     border-radius: 4px;
 }
@@ -67,11 +65,14 @@ QGroupBox, QTabWidget::pane, QToolTip {
 #logDisplay { border-radius: 6px; }
 
 /* 边框与填充 */
-#infoFrame, #resourceFrame, #taskSettingsFrame, #logFrame, #contentCard, #deviceCard, #taskItem, #logContainer {
+#infoFrame, #resourceFrame, #taskSettingsFrame, #logFrame, #contentCard, #taskItem, #logContainer {
     border: 1px solid #e0e0e0;
     padding: 12px;
 }
 #deviceCard {
+    border: 1px solid #e0e0e0;
+    background-color: #ffffff;
+    border-radius: 10px;
     padding: 16px;
     margin: 8px;
 }
@@ -97,7 +98,6 @@ QGroupBox, QTabWidget::pane, QToolTip {
     font-weight: 500;
     margin-bottom: 15px;
 }
-#pageTitle { font-size: 20px; }
 #sectionTitle {
     color: #1a73e8;
     font-size: 14px;
@@ -663,3 +663,8 @@ QScrollArea#deviceScrollArea {
     margin: 3px 0;
 }
 
+#homePage,#titleContainer,#content_widget {
+    border-radius: 4px;
+    border: 1px solid transparent;
+    background-color: #ffffff; /* 如果背景色与父控件相同，边框显示可能不明显 */
+}
