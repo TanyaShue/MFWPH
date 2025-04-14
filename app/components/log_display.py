@@ -193,16 +193,3 @@ class LogDisplay(QFrame):
         """Handle device log update signal"""
         if self.current_device == device_name or self.current_device == "all":
             self.request_logs_update()
-
-    def on_close(self):
-        """关闭日志显示区域"""
-        # 找到HomePage并调整分割器
-        parent = self.parent()
-        while parent and not hasattr(parent, 'content_splitter'):
-            parent = parent.parent()
-
-        if parent and hasattr(parent, 'content_splitter'):
-            # 获取当前分割器大小
-            sizes = parent.content_splitter.sizes()
-            # 设置日志区域为0高度
-            parent.content_splitter.setSizes([sizes[0] + sizes[1], 0])

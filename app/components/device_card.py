@@ -1,4 +1,7 @@
-from PySide6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QPixmap, QIcon
+from PySide6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QGridLayout
+from qasync import asyncSlot
 
 from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager
@@ -7,113 +10,206 @@ from core.tasker_manager import task_manager
 
 
 class DeviceCard(QFrame):
-    def __init__(self, device_name, device_type, status, parent=None):
+    """Card widget to display device information with quick actions"""
+
+    def __init__(self, device_config, parent=None):
         super().__init__(parent)
-        self.device_name = device_name
+        self.device_config = device_config
+        self.parent_widget = parent
+
+        # Set frame style
         self.setObjectName("deviceCard")
         self.setFrameShape(QFrame.StyledPanel)
-        self.setFrameShadow(QFrame.Raised)
-        # 设置每张卡片的最大高度（例如 150 像素）
-        self.setMaximumHeight(150)
+        self.setMinimumSize(280, 180)
+        self.setMaximumSize(350, 220)
+        self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
+        self.init_ui()
+        self.update_status()
+
+        # Connect to task manager signals
+        task_manager.device_added.connect(self.on_device_changed)
+        task_manager.device_removed.connect(self.on_device_changed)
+
+    def init_ui(self):
         layout = QVBoxLayout(self)
+        layout.setContentsMargins(0, 0, 0, 0)
 
-        # 设备名称标签
-        name_label = QLabel(device_name)
+        # Header with device name and type
+        header_layout = QHBoxLayout()
+
+        # Device Icon based on type
+        icon_label = QLabel()
+        icon_path = "assets/icons/device.svg"  # Default icon
+
+        # Customize icon based on device type
+        if hasattr(self.device_config, 'adb_config') and self.device_config.adb_config:
+            device_type = self.device_config.adb_config.name
+            if "phone" in device_type.lower():
+                icon_path = "assets/icons/smartphone.svg"
+            elif "tablet" in device_type.lower():
+                icon_path = "assets/icons/tablet.svg"
+
+        icon_pixmap = QPixmap(icon_path)
+        if not icon_pixmap.isNull():
+            icon_label.setPixmap(icon_pixmap.scaled(24, 24, Qt.KeepAspectRatio, Qt.SmoothTransformation))
+
+        header_layout.addWidget(icon_label)
+
+        # Device name
+        name_label = QLabel(self.device_config.device_name)
         name_label.setObjectName("deviceCardName")
-        layout.addWidget(name_label)
+        header_layout.addWidget(name_label)
+        header_layout.addStretch()
 
-        # 设备类型标签
-        type_label = QLabel(device_type)
-        type_label.setObjectName("deviceCardType")
-        layout.addWidget(type_label)
+        layout.addLayout(header_layout)
 
-        # 状态指示布局
-        status_layout = QHBoxLayout()
-        status_indicator = QLabel()
-        status_indicator.setFixedSize(10, 10)
-        status_indicator.setObjectName("statusIndicator" + ("Normal" if status == "运行正常" else "Error"))
-        status_text = QLabel(status)
-        status_text.setObjectName("statusText")
+        # Separator line
+        separator = QFrame()
+        separator.setFrameShape(QFrame.HLine)
+        separator.setFrameShadow(QFrame.Sunken)
+        separator.setStyleSheet("background-color: #e0e0e0; height: 1px; margin: 1px 0;")
+        layout.addWidget(separator)
 
-        status_layout.addWidget(status_indicator)
-        status_layout.addWidget(status_text)
-        status_layout.addStretch()
-        layout.addLayout(status_layout)
+        # Device info
+        info_grid = QGridLayout()
+        info_grid.setSpacing(0)
+        info_grid.setContentsMargins(0, 0, 0, 0)
 
-        # 按钮布局
+        # Device type
+        type_key = QLabel("类型:")
+        type_key.setObjectName("infoLabel")
+        type_value = QLabel(self.device_config.adb_config.name if hasattr(self.device_config, 'adb_config') else "未知")
+        type_value.setObjectName("infoValue")
+        info_grid.addWidget(type_key, 0, 0)
+        info_grid.addWidget(type_value, 0, 1)
+
+        # Status
+        status_key = QLabel("状态:")
+        status_key.setObjectName("infoLabel")
+        self.status_value = QLabel("加载中...")
+        self.status_value.setObjectName("infoValue")
+        info_grid.addWidget(status_key, 1, 0)
+        info_grid.addWidget(self.status_value, 1, 1)
+
+        # Next scheduled run
+        schedule_key = QLabel("下次执行:")
+        schedule_key.setObjectName("infoLabel")
+        self.schedule_value = QLabel("未设置")
+        self.schedule_value.setObjectName("infoValue")
+        info_grid.addWidget(schedule_key, 2, 0)
+        info_grid.addWidget(self.schedule_value, 2, 1)
+
+        layout.addLayout(info_grid)
+        layout.addStretch()
+
+        # Action buttons
         button_layout = QHBoxLayout()
 
-        run_btn = QPushButton("运行")
-        run_btn.clicked.connect(self.run_device_tasks)
-        run_btn.setFixedHeight(28)
+        # Run button
+        self.run_btn = QPushButton("运行")
+        self.run_btn.setObjectName("primaryButton")
+        self.run_btn.setIcon(QIcon("assets/icons/play.svg"))
+        self.run_btn.clicked.connect(self.run_device_tasks)
 
-        logs_btn = QPushButton("日志")
-        logs_btn.clicked.connect(self.view_device_logs)
-        logs_btn.setFixedHeight(28)
+        # Settings button
+        settings_btn = QPushButton("设备详情")
+        settings_btn.setObjectName("secondaryButton")
+        settings_btn.setIcon(QIcon("assets/icons/settings.svg"))
+        settings_btn.clicked.connect(self.open_device_page)
 
-        settings_btn = QPushButton("设置")
-        settings_btn.setFixedHeight(28)
-        settings_btn.clicked.connect(self.open_settings_dialog)
-
-        button_layout.addWidget(run_btn)
-        button_layout.addWidget(logs_btn)
+        button_layout.addWidget(self.run_btn)
         button_layout.addWidget(settings_btn)
+
         layout.addLayout(button_layout)
 
-    def run_device_tasks(self):
-        """运行设备任务并记录日志"""
-        try:
-            device_config = global_config.get_device_config(self.device_name)
-            if device_config:
-                # 记录开始运行的日志
-                log_manager.log_device_info(self.device_name, f"开始执行设备任务")
-                # 执行任务
-                task_manager.run_device_all_resource_task(device_config)
-                # 记录完成日志
-                log_manager.log_device_info(self.device_name, f"设备任务执行完成")
-        except Exception as e:
-            # 记录错误日志
-            log_manager.log_device_error(self.device_name, f"运行任务时出错: {str(e)}")
+    def update_status(self):
+        """Update device status and scheduled task information"""
+        if not self.device_config:
+            return
 
-    def view_device_logs(self):
-        """查看设备日志"""
-        # 寻找主窗口中的日志显示组件
-        home_page = self.find_home_page()
-        if home_page:
-            # 显示该设备的日志
-            home_page.show_device_logs(self.device_name)
+        # Update status
+        is_active = task_manager.is_device_active(self.device_config.device_name)
 
-    def find_home_page(self):
-        """查找HomePage实例"""
-        # 向上遍历父级组件
-        parent_widget = self.parent()
-        while parent_widget:
-            # 向上遍历直到找到根窗口
-            if parent_widget.parent() is None:
-                # 找到根窗口后尝试获取HomePage实例
-                from app.pages.home_page import HomePage
-                for child in parent_widget.findChildren(HomePage):
-                    return child
-            parent_widget = parent_widget.parent()
-        return None
+        if is_active:
+            device_state = task_manager.get_executor_state(self.device_config.device_name)
+            if device_state:
+                status = device_state.status.value
 
-    def open_settings_dialog(self):
-        """打开设备设置对话框"""
-        # 获取当前设备的配置信息
-        device_config = global_config.get_device_config(self.device_name)
-        if device_config:
-            # 创建设置对话框并传入设备配置
-            dialog = AddDeviceDialog(global_config, self, edit_mode=True, device_config=device_config)
-            if dialog.exec_():
-                # 记录配置变更日志
-                log_manager.log_device_info(self.device_name, "设备配置已更新")
+                if status == "idle":
+                    self.status_value.setText("空闲")
+                    self.status_value.setStyleSheet("color: #4CAF50;")  # Green
+                elif status == "running":
+                    self.status_value.setText("运行中")
+                    self.status_value.setStyleSheet("color: #2196F3;")  # Blue
+                elif status == "error":
+                    self.status_value.setText("错误")
+                    self.status_value.setStyleSheet("color: #F44336;")  # Red
+                elif status == "stopping":
+                    self.status_value.setText("正在停止")
+                    self.status_value.setStyleSheet("color: #FF9800;")  # Orange
+        else:
+            self.status_value.setText("未运行")
+            self.status_value.setStyleSheet("color: #9E9E9E;")  # Gray
 
-                # 如果用户点击保存，更新设备信息
-                # 这里可能需要刷新卡片显示
-                parent_widget = self.parent()
-                while parent_widget and not hasattr(parent_widget, 'populate_device_cards'):
-                    parent_widget = parent_widget.parent()
+        # Update schedule information
+        if self.device_config.schedule_enabled:
+            tasks_info = task_manager.get_scheduled_tasks_info()
+            device_tasks = [task for task in tasks_info if task['device_name'] == self.device_config.device_name]
 
-                if parent_widget and hasattr(parent_widget, 'populate_device_cards'):
-                    parent_widget.populate_device_cards()
+            if device_tasks and any(task.get('next_run') for task in device_tasks):
+                next_times = sorted([task['next_run'] for task in device_tasks if task.get('next_run')])
+                if next_times:
+                    self.schedule_value.setText(next_times[0])
+                    self.schedule_value.setStyleSheet("color: #2196F3;")  # Blue
+                else:
+                    self.schedule_value.setText("未设置时间")
+                    self.schedule_value.setStyleSheet("")
+            else:
+                self.schedule_value.setText("已启用但未设置")
+                self.schedule_value.setStyleSheet("")
+        else:
+            self.schedule_value.setText("未启用")
+            self.schedule_value.setStyleSheet("color: #9E9E9E;")  # Gray
+
+    def on_device_changed(self, device_name):
+        """Handle device state changes"""
+        if device_name == self.device_config.device_name:
+            self.update_status()
+
+    @asyncSlot()
+    async def run_device_tasks(self):
+        """Run all tasks for this device"""
+        if self.device_config:
+            device_name = self.device_config.device_name
+            try:
+                # Log the start of task execution
+                log_manager.log_device_info(device_name, f"开始执行设备任务")
+
+                # Execute tasks
+                self.run_btn.setEnabled(False)
+                self.run_btn.setText("运行中...")
+
+                success = await task_manager.run_device_all_resource_task(self.device_config)
+
+                # Log completion
+                if success:
+                    log_manager.log_device_info(device_name, f"设备任务执行完成")
+
+                self.run_btn.setEnabled(True)
+                self.run_btn.setText("运行")
+
+                # Update status
+                self.update_status()
+            except Exception as e:
+                # Log error
+                log_manager.log_device_error(device_name, f"运行任务时出错: {str(e)}")
+                self.run_btn.setEnabled(True)
+                self.run_btn.setText("运行")
+
+    def open_device_page(self):
+        """Open detailed device page"""
+        # Find the main window
+        main_window = self.window()
+        if main_window and hasattr(main_window, 'show_device_page'):
+            main_window.show_device_page(self.device_config.device_name)

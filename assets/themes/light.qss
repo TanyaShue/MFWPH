@@ -643,3 +643,23 @@ QTextEdit#log_text {
     background-color: #4285F4;
     border: none;
 }
+/* 主页面特定样式 */
+QScrollArea#deviceScrollArea {
+    border: none;
+    background-color: transparent;
+    margin-top: 5px;  /* 减少顶部边距，使卡片更靠近顶部 */
+}
+
+/* 设备卡片容器 */
+#deviceButtonsContainer {
+    background-color: transparent;
+    padding: 0;
+}
+
+/* 让日志分割器更加细微 */
+#leftSplitter::handle {
+    height: 1px;
+    background-color: #e0e0e0;
+    margin: 3px 0;
+}
+
