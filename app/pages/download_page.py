@@ -351,17 +351,14 @@ class DownloadPage(QWidget):
             if not resource_config_path:
                 raise ValueError("更新包中未找到resource_config.json文件")
 
-            # Create backup
-            self._create_backup(resource)
-
             # Get original resource directory
             original_resource_dir = Path(resource.source_file).parent
 
-            # Replace with new version
-            if original_resource_dir.exists():
-                shutil.rmtree(original_resource_dir)
+            # Create selective backup of files that will be updated
+            self._create_selective_backup(resource, resource_dir, original_resource_dir)
 
-            shutil.copytree(resource_dir, original_resource_dir)
+            # Selectively update files instead of replacing entire directory
+            self._selective_update(resource_dir, original_resource_dir)
 
             # Reload resource config
             global_config.load_resource_config(str(original_resource_dir / "resource_config.json"))
@@ -375,27 +372,59 @@ class DownloadPage(QWidget):
             # Save all configs
             global_config.save_all_configs()
 
-    def _create_backup(self, resource):
-        """Create a backup of the resource before updating"""
+    def _create_selective_backup(self, resource, update_dir, original_dir):
+        """Create a backup of only the files that will be updated"""
         # Create history directory
         history_dir = Path("assets/history")
         history_dir.mkdir(parents=True, exist_ok=True)
-
-        # Get original resource directory
-        original_resource_dir = Path(resource.source_file).parent
 
         # Create timestamped backup filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         backup_filename = f"{resource.resource_name}_{resource.resource_version}_{timestamp}.zip"
         backup_path = history_dir / backup_filename
 
-        # Create backup ZIP
+        # Only backup files that exist in the update package
         with zipfile.ZipFile(backup_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for root, dirs, files in os.walk(original_resource_dir):
+            for root, dirs, files in os.walk(update_dir):
                 for file in files:
-                    file_path = os.path.join(root, file)
-                    arcname = os.path.relpath(file_path, start=original_resource_dir.parent)
-                    zipf.write(file_path, arcname)
+                    # Get relative path from update directory
+                    relative_path = os.path.relpath(os.path.join(root, file), update_dir)
+
+                    # Check if this file exists in original directory
+                    original_file_path = original_dir / relative_path
+                    if original_file_path.exists():
+                        # Add to backup with proper relative path
+                        arcname = f"{resource.resource_name}/{relative_path}"
+                        zipf.write(original_file_path, arcname)
+
+    def _selective_update(self, source_dir, target_dir):
+        """Selectively update files instead of replacing entire directory"""
+        # Ensure target directory exists
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        for root, dirs, files in os.walk(source_dir):
+            # Get relative path from source directory
+            relative_path = os.path.relpath(root, source_dir)
+
+            # Create directories in target if they don't exist
+            for dir_name in dirs:
+                dir_path = target_dir / relative_path / dir_name
+                dir_path.mkdir(parents=True, exist_ok=True)
+
+            # Copy/replace files
+            for file_name in files:
+                source_file = Path(root) / file_name
+                target_file = target_dir / relative_path / file_name
+
+                # Delete existing file if it exists
+                if target_file.exists():
+                    target_file.unlink()
+
+                # Create parent directory if it doesn't exist
+                target_file.parent.mkdir(parents=True, exist_ok=True)
+
+                # Copy the file
+                shutil.copy2(source_file, target_file)
 
     def load_resources(self):
         """Load resources from global config into the table"""
