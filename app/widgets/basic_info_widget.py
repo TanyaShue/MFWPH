@@ -306,6 +306,10 @@ class BasicInfoWidget(QFrame):
                 main_window = self.window()
                 if main_window:
                     # Check if it has the navigation method
+                    if hasattr(main_window, 'on_device_deleted'):
+                        main_window.on_device_deleted()
+                if main_window:
+                    # Check if it has the navigation method
                     if hasattr(main_window, 'show_previous_device_or_home'):
                         main_window.show_previous_device_or_home(original_device_name)
 

@@ -27,6 +27,7 @@ class DeviceSearchThread(QThread):
 
 
 class AddDeviceDialog(QDialog):
+    delete_devices_signal = Signal()
     def __init__(self, global_config, parent=None, edit_mode=False, device_config=None):
         super().__init__(parent)
         self.global_config = global_config
@@ -410,6 +411,7 @@ class AddDeviceDialog(QDialog):
                     if device.device_name != self.device_config.device_name
                 ]
                 self.global_config.save_all_configs()
+                self.delete_devices_signal.emit()
                 self.accept()
             except Exception as e:
                 print("删除设备时出错: ", e)

@@ -295,6 +295,9 @@ class MainWindow(QMainWindow):
         # Create and show the dialog
         dialog = AddDeviceDialog(global_config, self)
 
+        # Connect the delete_devices_signal to refresh the home page
+        dialog.delete_devices_signal.connect(self.on_device_deleted)
+
         # Execute the dialog
         result = dialog.exec_()
 
@@ -327,6 +330,15 @@ class MainWindow(QMainWindow):
                 self.download_btn.setChecked(True)
             elif self.current_page == "settings":
                 self.settings_btn.setChecked(True)
+
+    def on_device_deleted(self):
+        """Handle device deletion notification from AddDeviceDialog"""
+        # Refresh the device list in the sidebar
+        self.refresh_device_list()
+
+        # Notify the home page to refresh its device cards
+        if "home" in self.pages:
+            self.pages["home"].load_devices()
 
     def refresh_device_list(self):
         """Refresh the device list in the navigation bar"""

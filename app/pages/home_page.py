@@ -22,7 +22,6 @@ class HomePage(QFrame):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.global_config = global_config
         self.devices = []
         self.empty_state_label = None  # 添加空状态标签的引用
         self.setAttribute(Qt.WA_StyledBackground, True)
@@ -233,19 +232,21 @@ class HomePage(QFrame):
         # 清除当前卡片
         self.clear_device_cards()
 
+        # 重置 empty_state_label 引用，防止使用已删除的小部件
+        self.empty_state_label = None
+
         # 从配置获取设备
-        devices_config = self.global_config.get_app_config()
+        devices_config = global_config.get_app_config()
         if devices_config and hasattr(devices_config, 'devices'):
             self.devices = devices_config.devices
 
             # 检查是否有设备
             if not self.devices or len(self.devices) == 0:
-                # 没有设备，显示空状态提示
+                # 没有设备，创建并显示空状态提示
+                self.create_empty_state_label()
                 self.cards_layout.addWidget(self.empty_state_label, 0, 0, 1, 3)  # 横跨3列显示
-                self.empty_state_label.setVisible(True)
             else:
-                # 有设备，隐藏空状态提示
-                self.empty_state_label.setVisible(False)
+                # 有设备，隐藏空状态提示 - 不再需要引用旧的 empty_state_label
 
                 # 创建设备卡片
                 for idx, device in enumerate(self.devices):
@@ -259,7 +260,6 @@ class HomePage(QFrame):
             # 更新日志显示中的设备列表
             if hasattr(self.log_display, 'update_device_list'):
                 self.log_display.update_device_list(self.devices)
-
     def clear_device_cards(self):
         """从网格中清除所有设备卡"""
         # 从网格中删除所有小部件
