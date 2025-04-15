@@ -330,6 +330,9 @@ class DownloadPage(QWidget):
 
     def _install_update(self, resource, file_path):
         """Install an update for an existing resource"""
+        # 获取传入的新版本号（从start_update方法传递过来的version参数）
+        new_version = resource.temp_version if hasattr(resource, 'temp_version') else None
+
         with tempfile.TemporaryDirectory() as extract_dir:
             # Extract ZIP
             with zipfile.ZipFile(file_path, 'r') as zip_ref:
@@ -362,6 +365,15 @@ class DownloadPage(QWidget):
 
             # Reload resource config
             global_config.load_resource_config(str(original_resource_dir / "resource_config.json"))
+
+            # Make sure the version is updated in global_config
+            for r in global_config.get_all_resource_configs():
+                if r.resource_name == resource.resource_name and new_version:
+                    r.resource_version = new_version
+                    break
+
+            # Save all configs
+            global_config.save_all_configs()
 
     def _create_backup(self, resource):
         """Create a backup of the resource before updating"""
@@ -507,6 +519,7 @@ class DownloadPage(QWidget):
     def start_update(self, resource, url, version):
         """Start downloading an update"""
         # Create temp directory
+        resource.temp_version = version
         temp_dir = Path("assets/temp")
         temp_dir.mkdir(parents=True, exist_ok=True)
 

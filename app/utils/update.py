@@ -1,4 +1,4 @@
-from datetime import time
+import time
 
 import requests
 from PySide6.QtCore import QThread, Signal
@@ -240,9 +240,8 @@ class UpdateCheckThread(QThread):
             # 解析返回结果
             if "/releases/latest" in api_url:
                 # 处理releases数据
-                latest_version = result.get("tag_name", "").lstrip("v")
+                latest_version = result.get("tag_name", "")
                 download_assets = result.get("assets", [])
-
                 if download_assets:
                     # 获取第一个资源的下载URL
                     download_url = download_assets[0].get("browser_download_url", "")
