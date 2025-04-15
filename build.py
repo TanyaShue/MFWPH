@@ -102,11 +102,16 @@ def update_devices_json(version, build_time):
         print(f"Error updating devices.json: {str(e)}")
         return False
 
+
 def main():
     parser = argparse.ArgumentParser(description='Build script for MFWPH')
     parser.add_argument('--version', '-v', help='Version number to use')
     parser.add_argument('--keep-files', '-k', action='store_true',
                         help='Keep intermediate files in dist directory')
+    parser.add_argument('--zip-name', '-z', help='Custom name for the output zip file (without .zip extension)')
+    parser.add_argument('--exclude', '-e', nargs='+',
+                        default=['.git', '.github', '.gitignore', '.gitmodules', '.nicegui', '.idea'],
+                        help='List of file/folder names to exclude from the zip package')
     args = parser.parse_args()
 
     # Setup build parameters
@@ -115,11 +120,23 @@ def main():
     build_time = datetime.datetime.now().strftime("%Y%m%d_%H%M%S")
     version = args.version or extract_version()
 
-    package_name = f"MFWPH_{version}"
-    zip_filename = f"{package_name}_{build_time}.zip"
+    # Always use MFWPH for the executable name
+    exe_name = "MFWPH"
+
+    # Package name for the zip file (with version)
+    if args.zip_name:
+        package_name = args.zip_name
+        zip_filename = f"{package_name}.zip"
+    else:
+        package_name = f"MFWPH_{version}"
+        zip_filename = f"{package_name}_{build_time}.zip"
+
     zip_filepath = os.path.join(dist_dir, zip_filename)
 
     print(f"Starting build process for MFWPH version {version}")
+    print(f"Executable will be named: {exe_name}.exe")
+    print(f"Zip package will be named: {zip_filename}")
+
     os.makedirs(dist_dir, exist_ok=True)
 
     # Update version in devices.json
@@ -145,7 +162,7 @@ def main():
         'main.py',
         '--onefile',
         '--windowed',  # No console window will appear
-        f'--name={package_name}',
+        f'--name={exe_name}',
         '--clean',
         '--uac-admin',
         f'--add-data={maa_bin_path}{os.pathsep}maa/bin',
@@ -170,40 +187,47 @@ def main():
     else:
         print(f"Warning: assets folder not found at {assets_source_path}")
 
+    # Define exclusion list
+    excluded_items = args.exclude if args.exclude else ['.git', '.github', '.gitignore', '.gitmodules', '.nicegui',
+                                                        '.idea','config','debug']
+    print(f"Excluded items from zip: {', '.join(excluded_items)}")
+
     # Create zip package
     print(f"Creating zip file: {zip_filepath}")
     with zipfile.ZipFile(zip_filepath, 'w', zipfile.ZIP_DEFLATED) as zipf:
         files_added = 0
+        skipped_items = 0
+
+        # Walk through directory structure
         for root, dirs, files in os.walk(dist_dir):
+            # Modify dirs in-place to skip excluded directories
+            # This prevents os.walk from traversing into excluded directories
+            dirs[:] = [d for d in dirs if d not in excluded_items]
+
             for file in files:
+                # Skip the current zip file itself
                 if file == os.path.basename(zip_filepath):
                     continue
+
+                # Skip excluded files
+                if file in excluded_items:
+                    print(f"Skipping excluded file: {file}")
+                    skipped_items += 1
+                    continue
+
+                # Check if any parent directory is in excluded items
+                rel_dir = os.path.relpath(root, dist_dir)
+                if any(part in excluded_items for part in rel_dir.split(os.sep) if part):
+                    skipped_items += 1
+                    continue
+
+                # Add file to zip
                 file_path = os.path.join(root, file)
                 arcname = os.path.relpath(file_path, dist_dir)
                 zipf.write(file_path, arcname)
                 files_added += 1
-        print(f"Added {files_added} files to zip")
 
-    # Clean up if needed
-    if not args.keep_files:
-        print("Cleaning up dist directory (keeping only the zip file)")
-        for root, dirs, files in os.walk(dist_dir):
-            for file in files:
-                file_path = os.path.join(root, file)
-                if file == os.path.basename(zip_filepath) or file == "version.json":
-                    continue
-                try:
-                    os.remove(file_path)
-                except Exception as e:
-                    print(f"Error deleting file {file_path}: {str(e)}")
-
-            if root == dist_dir:
-                for dir in dirs:
-                    dir_path = os.path.join(root, dir)
-                    try:
-                        shutil.rmtree(dir_path)
-                    except Exception as e:
-                        print(f"Error deleting directory {dir_path}: {str(e)}")
+        print(f"Added {files_added} files to zip, skipped {skipped_items} excluded items")
 
     print(f"Build process completed successfully. Output: {zip_filepath}")
     print(f"::set-output name=zip_file::{zip_filepath}")

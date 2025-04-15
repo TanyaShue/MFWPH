@@ -46,11 +46,11 @@ jobs:
         run: |
           python build.py
           # Get the actual zip file name
-          $zipFile = Get-ChildItem -Path "./dist" -Filter "MAA_YYS_*.zip" | Select-Object -First 1
+          $zipFile = Get-ChildItem -Path "./dist" -Filter "MFWPH_*.zip" | Select-Object -First 1
           if ($zipFile) {
             # Copy to the expected name
-            Copy-Item -Path $zipFile.FullName -Destination "./dist/MAA_YYS_RELEASE.zip" -Force
-            Write-Host "Copied $($zipFile.Name) to MAA_YYS_RELEASE.zip"
+            Copy-Item -Path $zipFile.FullName -Destination "./dist/MFWPH_RELEASE.zip" -Force
+            Write-Host "Copied $($zipFile.Name) to MFWPH_RELEASE.zip"
             # Set output for later steps
             echo "ORIGINAL_ZIP_NAME=$($zipFile.Name)" >> $env:GITHUB_ENV
           } else {
@@ -64,7 +64,7 @@ jobs:
           Write-Host "Contents of dist directory:"
           Get-ChildItem -Path ./dist -Recurse | Select-Object FullName
           Write-Host "Zip file details:"
-          Get-Item -Path ./dist/MAA_YYS_RELEASE.zip | Select-Object FullName, Length, LastWriteTime
+          Get-Item -Path ./dist/MFWPH_RELEASE.zip | Select-Object FullName, Length, LastWriteTime
 
       - name: Create GitHub Release
         id: create_release
@@ -76,6 +76,6 @@ jobs:
           name: Release ${{ github.ref_name }}
           draft: false
           prerelease: false
-          artifacts: ${{ github.workspace }}/dist/MAA_YYS_RELEASE.zip
+          artifacts: ${{ github.workspace }}/dist/MFWPH_RELEASE.zip
           artifactContentType: application/zip
           artifactErrorsFailBuild: true
