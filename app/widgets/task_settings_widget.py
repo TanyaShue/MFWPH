@@ -89,6 +89,7 @@ class TaskSettingsWidget(QFrame):
 
         # 创建内容堆栈小部件来容纳基本设置和高级设置
         self.content_stack = QStackedWidget()
+        self.content_stack.setFixedHeight(500)
         self.content_stack.setObjectName("contentStack")
 
         # 创建基本设置页面
@@ -211,11 +212,6 @@ class TaskSettingsWidget(QFrame):
             self.status_text.setText(f"{'已启用' if enabled else '已禁用'}")
             self.status_text.setStyleSheet(f"color: {'#34a853' if enabled else '#ea4335'}; font-size: 12px;")
 
-            # 记录日志
-            log_manager.log_device_info(
-                self.device_config.device_name if hasattr(self.device_config, 'device_name') else "未知设备",
-                f"资源 {resource_name} 状态已在任务设置中更新"
-            )
 
     def _clear_layout(self, layout):
         """Clear all widgets from a layout"""

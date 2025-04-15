@@ -126,7 +126,7 @@ class AdvancedSettingsPage(QFrame):
     def _setup_timing_settings(self, parent_widget):
         """设置定时设置面板内容，改为仅显示一个标签"""
         # 取消所有原有控件，使用一个标签来代替
-        label = QLabel("定时设置内容")
+        label = QLabel("定时设置内容--这个人很懒,还没写")
         label.setObjectName("advancedLabel")
         label.setAlignment(Qt.AlignCenter)
         parent_widget.content_layout.addWidget(label)
@@ -134,7 +134,7 @@ class AdvancedSettingsPage(QFrame):
     def _setup_notification_settings(self, parent_widget):
         """设置通知设置面板内容，改为仅显示一个标签"""
         # 取消所有原有控件，使用一个标签来代替
-        label = QLabel("外部通知设置内容")
+        label = QLabel("外部通知设置内容--这个人很懒,还没写")
         label.setObjectName("advancedLabel")
         label.setAlignment(Qt.AlignCenter)
         parent_widget.content_layout.addWidget(label)
