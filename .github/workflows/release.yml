@@ -74,6 +74,11 @@ jobs:
           token: ${{ secrets.GITHUB_TOKEN }}
           tag: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
+          body: |
+            ## 版本 ${{ github.ref_name }} 更新日志
+
+            ${{ steps.changelog.outputs.CHANGELOG }}
+
           draft: false
           prerelease: false
           artifacts: ${{ github.workspace }}/dist/MFWPH_RELEASE.zip
