@@ -116,47 +116,69 @@ class UpdateCheckThread(QThread):
         try:
             # 从全局配置中获取 CDK（如果有配置）
             cdk = global_config.get_app_config().CDK if hasattr(global_config.get_app_config(), 'CDK') else ""
+
+            # 根据测试版设置选择更新通道
+            channel = "beta" if global_config.get_app_config().receive_beta_update else "stable"
+
             # 构造 API URL 与参数
             api_url = f"{self.mirror_base_url}/resources/{rid}/latest"
             params = {
                 "current_version": resource.resource_version,
                 "cdk": cdk,
                 "user_agent": "ResourceDownloader",
-                "channel": "stable"  # 默认使用 stable 通道
+                "channel": channel  # 根据配置动态选择通道
             }
-
             response = requests.get(api_url, params=params)
 
+            # 定义业务逻辑错误码与说明的对应关系
+            error_map = {
+                1001: "INVALID_PARAMS: 参数不正确，请参考集成文档",
+                7001: "KEY_EXPIRED: CDK 已过期",
+                7002: "KEY_INVALID: CDK 错误",
+                7003: "RESOURCE_QUOTA_EXHAUSTED: CDK 今日下载次数已达上限",
+                7004: "KEY_MISMATCHED: CDK 类型和待下载的资源不匹配",
+                8001: "RESOURCE_NOT_FOUND: 对应架构和系统下的资源不存在",
+                8002: "INVALID_OS: 错误的系统参数",
+                8003: "INVALID_ARCH: 错误的架构参数",
+                8004: "INVALID_CHANNEL: 错误的更新通道参数",
+                1: "UNDIVIDED: 未区分的业务错误，以响应体 JSON 的 msg 为准",
+            }
+
+            # 处理非200状态码
             if response.status_code != 200:
+                error_message = f"API返回错误 ({response.status_code})"
+
+                # 尝试解析错误响应中的JSON数据
+                try:
+                    error_data = response.json()
+                    error_code = error_data.get("code")
+                    error_msg = error_data.get("msg", "")
+
+                    if error_code is not None:
+                        # 查找对应的错误描述
+                        error_detail = error_map.get(error_code, error_msg or "未知业务错误")
+                        error_message = f"业务错误 ({error_code}): {error_detail}"
+                except:
+                    # 如果无法解析JSON，仅使用HTTP状态码作为错误信息
+                    pass
+
                 if self.single_mode:
-                    self.check_failed.emit(resource.resource_name, f"API返回错误 ({response.status_code})")
+                    self.check_failed.emit(resource.resource_name, error_message)
                 return 0
 
             # 解析返回的 JSON 数据
             result = response.json()
-            print(result)
+
             # 错误码处理
             error_code = result.get("code")
-            if error_code != 0:
-                # 定义业务逻辑错误码与说明的对应关系
-                error_map = {
-                    1001: "INVALID_PARAMS: 参数不正确，请参考集成文档",
-                    7001: "KEY_EXPIRED: CDK 已过期",
-                    7002: "KEY_INVALID: CDK 错误",
-                    7003: "RESOURCE_QUOTA_EXHAUSTED: CDK 今日下载次数已达上限",
-                    7004: "KEY_MISMATCHED: CDK 类型和待下载的资源不匹配",
-                    8001: "RESOURCE_NOT_FOUND: 对应架构和系统下的资源不存在",
-                    8002: "INVALID_OS: 错误的系统参数",
-                    8003: "INVALID_ARCH: 错误的架构参数",
-                    8004: "INVALID_CHANNEL: 错误的更新通道参数",
-                    1: "UNDIVIDED: 未区分的业务错误，以响应体 JSON 的 msg 为准",
-                }
+            # 确保error_code不是None并且不等于0
+            if error_code is not None and error_code != 0:
                 if error_code > 0:
                     # 业务逻辑错误，根据返回码寻找对应的错误说明
                     detail = error_map.get(error_code, result.get("msg", "未知业务错误，请联系 Mirror 酱技术支持"))
                     if self.single_mode:
                         self.check_failed.emit(resource.resource_name, f"业务错误 ({error_code}): {detail}")
-                elif error_code < 0:
+                else:  # 处理error_code < 0的情况
                     # 意料之外的严重错误
                     if self.single_mode:
                         self.check_failed.emit(resource.resource_name,
@@ -168,7 +190,7 @@ class UpdateCheckThread(QThread):
             latest_version = data.get("version_name", "")
             download_url = data.get("url", "")
 
-            if latest_version != resource.resource_version:
+            if latest_version and latest_version != resource.resource_version:
                 # 检测到新版本，发出更新通知
                 self.update_found.emit(
                     resource.resource_name,
@@ -184,7 +206,7 @@ class UpdateCheckThread(QThread):
 
         except Exception as e:
             if self.single_mode:
-                self.check_failed.emit(resource.resource_name, str(e))
+                self.check_failed.emit(resource.resource_name, f"检查更新异常: {str(e)}")
             return 0
 
         return 0

@@ -24,6 +24,7 @@ class HomePage(QFrame):
         super().__init__(parent)
         self.global_config = global_config
         self.devices = []
+        self.empty_state_label = None  # 添加空状态标签的引用
         self.setAttribute(Qt.WA_StyledBackground, True)
         self.setObjectName("homePage")
         self.init_ui()
@@ -163,6 +164,9 @@ class HomePage(QFrame):
         self.cards_layout.setColumnStretch(1, 1)
         self.cards_layout.setColumnStretch(2, 1)
 
+        # 创建空状态提示标签，但还不添加到布局中
+        self.create_empty_state_label()
+
         scroll_area.setWidget(self.cards_container)
         cards_frame_layout.addWidget(scroll_area)
 
@@ -194,6 +198,24 @@ class HomePage(QFrame):
         if hasattr(self.log_display, 'update_device_list'):
             self.log_display.update_device_list(self.devices)
 
+    def create_empty_state_label(self):
+        """创建空状态提示标签"""
+        self.empty_state_label = QLabel()
+        self.empty_state_label.setObjectName("emptyStateLabel")
+        self.empty_state_label.setText("没有设备\n点击右上角添加设备按钮开始使用")
+        self.empty_state_label.setAlignment(Qt.AlignCenter)
+        self.empty_state_label.setFont(QFont("Segoe UI", 14))
+        self.empty_state_label.setStyleSheet("""
+            #emptyStateLabel {
+                color: var(--text-color-secondary);
+                padding: 30px;
+                background-color: var(--bg-secondary);
+                border-radius: 8px;
+                margin: 20px;
+            }
+        """)
+        # 不立即添加到布局中，将在load_devices中根据需要添加
+
     def connect_signals(self):
         """连接来自日志管理器和其他信号"""
         log_manager.app_log_updated.connect(self.on_app_log_updated)
@@ -216,14 +238,23 @@ class HomePage(QFrame):
         if devices_config and hasattr(devices_config, 'devices'):
             self.devices = devices_config.devices
 
-            # 创建卡片
-            for idx, device in enumerate(self.devices):
-                # 根据索引计算行和列
-                row = idx // 3  # 每行3张卡片
-                col = idx % 3
+            # 检查是否有设备
+            if not self.devices or len(self.devices) == 0:
+                # 没有设备，显示空状态提示
+                self.cards_layout.addWidget(self.empty_state_label, 0, 0, 1, 3)  # 横跨3列显示
+                self.empty_state_label.setVisible(True)
+            else:
+                # 有设备，隐藏空状态提示
+                self.empty_state_label.setVisible(False)
 
-                card = DeviceCard(device, self)
-                self.cards_layout.addWidget(card, row, col)
+                # 创建设备卡片
+                for idx, device in enumerate(self.devices):
+                    # 根据索引计算行和列
+                    row = idx // 3  # 每行3张卡片
+                    col = idx % 3
+
+                    card = DeviceCard(device, self)
+                    self.cards_layout.addWidget(card, row, col)
 
             # 更新日志显示中的设备列表
             if hasattr(self.log_display, 'update_device_list'):

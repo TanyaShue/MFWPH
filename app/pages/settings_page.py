@@ -179,6 +179,15 @@ class SettingsPage(QWidget):
         self.status_label.setObjectName("hintText")
         self.status_label.setMinimumHeight(20)
 
+        # 添加设置警告和清除警告的辅助方法
+        def set_warning_message(message):
+            self.status_label.setText(message)
+            self.status_label.setStyleSheet("color: #E6A700; font-weight: bold;")
+
+        def clear_message():
+            self.status_label.setText("")
+            self.status_label.setStyleSheet("")
+
         # 第一行：自动检查更新、测试版更新及立即检查按钮
         update_row = QHBoxLayout()
 
@@ -187,12 +196,48 @@ class SettingsPage(QWidget):
         check_button = QPushButton("立即检查更新")
         check_button.setObjectName("primaryButton")
 
-        # 设置复选框初始状态
+        # 从配置初始化复选框状态
         try:
-            auto_check.setChecked(global_config.get_app_config().auto_check_update)
-            beta_updates.setChecked(global_config.get_app_config().receive_beta_update)
+            # 使用不同的变量名存储布尔值
+            auto_check_value = global_config.get_app_config().auto_check_update
+            auto_check.setChecked(auto_check_value)
         except:
-            pass  # 出错时使用默认值（未选中）
+            auto_check.setChecked(False)
+
+        # 获取测试版设置，如果不存在或不合法则默认为False
+        try:
+            receive_beta = global_config.get_app_config().receive_beta_update
+            if not isinstance(receive_beta, bool):  # 如果不是布尔值
+                receive_beta = False
+        except:
+            receive_beta = False
+
+        # 设置测试版复选框状态
+        beta_updates.setChecked(receive_beta)
+
+        # 如果启用了测试版，设置警告消息
+        if receive_beta:
+            set_warning_message("测试版可能包含不稳定功能，可能影响正常使用")
+
+        # 定义复选框状态变化的处理函数
+        def on_beta_checkbox_changed(state):
+            is_checked = (state == 2)  # 2 = 选中状态 (Qt.Checked)
+            global_config.get_app_config().receive_beta_update = is_checked
+
+            if is_checked:
+                set_warning_message("测试版可能包含不稳定功能，可能影响正常使用")
+            else:
+                clear_message()
+
+            global_config.save_all_configs()
+
+        def on_auto_check_changed(state):
+            global_config.get_app_config().auto_check_update = (state == 2)
+            global_config.save_all_configs()
+
+        # 连接信号与槽
+        beta_updates.stateChanged.connect(on_beta_checkbox_changed)
+        auto_check.stateChanged.connect(on_auto_check_changed)
 
         update_row.addWidget(auto_check)
         update_row.addWidget(beta_updates)
@@ -207,29 +252,6 @@ class SettingsPage(QWidget):
         status_row.addStretch()
         layout.addLayout(status_row)
 
-        # 根据初始beta状态设置警告
-        if beta_updates.isChecked():
-            self.status_label.setText("测试版可能包含不稳定功能，可能影响正常使用")
-
-        # 当测试版勾选框状态变化时更新状态标签和配置
-        def on_beta_checkbox_changed(state):
-            if state == Qt.Checked:
-                self.status_label.setText("测试版可能包含不稳定功能，可能影响正常使用")
-                global_config.get_app_config().receive_beta_update = True
-            else:
-                self.status_label.setText("")
-                global_config.get_app_config().receive_beta_update = False
-            global_config.save_all_configs()
-
-        beta_updates.stateChanged.connect(on_beta_checkbox_changed)
-
-        # 当自动检查更新复选框状态变化时更新配置
-        def on_auto_check_changed(state):
-            global_config.get_app_config().auto_check_update = (state == Qt.Checked)
-            global_config.save_all_configs()
-
-        auto_check.stateChanged.connect(on_auto_check_changed)
-
         # 设置更新源部分
         source_row = QHBoxLayout()
         update_source_label = QLabel("更新源:")
@@ -242,10 +264,7 @@ class SettingsPage(QWidget):
 
         # 根据当前配置设置默认值
         current_update_method = global_config.get_app_config().update_method
-        if current_update_method == "MirrorChyan":
-            self.update_source_combo.setCurrentText("Mirror酱")
-        else:
-            self.update_source_combo.setCurrentText("github")
+        self.update_source_combo.setCurrentText("Mirror酱" if current_update_method == "MirrorChyan" else "github")
 
         source_row.addWidget(update_source_label)
         source_row.addWidget(self.update_source_combo)
@@ -255,7 +274,7 @@ class SettingsPage(QWidget):
 
         # 为CDK区域预留空间，使用 QStackedLayout 切换显示内容
         layout.addSpacing(15)
-        self.cdk_container = QWidget()  # 容器用于放置CDK输入区域或占位页面
+        self.cdk_container = QWidget()
         self.cdk_stack = QStackedLayout(self.cdk_container)
 
         # Page 0：包含CDK输入行
@@ -274,30 +293,26 @@ class SettingsPage(QWidget):
         # 尝试获取已有的CDK值
         try:
             current_cdk = global_config.get_app_config().CDK
-            if current_cdk and current_cdk != "":
+            if current_cdk:
                 cdk_input.setText(current_cdk)
         except:
-            pass  # 出错时保持输入为空
+            pass
 
         cdk_row.addWidget(cdk_label)
-        cdk_row.addWidget(cdk_input, 1)  # 让输入框尽可能占满空间
+        cdk_row.addWidget(cdk_input, 1)
         cdk_row.addWidget(save_button)
         cdk_layout.addLayout(cdk_row)
 
-        # Page 1：空白占位页面，其固定高度与实际CDK页面保持一致
+        # Page 1：空白占位页面
         placeholder_page = QWidget()
-        # 固定占位高度为cdk_page的高度
         placeholder_page.setFixedHeight(cdk_page.sizeHint().height())
 
         # 将两个页面添加到stacked布局中
-        self.cdk_stack.addWidget(cdk_page)  # index 0，显示CDK输入区域
-        self.cdk_stack.addWidget(placeholder_page)  # index 1，占位（空白）
+        self.cdk_stack.addWidget(cdk_page)
+        self.cdk_stack.addWidget(placeholder_page)
 
         # 默认根据更新源显示对应页面
-        if self.update_source_combo.currentText() == "Mirror酱":
-            self.cdk_stack.setCurrentIndex(0)
-        else:
-            self.cdk_stack.setCurrentIndex(1)
+        self.cdk_stack.setCurrentIndex(0 if self.update_source_combo.currentText() == "Mirror酱" else 1)
 
         layout.addWidget(self.cdk_container)
 
@@ -305,37 +320,35 @@ class SettingsPage(QWidget):
         def save_cdk():
             global_config.get_app_config().CDK = cdk_input.text()
             global_config.save_all_configs()
-            # 临时显示保存成功，然后恢复之前的状态（可能是beta警告或空）
+
+            # 临时显示保存成功消息
             self.status_label.setText("密钥保存成功!")
-            # 如果有beta警告，3秒后恢复
-            if beta_updates.isChecked():
-                QTimer.singleShot(3000, lambda: self.status_label.setText("测试版可能包含不稳定功能，可能影响正常使用"))
-            else:
-                QTimer.singleShot(3000, lambda: self.status_label.setText(""))
+            self.status_label.setStyleSheet("color: #28a745; font-weight: bold;")
+
+            # 3秒后恢复之前的状态
+            def restore_previous_state():
+                if beta_updates.isChecked():
+                    set_warning_message("测试版可能包含不稳定功能，可能影响正常使用")
+                else:
+                    clear_message()
+
+            QTimer.singleShot(3000, restore_previous_state)
 
         save_button.clicked.connect(save_cdk)
         cdk_input.returnPressed.connect(save_cdk)
 
-        # 定义更新源改变时的槽函数，切换堆叠页面
+        # 定义更新源改变时的槽函数
         def update_source_changed(new_text):
-            # 更新配置更新方式
-            if new_text == "Mirror酱":
-                self.cdk_stack.setCurrentIndex(0)  # 显示CDK输入区域
-                # 更新配置
-                global_config.get_app_config().update_method = "MirrorChyan"
-            else:
-                self.cdk_stack.setCurrentIndex(1)  # 显示占位页面
-                # 更新配置
-                global_config.get_app_config().update_method = "github"
+            is_mirror = (new_text == "Mirror酱")
+            self.cdk_stack.setCurrentIndex(0 if is_mirror else 1)
+            global_config.get_app_config().update_method = "MirrorChyan" if is_mirror else "github"
 
             # 确保beta警告的状态正确
             if beta_updates.isChecked():
-                self.status_label.setText("测试版可能包含不稳定功能，可能影响正常使用")
+                set_warning_message("测试版可能包含不稳定功能，可能影响正常使用")
 
-            # 保存配置
             global_config.save_all_configs()
 
-        # 连接信号到更新源改变函数
         self.update_source_combo.currentTextChanged.connect(update_source_changed)
 
     def create_about_section(self):

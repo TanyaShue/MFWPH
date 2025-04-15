@@ -62,6 +62,8 @@ class AppConfig:
     source_file: str = ""  # 用于记录加载的文件路径，但不保存到输出 JSON 中
     CDK: str = ""
     update_method: str = field(default="github")
+    receive_beta_update: bool = False
+    auto_check_update: bool = False
 
     @staticmethod
     def _get_encryption_key() -> bytes:
@@ -165,15 +167,14 @@ class AppConfig:
             config.CDK = data.get('CDK', '')
 
         config.update_method = data.get('update_method', 'github')
+        config.receive_beta_update = data.get('receive_beta_update', False)
+        config.auto_check_update = data.get('auto_check_update', False)
 
         return config
 
     def to_dict(self) -> Dict[str, Any]:
         """将 AppConfig 对象转换为字典，不包含 source_file 属性。"""
-        result = {
-            "devices": [device_config_to_dict(device) for device in self.devices],
-        }
-
+        result = {}
         # 添加版本信息（如果存在）
         if self.version:
             result["version"] = self.version
@@ -184,6 +185,9 @@ class AppConfig:
             result["encrypted_cdk"] = self._encrypt_cdk()
         if self.update_method:
             result["update_method"] = self.update_method
+        result["receive_beta_update"] = getattr(self, "receive_beta_update", False)
+        result["auto_check_update"] = getattr(self, "auto_check_update", False)
+        result["devices"]=[device_config_to_dict(device) for device in self.devices]
         return result
 
     def update_version(self, version: str):
