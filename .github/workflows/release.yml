@@ -32,7 +32,6 @@ jobs:
       - name: Generate Changelog
         id: changelog
         shell: pwsh
-        working-directory: MFWPH
         run: |
           # 获取当前标签
           $currentTag = "${{ github.ref_name }}"
