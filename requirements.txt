@@ -5,3 +5,4 @@ requests
 psutil
 asyncify
 qasync
+cryptography
