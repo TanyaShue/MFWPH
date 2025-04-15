@@ -2,7 +2,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Dict, Optional, Any
 
-from app.models.config.device_config import DevicesConfig
+from app.models.config.app_config import AppConfig
 from app.models.config.resource_config import ResourceConfig, SelectOption, BoolOption, InputOption, Task
 
 
@@ -21,26 +21,26 @@ class RunTimeConfigs:
 
 class GlobalConfig:
     """
-    全局配置管理类，用于管理 DevicesConfig 和多个 ResourceConfig。
+    全局配置管理类，用于管理 AppConfig 和多个 ResourceConfig。
 
     **注意：此类不再是单例类，全局单例实例通过模块末尾的 `global_config` 变量创建。**
     """
 
-    devices_config: Optional[DevicesConfig]
+    app_config: Optional[AppConfig]
     resource_configs: Dict[str, ResourceConfig]
 
     def __init__(self):
         """
         初始化 GlobalConfig 实例。
         """
-        self.devices_config = None  # 全局 DevicesConfig 初始化为 None
+        self.app_config = None  # 全局 AppConfig 初始化为 None
         self.resource_configs = {}  # 存储多个 ResourceConfig，键为 resource_name
 
-    def load_devices_config(self, file_path: str) -> None:
+    def load_app_config(self, file_path: str) -> None:
         """
-        从 JSON 文件中加载全局 DevicesConfig 配置。
+        从 JSON 文件中加载全局 AppConfig 配置。
         """
-        self.devices_config = DevicesConfig.from_json_file(file_path)
+        self.app_config = AppConfig.from_json_file(file_path)
 
     def load_resource_config(self, file_path: str) -> None:
         """
@@ -52,20 +52,20 @@ class GlobalConfig:
         resource_config.source_file = file_path
         self.resource_configs[resource_config.resource_name] = resource_config
 
-    def get_devices_config(self) -> DevicesConfig:
+    def get_app_config(self) -> AppConfig:
         """
-        获取全局 DevicesConfig 配置。
+        获取全局 AppConfig 配置。
         """
-        if self.devices_config is None:
-            raise ValueError("DevicesConfig 尚未加载。")
-        return self.devices_config
+        if self.app_config is None:
+            raise ValueError("AppConfig 尚未加载。")
+        return self.app_config
 
     def get_device_config(self, device_name):
         """根据设备名称获取设备配置"""
-        if not self.devices_config:
+        if not self.app_config:
             return None
 
-        for device in self.devices_config.devices:
+        for device in self.app_config.devices:
             if device.device_name == device_name:
                 return device
         return None
@@ -95,12 +95,12 @@ class GlobalConfig:
 
     def save_all_configs(self) -> None:
         """
-        保存全局 DevicesConfig 和所有 ResourceConfig 配置到对应的文件中。
+        保存全局 AppConfig 和所有 ResourceConfig 配置到对应的文件中。
         """
-        if self.devices_config is not None:
-            self.devices_config.to_json_file()
+        if self.app_config is not None:
+            self.app_config.to_json_file()
         else:
-            raise ValueError("DevicesConfig 尚未加载，无法保存。")
+            raise ValueError("AppConfig 尚未加载，无法保存。")
 
         for resource_config in self.resource_configs.values():
             resource_config.to_json_file()
@@ -128,8 +128,8 @@ class GlobalConfig:
         ordered_tasks = OrderedDict()
 
         # 从DeviceConfig中获取指定资源的选定任务
-        if self.devices_config is not None:
-            for device in self.devices_config.devices:
+        if self.app_config is not None:
+            for device in self.app_config.devices:
                 # 如果提供了device_id，则只处理指定设备
                 if device_id is not None and device.device_name != device_id:
                     continue
@@ -214,8 +214,8 @@ class GlobalConfig:
         resource_name = resource_config.resource_name
         device_resources = []
 
-        if self.devices_config is not None:
-            for device in self.devices_config.devices:
+        if self.app_config is not None:
+            for device in self.app_config.devices:
                 # 如果提供了device_id，则只处理指定设备
                 if device_id is not None and device.device_name != device_id:
                     continue

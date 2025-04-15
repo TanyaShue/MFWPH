@@ -68,10 +68,10 @@ def extract_version():
 
 
 def update_devices_json(version, build_time):
-    """Update version information in devices.json at top level, creating the file if it doesn't exist"""
+    """Update version information in app_config.json at top level, creating the file if it doesn't exist"""
     current_dir = os.getcwd()
     config_dir = os.path.join(current_dir, 'assets', 'config')
-    devices_json_path = os.path.join(config_dir, 'devices.json')
+    devices_json_path = os.path.join(config_dir, 'app_config.json')
 
     try:
         # Create directory structure if it doesn't exist
@@ -85,7 +85,7 @@ def update_devices_json(version, build_time):
             with open(devices_json_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
         else:
-            print(f"devices.json not found. Creating new file at: {devices_json_path}")
+            print(f"app_config.json not found. Creating new file at: {devices_json_path}")
             config = {}  # Initialize empty config if file doesn't exist
 
         # Add version info at top level
@@ -96,10 +96,10 @@ def update_devices_json(version, build_time):
         with open(devices_json_path, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=4, ensure_ascii=False)
 
-        print(f"Successfully updated version info in devices.json")
+        print(f"Successfully updated version info in app_config.json")
         return True
     except Exception as e:
-        print(f"Error updating devices.json: {str(e)}")
+        print(f"Error updating app_config.json: {str(e)}")
         return False
 
 
@@ -139,7 +139,7 @@ def main():
 
     os.makedirs(dist_dir, exist_ok=True)
 
-    # Update version in devices.json
+    # Update version in app_config.json
     update_devices_json(version, build_time)
 
     # Find required paths

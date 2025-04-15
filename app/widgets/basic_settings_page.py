@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.components.collapsible_widget import CollapsibleWidget, DraggableContainer
-from app.models.config.device_config import Resource, OptionConfig
+from app.models.config.app_config import Resource, OptionConfig
 from app.models.config.global_config import global_config
 from app.models.config.resource_config import SelectOption, BoolOption, InputOption
 from app.models.logging.log_manager import log_manager
@@ -475,7 +475,7 @@ class BasicSettingsPage(QFrame):
             )
         else:
             # 创建新的选项配置
-            from app.models.config.device_config import OptionConfig  # 正确导入OptionConfig类
+            from app.models.config.app_config import OptionConfig  # 正确导入OptionConfig类
 
             # 创建新的选项配置
             new_option = OptionConfig(option_name=option_name, value=value)

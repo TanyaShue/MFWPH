@@ -6,7 +6,7 @@ import asyncio
 from PySide6.QtCore import QObject, Signal, Slot, QMutexLocker, QRecursiveMutex, QTimer
 from qasync import asyncSlot  # 使用 qasync 提供的 asyncSlot 装饰器
 
-from app.models.config.device_config import DeviceConfig
+from app.models.config.app_config import DeviceConfig
 from app.models.config.global_config import RunTimeConfigs, global_config
 from app.models.logging.log_manager import log_manager
 from core.task_executor import TaskExecutor, DeviceState
@@ -328,7 +328,7 @@ class TaskerManager(QObject):
         """
         从全局配置初始化所有设备的定时任务。
         """
-        scheduled_devices = [d for d in global_config.get_devices_config().devices if d.schedule_enabled]
+        scheduled_devices = [d for d in global_config.get_app_config().devices if d.schedule_enabled]
         if not scheduled_devices:
             self.logger.info("没有启用定时功能的设备")
             return

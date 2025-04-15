@@ -49,7 +49,8 @@ class ResourceConfig:
     resource_version: str
     resource_author: str
     resource_description: str
-    resource_update_service:str
+    resource_update_service_id:str
+    resource_rep_url:str
     resource_icon: str
     resource_tasks: List[Task] = field(default_factory=list)
     options: List[Option] = field(default_factory=list)
@@ -105,7 +106,8 @@ class ResourceConfig:
             resource_name=data.get('resource_name', ''),
             resource_version=data.get('resource_version', ''),
             resource_author=data.get('resource_author', ''),
-            resource_update_service=data.get('resource_update_service', ''),
+            resource_update_service_id=data.get('resource_update_service_id', ''),
+            resource_rep_url=data.get('resource_rep_url', ''),
             resource_description=data.get('resource_description', ''),
             resource_icon=data.get('resource_icon', ''),
             resource_tasks=tasks,
@@ -118,7 +120,8 @@ class ResourceConfig:
             "resource_name": self.resource_name,
             "resource_version": self.resource_version,
             "resource_author": self.resource_author,
-            "resource_update_service": self.resource_update_service,
+            "resource_update_service_id": self.resource_update_service_id,
+            "resource_rep_url": self.resource_rep_url,
             "resource_description": self.resource_description,
             "resource_icon": self.resource_icon,
             "resource_tasks": [task.__dict__ for task in self.resource_tasks],

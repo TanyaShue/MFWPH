@@ -158,7 +158,7 @@ class MainWindow(QMainWindow):
                 item.widget().deleteLater()
 
         # Get devices from global config
-        devices = global_config.get_devices_config().devices
+        devices = global_config.get_app_config().devices
 
         # Create a button for each device
         for i, device in enumerate(devices):
@@ -184,7 +184,7 @@ class MainWindow(QMainWindow):
 
     def update_scroll_area_visibility(self):
         """Update the visibility of the scroll area based on device count"""
-        devices = global_config.get_devices_config().devices
+        devices = global_config.get_app_config().devices
 
         # 更精确地计算窗口中固定元素的高度
         button_height = 60  # 每个按钮的高度
@@ -343,7 +343,7 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def load_config():
-        devices_config_path = "assets/config/devices.json"
+        devices_config_path = "assets/config/app_config.json"
         # 如果文件不存在，先创建该文件并写入 "{}"
         if not os.path.exists(devices_config_path):
             # 确保父目录存在
@@ -351,7 +351,7 @@ class MainWindow(QMainWindow):
             with open(devices_config_path, "w", encoding="utf-8") as f:
                 f.write("{}")
 
-        global_config.load_devices_config(devices_config_path)
+        global_config.load_app_config(devices_config_path)
 
         resource_dir = "assets/resource/"
         # 如果目录不存在，则创建
@@ -376,7 +376,7 @@ class MainWindow(QMainWindow):
                 del self.device_pages[deleted_device_name]
 
             # Get all remaining devices
-            devices = global_config.get_devices_config().devices
+            devices = global_config.get_app_config().devices
 
             # Refresh the device list in the sidebar
             self.refresh_device_list()

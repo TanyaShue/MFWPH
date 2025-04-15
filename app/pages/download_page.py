@@ -2,7 +2,6 @@ import json
 import os
 import shutil
 import tempfile
-import time
 import zipfile
 from datetime import datetime
 from pathlib import Path
@@ -13,237 +12,11 @@ from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QFrame, QTableWidget,
                                QTableWidgetItem, QPushButton, QHeaderView, QHBoxLayout,
                                QProgressBar, QMessageBox, QSizePolicy, QDialog, QFormLayout,
-                               QLineEdit, QTextEdit, QDialogButtonBox)
+                               QLineEdit, QTextEdit, QDialogButtonBox, QComboBox)
 
-# Import GlobalConfig from the app
 from app.models.config.global_config import global_config
-
-
-class AddResourceDialog(QDialog):
-    """Dialog for adding new resources"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.setObjectName("addResourceDialog")
-        self.setWindowTitle("添加新资源")
-        self.setMinimumWidth(500)
-
-        layout = QVBoxLayout(self)
-        form_layout = QFormLayout()
-
-        # Resource URL field
-        self.url_edit = QLineEdit()
-        self.url_edit.setObjectName("urlEdit")
-        self.url_edit.setPlaceholderText("GitHub仓库链接或ZIP文件URL")
-        form_layout.addRow("资源链接:", self.url_edit)
-
-        # Resource name field
-        self.name_edit = QLineEdit()
-        self.name_edit.setObjectName("nameEdit")
-        self.name_edit.setPlaceholderText("自动提取 (可选)")
-        form_layout.addRow("资源名称:", self.name_edit)
-
-        # Description field
-        self.desc_edit = QTextEdit()
-        self.desc_edit.setObjectName("descEdit")
-        self.desc_edit.setPlaceholderText("资源描述 (可选)")
-        self.desc_edit.setMaximumHeight(100)
-        form_layout.addRow("描述:", self.desc_edit)
-
-        layout.addLayout(form_layout)
-
-        # Add buttons
-        self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
-        self.button_box.setObjectName("buttonBox")
-        self.button_box.accepted.connect(self.accept)
-        self.button_box.rejected.connect(self.reject)
-        self.button_box.button(QDialogButtonBox.Ok).setEnabled(False)
-
-        # Connect validation
-        self.url_edit.textChanged.connect(self.validate_input)
-
-        layout.addWidget(self.button_box)
-
-    def validate_input(self):
-        """Enable OK button only if URL is valid"""
-        url = self.url_edit.text().strip()
-        valid = url.startswith(("http://", "https://")) and (
-                "github.com" in url or url.endswith(".zip")
-        )
-        self.button_box.button(QDialogButtonBox.Ok).setEnabled(valid)
-
-    def get_data(self):
-        """Return the dialog data"""
-        return {
-            "url": self.url_edit.text().strip(),
-            "name": self.name_edit.text().strip(),
-            "description": self.desc_edit.toPlainText().strip()
-        }
-
-
-class DownloadThread(QThread):
-    """Unified thread for downloading resources and updates"""
-    progress_updated = Signal(str, float, float)  # resource_name, progress, speed
-    download_completed = Signal(str, str, object)  # resource_name, file_path, data/resource
-    download_failed = Signal(str, str)  # resource_name, error
-
-    def __init__(self, resource_name, url, output_dir, data=None, resource=None, version=None):
-        super().__init__()
-        self.resource_name = resource_name
-        self.url = url
-        self.output_dir = output_dir
-        self.data = data
-        self.resource = resource
-        self.version = version or "1.0.0"
-        self.is_cancelled = False
-
-    def run(self):
-        try:
-            # Create output filename
-            filename = f"{self.resource_name}_{self.version}.zip"
-            output_path = self.output_dir / filename
-
-            # Download file with progress
-            response = requests.get(self.url, stream=True)
-            response.raise_for_status()
-
-            total_size = int(response.headers.get('content-length', 0)) or 1024 * 1024  # Default 1MB
-            chunk_size = max(4096, total_size // 100)
-
-            with open(output_path, 'wb') as f:
-                downloaded = 0
-                last_update_time = time.time()
-
-                for chunk in response.iter_content(chunk_size=chunk_size):
-                    if self.is_cancelled:
-                        f.close()
-                        if output_path.exists():
-                            output_path.unlink()
-                        return
-
-                    if chunk:
-                        f.write(chunk)
-                        downloaded += len(chunk)
-
-                        # Calculate progress and speed
-                        progress = (downloaded / total_size) * 100
-                        current_time = time.time()
-                        elapsed = current_time - last_update_time
-
-                        if elapsed >= 0.5:
-                            speed = (chunk_size / 1024 / 1024) / elapsed  # MB/s
-                            self.progress_updated.emit(self.resource_name, progress, speed)
-                            last_update_time = current_time
-
-            # Send completion signal
-            result_data = self.resource if self.resource else self.data
-            self.download_completed.emit(self.resource_name, str(output_path), result_data)
-        except Exception as e:
-            self.download_failed.emit(self.resource_name, str(e))
-
-    def cancel(self):
-        """Cancel download"""
-        self.is_cancelled = True
-
-
-class UpdateCheckThread(QThread):
-    """Unified thread for checking updates"""
-    update_found = Signal(str, str, str, str)  # resource_name, latest_version, current_version, download_url
-    update_not_found = Signal(str)  # resource_name (single mode only)
-    check_failed = Signal(str, str)  # resource_name, error_message (single mode only)
-    check_completed = Signal(int, int)  # total_checked, updates_found (batch mode only)
-
-    def __init__(self, resources, single_mode=False):
-        super().__init__()
-        self.resources = [resources] if single_mode else resources
-        self.single_mode = single_mode
-
-    def run(self):
-        updates_found = 0
-
-        for resource in self.resources:
-            update_service = resource.resource_update_service
-            if not update_service:
-                if self.single_mode:
-                    self.check_failed.emit(resource.resource_name, "没有配置更新源")
-                continue
-
-            try:
-                # Parse GitHub URL
-                api_url = self._get_api_url(update_service)
-                if not api_url:
-                    if self.single_mode:
-                        self.check_failed.emit(resource.resource_name, f"不支持的更新源: {update_service}")
-                    continue
-
-                # Get latest version info
-                response = requests.get(api_url)
-
-                # 新增对403错误的处理
-                if response.status_code == 403:
-                    error_message = "请求被拒绝 (403)：可能是超出了 API 请求速率限制或缺少认证信息。"
-                    if self.single_mode:
-                        self.check_failed.emit(resource.resource_name, error_message)
-                    continue
-
-                if response.status_code != 200:
-                    if self.single_mode:
-                        self.check_failed.emit(resource.resource_name, f"API返回错误 ({response.status_code})")
-                    continue
-
-                # Process release info
-                release_info = response.json()
-                latest_version = release_info.get('tag_name', '').lstrip('v')
-
-                # Compare versions
-                if latest_version != resource.resource_version:
-                    # Find download URL
-                    download_url = None
-                    for asset in release_info.get('assets', []):
-                        if asset.get('name', '').endswith('.zip'):
-                            download_url = asset.get('browser_download_url')
-                            break
-
-                    if download_url:
-                        self.update_found.emit(
-                            resource.resource_name,
-                            latest_version,
-                            resource.resource_version,
-                            download_url
-                        )
-                        updates_found += 1
-                    elif self.single_mode:
-                        self.check_failed.emit(resource.resource_name, "找不到可下载的资源包")
-                elif self.single_mode:
-                    self.update_not_found.emit(resource.resource_name)
-
-            except Exception as e:
-                if self.single_mode:
-                    self.check_failed.emit(resource.resource_name, str(e))
-                continue
-
-        # Signal completion in batch mode
-        if not self.single_mode:
-            self.check_completed.emit(len(self.resources), updates_found)
-
-    def _get_api_url(self, url):
-        """Convert GitHub URL to API URL"""
-        if url.startswith("https://api.github.com/repos/"):
-            return url
-        elif url.startswith("https://github.com/"):
-            try:
-                parts = url.split('github.com/')[1].split('/')
-                if len(parts) < 2:
-                    return None
-
-                owner, repo = parts[0], parts[1]
-                if repo.endswith('.git'):
-                    repo = repo[:-4]
-
-                return f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
-            except Exception:
-                return None
-        return None
+from app.utils.update import UpdateCheckThread, DownloadThread
+from app.widgets.add_resource_dialog import AddResourceDialog
 
 
 class DownloadPage(QWidget):
@@ -545,7 +318,7 @@ class DownloadPage(QWidget):
             "resource_version": data.get("version", "1.0.0"),
             "resource_author": data.get("author", "未知"),
             "resource_description": data["description"] or "从外部源添加的资源",
-            "resource_update_service": data["url"] if "github.com" in data["url"] else ""
+            "resource_update_service_id": data["url"] if "github.com" in data["url"] else ""
         }
 
         # Write config file
@@ -645,7 +418,7 @@ class DownloadPage(QWidget):
                 check_btn = self.resources_table.cellWidget(row, 4)
 
                 # Handle resource without update source
-                if not resource.resource_update_service:
+                if not resource.resource_rep_url and not resource.resource_update_service_id:
                     no_update_source_btn = QPushButton("无更新源")
                     no_update_source_btn.setObjectName("no_update_source_btn")
                     no_update_source_btn.setEnabled(False)
@@ -798,7 +571,7 @@ class DownloadPage(QWidget):
         resources = global_config.get_all_resource_configs()
 
         # Filter resources with update sources
-        resources_with_update = [r for r in resources if r.resource_update_service]
+        resources_with_update = [r for r in resources if r.resource_update_service_id]
 
         if not resources_with_update:
             self.update_all_button.setText("一键检查所有更新")

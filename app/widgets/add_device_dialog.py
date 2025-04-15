@@ -6,7 +6,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
                                QTimeEdit, QMessageBox)
 from maa.toolkit import Toolkit
 
-from app.models.config.device_config import DeviceConfig, AdbDevice
+from app.models.config.app_config import DeviceConfig, AdbDevice
 
 
 class DeviceSearchThread(QThread):
@@ -386,7 +386,7 @@ class AddDeviceDialog(QDialog):
                     schedule_time=schedule_times,
                     start_command=self.pre_command_edit.text()
                 )
-                self.global_config.devices_config.devices.append(new_config)
+                self.global_config.app_config.devices.append(new_config)
 
             self.global_config.save_all_configs()
             self.accept()
@@ -405,8 +405,8 @@ class AddDeviceDialog(QDialog):
         if reply == QMessageBox.Yes:
             try:
                 # 从全局配置中删除该设备，假设设备以 device_name 为唯一标识
-                self.global_config.devices_config.devices = [
-                    device for device in self.global_config.devices_config.devices
+                self.global_config.app_config.devices = [
+                    device for device in self.global_config.app_config.devices
                     if device.device_name != self.device_config.device_name
                 ]
                 self.global_config.save_all_configs()

@@ -212,7 +212,7 @@ class HomePage(QFrame):
         self.clear_device_cards()
 
         # 从配置获取设备
-        devices_config = self.global_config.get_devices_config()
+        devices_config = self.global_config.get_app_config()
         if devices_config and hasattr(devices_config, 'devices'):
             self.devices = devices_config.devices
 
