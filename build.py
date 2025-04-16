@@ -54,13 +54,6 @@ def extract_version():
     except Exception:
         pass
 
-    # Try from version.txt
-    version_file = os.path.join(os.getcwd(), 'version.txt')
-    if os.path.exists(version_file):
-        with open(version_file, 'r') as f:
-            version = f.read().strip()
-        print(f"Using version from version.txt: {version}")
-        return version
 
     # Use default
     print(f"Using default version: {VERSION}")
@@ -145,16 +138,6 @@ def main():
     # Find required paths
     maa_bin_path = find_path_in_site_packages('maa/bin')
     maa_agent_binary_path = find_path_in_site_packages('MaaAgentBinary')
-
-    # Create logs directory in dist
-    logs_dir = os.path.join(dist_dir, 'logs')
-    logs_backup_dir = os.path.join(logs_dir, 'backup')
-    os.makedirs(logs_dir, exist_ok=True)
-    os.makedirs(logs_backup_dir, exist_ok=True)
-
-    # Create an empty app.log file to include in the zip
-    with open(os.path.join(logs_dir, 'app.log'), 'w', encoding='utf-8') as f:
-        f.write(f"Log file created on {datetime.datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n")
 
     # Run PyInstaller
     print("Starting PyInstaller...")

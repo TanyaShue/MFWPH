@@ -1,21 +1,15 @@
-import json
 import os
-import shutil
-import tempfile
-import zipfile
-from datetime import datetime
 from pathlib import Path
 
-import requests
-from PySide6.QtCore import QThread, Signal, QTimer
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtCore import QTimer
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QFrame, QTableWidget,
                                QTableWidgetItem, QPushButton, QHeaderView, QHBoxLayout,
-                               QProgressBar, QMessageBox, QSizePolicy, QDialog, QFormLayout,
-                               QLineEdit, QTextEdit, QDialogButtonBox, QComboBox)
+                               QProgressBar, QMessageBox, QSizePolicy, QDialog)
 
 from app.models.config.global_config import global_config
-from app.utils.update import UpdateCheckThread, DownloadThread
+from app.utils.update_check import (UpdateCheckThread, DownloadThread, process_github_repo,
+                                    install_new_resource, install_update, show_locked_files_message)
 from app.widgets.add_resource_dialog import AddResourceDialog
 
 
@@ -114,57 +108,13 @@ class DownloadPage(QWidget):
         # Process URL
         url = data["url"]
         if "github.com" in url and not url.endswith(".zip"):
-            self._process_github_repo(url, data)
+            # Process GitHub repo URL to get download link
+            process_github_repo(url, data, self._download_resource, self._show_add_error)
         else:
             self._download_resource(url, data)
 
-    def _process_github_repo(self, repo_url, data):
-        """Process GitHub repository URL"""
-        try:
-            # Parse GitHub URL
-            parts = repo_url.split('github.com/')[1].split('/')
-            if len(parts) < 2:
-                self._show_add_error("GitHub地址格式不正确")
-                return
-
-            owner, repo = parts[0], parts[1]
-            if repo.endswith('.git'):
-                repo = repo[:-4]
-
-            # Get latest release info
-            api_url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
-            response = requests.get(api_url)
-
-            if response.status_code != 200:
-                self._show_add_error(f"API返回错误 ({response.status_code})")
-                return
-
-            release_info = response.json()
-            latest_version = release_info.get('tag_name', '').lstrip('v')
-
-            # Use repo name if name not provided
-            if not data["name"]:
-                data["name"] = repo
-
-            # Find ZIP asset
-            download_url = None
-            for asset in release_info.get('assets', []):
-                if asset.get('name', '').endswith('.zip'):
-                    download_url = asset.get('browser_download_url')
-                    break
-
-            if not download_url:
-                self._show_add_error("找不到可下载的资源包")
-                return
-
-            # Download ZIP
-            self._download_resource(download_url, data, latest_version)
-
-        except Exception as e:
-            self._show_add_error(str(e))
-
     def _download_resource(self, url, data, version=None):
-        """Download a resource file and add to queue"""
+        """Add a resource to download queue and start download thread"""
         # Prepare resource name
         resource_name = data["name"] if data["name"] else "新资源"
 
@@ -230,13 +180,15 @@ class DownloadPage(QWidget):
         self._remove_from_queue(resource_name)
 
         try:
-            # Install the resource
+            # Install the resource using functions from update_check.py
             if isinstance(data, dict):
                 # New resource
-                self._install_new_resource(resource_name, file_path, data)
+                install_new_resource(resource_name, file_path, data)
             else:
                 # Resource update
-                self._install_update(data, file_path)
+                locked_files = install_update(data, file_path)
+                if locked_files and len(locked_files) > 0:
+                    show_locked_files_message(resource_name, locked_files, self)
 
             # Reload resources and restore button
             self.load_resources()
@@ -275,279 +227,6 @@ class DownloadPage(QWidget):
     def _show_error(self, resource_name, error):
         """Display generic error message"""
         QMessageBox.warning(self, "操作失败", f"资源 {resource_name} 操作失败: {error}")
-
-    def _install_new_resource(self, resource_name, file_path, data):
-        """Install a newly downloaded resource"""
-        with tempfile.TemporaryDirectory() as extract_dir:
-            # Extract ZIP
-            with zipfile.ZipFile(file_path, 'r') as zip_ref:
-                zip_ref.extractall(extract_dir)
-
-            # Find or create resource config
-            resource_dir, resource_config_path = self._find_or_create_config(extract_dir, data, resource_name)
-
-            # Create target directory
-            target_dir = Path(f"assets/resource/{resource_name.lower().replace(' ', '_')}")
-            if target_dir.exists():
-                shutil.rmtree(target_dir)
-
-            # Copy files to target directory
-            shutil.copytree(resource_dir, target_dir)
-
-            # Load new resource config
-            global_config.load_resource_config(str(target_dir / "resource_config.json"))
-
-    def _find_or_create_config(self, extract_dir, data, resource_name):
-        """Find existing config or create a new one"""
-        # Try to find existing config
-        for root, dirs, files in os.walk(extract_dir):
-            if "resource_config.json" in files:
-                return root, os.path.join(root, "resource_config.json")
-
-        # Create new config
-        main_dir = extract_dir
-        for item in os.listdir(extract_dir):
-            item_path = os.path.join(extract_dir, item)
-            if os.path.isdir(item_path) and not item.startswith('.'):
-                main_dir = item_path
-                break
-
-        # Create resource config
-        resource_config = {
-            "resource_name": data["name"] or resource_name,
-            "resource_version": data.get("version", "1.0.0"),
-            "resource_author": data.get("author", "未知"),
-            "resource_description": data["description"] or "从外部源添加的资源",
-            "resource_update_service_id": data["url"] if "github.com" in data["url"] else ""
-        }
-
-        # Write config file
-        resource_config_path = os.path.join(main_dir, "resource_config.json")
-        with open(resource_config_path, 'w', encoding='utf-8') as f:
-            json.dump(resource_config, f, ensure_ascii=False, indent=4)
-
-        return main_dir, resource_config_path
-
-    def _install_update(self, resource, file_path):
-        """Install an update for an existing resource"""
-        # 获取传入的新版本号（从start_update方法传递过来的version参数）
-        new_version = resource.temp_version if hasattr(resource, 'temp_version') else None
-        # 获取更新类型（从start_update方法传递过来的update_type参数）
-        update_type = resource.temp_update_type if hasattr(resource, 'temp_update_type') else "full"
-
-        with tempfile.TemporaryDirectory() as extract_dir:
-            # Extract ZIP
-            with zipfile.ZipFile(file_path, 'r') as zip_ref:
-                zip_ref.extractall(extract_dir)
-
-            # Get original resource directory
-            original_resource_dir = Path(resource.source_file).parent
-
-            # Handle incremental update
-            if update_type == "incremental":
-                changes_path = os.path.join(extract_dir, "changes.json")
-
-                if os.path.exists(changes_path):
-                    self._apply_incremental_update(resource, extract_dir, original_resource_dir, changes_path)
-                else:
-                    # Fall back to full update if changes.json is missing
-                    self._apply_full_update(resource, extract_dir, original_resource_dir)
-            else:
-                # Handle full update
-                self._apply_full_update(resource, extract_dir, original_resource_dir)
-
-            # Reload resource config
-            global_config.load_resource_config(str(original_resource_dir / "resource_config.json"))
-
-            # Make sure the version is updated in global_config
-            for r in global_config.get_all_resource_configs():
-                if r.resource_name == resource.resource_name and new_version:
-                    r.resource_version = new_version
-                    break
-
-            # Save all configs
-            global_config.save_all_configs()
-
-    def _apply_full_update(self, resource, extract_dir, original_resource_dir):
-        """Apply a full update by replacing all files"""
-        # Find resource directory
-        resource_dir = None
-        resource_config_path = None
-
-        for root, dirs, files in os.walk(extract_dir):
-            if "resource_config.json" in files:
-                resource_config_path = os.path.join(root, "resource_config.json")
-                resource_dir = root
-                break
-
-        if not resource_config_path:
-            raise ValueError("更新包中未找到resource_config.json文件")
-
-        # Create selective backup of files that will be updated
-        self._create_selective_backup(resource, resource_dir, original_resource_dir)
-
-        # Selectively update files instead of replacing entire directory
-        self._selective_update(resource_dir, original_resource_dir)
-
-    def _apply_incremental_update(self, resource, extract_dir, original_resource_dir, changes_path):
-        """Apply an incremental update based on changes.json"""
-        try:
-            # Load changes.json
-            with open(changes_path, 'r', encoding='utf-8') as f:
-                changes = json.load(f)
-
-            # Create backup for modified files
-            self._create_incremental_backup(resource, changes, original_resource_dir)
-
-            # Handle modified files
-            if "modified" in changes:
-                for file_path in changes["modified"]:
-                    # Skip MFWPH.exe for now
-                    if file_path == "MFWPH.exe":
-                        # TODO: Handle MFWPH.exe specially
-                        continue
-
-                    # Get source and target paths
-                    source_file = Path(extract_dir) / file_path
-                    target_file = original_resource_dir.parent.parent / file_path
-
-                    # Ensure source file exists
-                    if source_file.exists():
-                        # Ensure target directory exists
-                        target_file.parent.mkdir(parents=True, exist_ok=True)
-
-                        # Replace file
-                        if target_file.exists():
-                            target_file.unlink()
-                        shutil.copy2(source_file, target_file)
-
-            # Handle added files
-            if "added" in changes:
-                for file_path in changes["added"]:
-                    # Skip MFWPH.exe for now
-                    if file_path == "MFWPH.exe":
-                        # TODO: Handle MFWPH.exe specially
-                        continue
-
-                    # Get source and target paths
-                    source_file = Path(extract_dir) / file_path
-                    target_file = original_resource_dir.parent.parent / file_path
-
-                    # Ensure source file exists
-                    if source_file.exists():
-                        # Ensure target directory exists
-                        target_file.parent.mkdir(parents=True, exist_ok=True)
-
-                        # Add new file
-                        shutil.copy2(source_file, target_file)
-
-            # Handle deleted files
-            if "deleted" in changes:
-                for file_path in changes["deleted"]:
-                    # Skip MFWPH.exe for now
-                    if file_path == "MFWPH.exe":
-                        # TODO: Handle MFWPH.exe specially
-                        continue
-
-                    # Get target path
-                    target_file = original_resource_dir.parent.parent / file_path
-
-                    # Delete file if it exists
-                    if target_file.exists():
-                        target_file.unlink()
-
-        except Exception as e:
-            # If anything goes wrong, fall back to full update
-            QMessageBox.warning(self, "增量更新失败",
-                                f"应用增量更新时出错: {str(e)}\n正在尝试完整更新...")
-            self._apply_full_update(resource, extract_dir, original_resource_dir)
-
-    def _create_incremental_backup(self, resource, changes, original_dir):
-        """Create a backup of only the modified and deleted files in an incremental update"""
-        # Create history directory
-        history_dir = Path("assets/history")
-        history_dir.mkdir(parents=True, exist_ok=True)
-
-        # Create timestamped backup filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_filename = f"{resource.resource_name}_{resource.resource_version}_{timestamp}.zip"
-        backup_path = history_dir / backup_filename
-
-        # Only backup files that will be modified or deleted
-        with zipfile.ZipFile(backup_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            # Backup modified files
-            if "modified" in changes:
-                for file_path in changes["modified"]:
-                    # Get the original file path
-                    original_file_path = original_dir.parent.parent / file_path
-                    if original_file_path.exists():
-                        # Add to backup with proper relative path
-                        arcname = file_path
-                        zipf.write(original_file_path, arcname)
-
-            # Backup deleted files
-            if "deleted" in changes:
-                for file_path in changes["deleted"]:
-                    # Get the original file path
-                    original_file_path = original_dir.parent.parent / file_path
-                    if original_file_path.exists():
-                        # Add to backup with proper relative path
-                        arcname = file_path
-                        zipf.write(original_file_path, arcname)
-
-    def _create_selective_backup(self, resource, update_dir, original_dir):
-        """Create a backup of only the files that will be updated"""
-        # Create history directory
-        history_dir = Path("assets/history")
-        history_dir.mkdir(parents=True, exist_ok=True)
-
-        # Create timestamped backup filename
-        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-        backup_filename = f"{resource.resource_name}_{resource.resource_version}_{timestamp}.zip"
-        backup_path = history_dir / backup_filename
-
-        # Only backup files that exist in the update package
-        with zipfile.ZipFile(backup_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            for root, dirs, files in os.walk(update_dir):
-                for file in files:
-                    # Get relative path from update directory
-                    relative_path = os.path.relpath(os.path.join(root, file), update_dir)
-
-                    # Check if this file exists in original directory
-                    original_file_path = original_dir / relative_path
-                    if original_file_path.exists():
-                        # Add to backup with proper relative path
-                        arcname = f"{resource.resource_name}/{relative_path}"
-                        zipf.write(original_file_path, arcname)
-
-    def _selective_update(self, source_dir, target_dir):
-        """Selectively update files instead of replacing entire directory"""
-        # Ensure target directory exists
-        target_dir.mkdir(parents=True, exist_ok=True)
-
-        for root, dirs, files in os.walk(source_dir):
-            # Get relative path from source directory
-            relative_path = os.path.relpath(root, source_dir)
-
-            # Create directories in target if they don't exist
-            for dir_name in dirs:
-                dir_path = target_dir / relative_path / dir_name
-                dir_path.mkdir(parents=True, exist_ok=True)
-
-            # Copy/replace files
-            for file_name in files:
-                source_file = Path(root) / file_name
-                target_file = target_dir / relative_path / file_name
-
-                # Delete existing file if it exists
-                if target_file.exists():
-                    target_file.unlink()
-
-                # Create parent directory if it doesn't exist
-                target_file.parent.mkdir(parents=True, exist_ok=True)
-
-                # Copy the file
-                shutil.copy2(source_file, target_file)
 
     def load_resources(self):
         """Load resources from global config into the table"""
@@ -672,9 +351,11 @@ class DownloadPage(QWidget):
 
     def start_update(self, resource, url, version, update_type):
         """Start downloading an update"""
-        # Create temp directory
+        # Store temporary attributes for later use in update process
         resource.temp_version = version
-        resource.temp_update_type = update_type  # Store update_type for later use
+        resource.temp_update_type = update_type
+
+        # Create temp directory
         temp_dir = Path("assets/temp")
         temp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -781,5 +462,5 @@ class DownloadPage(QWidget):
         """Update all resources with available updates"""
         for row in range(self.resources_table.rowCount()):
             update_btn = self.resources_table.cellWidget(row, 4)
-            if update_btn and isinstance(update_btn, QPushButton) and update_btn.text() == "更新":
+            if update_btn and isinstance(update_btn, QPushButton) and "更新" in update_btn.text():
                 update_btn.click()
