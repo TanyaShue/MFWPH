@@ -396,13 +396,12 @@ class TaskRunner(QRunnable):
     def execute_task(self, task_data):
         """Method to execute specific task"""
         # Execute all tasks in the task list
-        self.logger.debug( f"执行任务列表，共 {len(task_data.task_list)} 个子任务")
+        self.logger.info( f"执行任务列表，共 {len(task_data.task_list)} 个子任务")
 
         for i, task in enumerate(task_data.task_list):
-            self.logger.debug(
-                                        f"执行子任务 {i + 1}/{len(task_data.task_list)}: {task.task_entry}")
+            self.logger.info(f"执行子任务 {i + 1}/{len(task_data.task_list)}: {task.task_entry}")
             self.tasker.post_task(task.task_entry, task.pipeline_override).wait()
-            self.logger.debug( f"子任务 {i + 1} 完成")
+            self.logger.info( f"子任务 {i + 1} 完成")
 
         # Send progress update signal
         self.executor.progress_updated.emit(self.task.id, 100)

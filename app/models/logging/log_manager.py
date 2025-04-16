@@ -59,7 +59,7 @@ class LogManager(QObject):
                 total_size += os.path.getsize(file_path)
 
         # If total size > 10MB, backup logs and then clear them
-        if total_size > 10 * 1024 * 1024:
+        if total_size > 1 * 1024 * 1024:
             self._backup_logs(log_files_to_backup)
 
             # Clear existing log files for fresh start ONLY after backup
