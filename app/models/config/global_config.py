@@ -4,6 +4,7 @@ from typing import List, Dict, Optional, Any
 
 from app.models.config.app_config import AppConfig
 from app.models.config.resource_config import ResourceConfig, SelectOption, BoolOption, InputOption, Task
+from app.models.logging.log_manager import log_manager
 
 
 @dataclass
@@ -161,7 +162,9 @@ class GlobalConfig:
                     pipeline_override=pipeline_override
                 )
                 runtime_configs.append(runtime_config)
-        print(f"RuntimeConfigs: {runtime_configs}")
+
+        logger = log_manager.get_device_logger(device_id)
+        logger.debug(f"RuntimeConfigs: {runtime_configs}")
         # 通过 source_file（包含文件名）计算出资源加载目录
         resource_path = Path(resource_config.source_file).parent if resource_config.source_file else Path()
         return RunTimeConfigs(task_list=runtime_configs, resource_path=resource_path)
