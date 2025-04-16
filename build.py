@@ -67,11 +67,11 @@ def extract_version():
     return VERSION
 
 
-def update_devices_json(version, build_time):
+def update_app_configjson(version, build_time):
     """Update version information in app_config.json at top level, creating the file if it doesn't exist"""
     current_dir = os.getcwd()
     config_dir = os.path.join(current_dir, 'assets', 'config')
-    devices_json_path = os.path.join(config_dir, 'app_config.json')
+    app_configjson_path = os.path.join(config_dir, 'app_config.json')
 
     try:
         # Create directory structure if it doesn't exist
@@ -80,12 +80,12 @@ def update_devices_json(version, build_time):
             print(f"Created directory: {config_dir}")
 
         # Initialize config
-        if os.path.exists(devices_json_path):
-            print(f"Reading existing JSON at: {devices_json_path}")
-            with open(devices_json_path, 'r', encoding='utf-8') as f:
+        if os.path.exists(app_configjson_path):
+            print(f"Reading existing JSON at: {app_configjson_path}")
+            with open(app_configjson_path, 'r', encoding='utf-8') as f:
                 config = json.load(f)
         else:
-            print(f"app_config.json not found. Creating new file at: {devices_json_path}")
+            print(f"app_config.json not found. Creating new file at: {app_configjson_path}")
             config = {}  # Initialize empty config if file doesn't exist
 
         # Add version info at top level
@@ -93,7 +93,7 @@ def update_devices_json(version, build_time):
         config["build_time"] = build_time
 
         # Save updated config
-        with open(devices_json_path, 'w', encoding='utf-8') as f:
+        with open(app_configjson_path, 'w', encoding='utf-8') as f:
             json.dump(config, f, indent=4, ensure_ascii=False)
 
         print(f"Successfully updated version info in app_config.json")
@@ -140,7 +140,7 @@ def main():
     os.makedirs(dist_dir, exist_ok=True)
 
     # Update version in app_config.json
-    update_devices_json(version, build_time)
+    update_app_configjson(version, build_time)
 
     # Find required paths
     maa_bin_path = find_path_in_site_packages('maa/bin')

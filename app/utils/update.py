@@ -4,6 +4,7 @@ import requests
 from PySide6.QtCore import QThread, Signal
 
 from app.models.config.global_config import global_config
+from app.models.logging.log_manager import log_manager
 
 
 class DownloadThread(QThread):
@@ -75,7 +76,7 @@ class DownloadThread(QThread):
 
 class UpdateCheckThread(QThread):
     """Thread for checking updates using API or GitHub"""
-    update_found = Signal(str, str, str, str)  # resource_name, latest_version, current_version, download_url
+    update_found = Signal(str, str, str, str,str)  # resource_name, latest_version, current_version, download_url
     update_not_found = Signal(str)  # resource_name (single mode only)
     check_failed = Signal(str, str)  # resource_name, error_message (single mode only)
     check_completed = Signal(int, int)  # total_checked, updates_found (batch mode only)
@@ -88,6 +89,7 @@ class UpdateCheckThread(QThread):
         # 根据更新方法设置基础URL
         self.mirror_base_url = "https://mirrorchyan.com/api"
         self.github_api_url = "https://api.github.com"
+        self.logger=log_manager.get_app_logger()
 
     def run(self):
         updates_found = 0
@@ -128,8 +130,18 @@ class UpdateCheckThread(QThread):
                 "user_agent": "ResourceDownloader",
                 "channel": channel  # 根据配置动态选择通道
             }
+
+            # 打印日志时移除或隐藏 cdk
+            log_params = params.copy()
+            log_params["cdk"] = "***"  # 或者使用 log_params.pop("cdk") 来完全移除
+
+            self.logger.debug(
+                f"检查资源:{resource.resource_name}更新,api_url:{api_url},params:{log_params}"
+            )
+
             response = requests.get(api_url, params=params)
 
+            self.logger.debug(f"资源检查响应:{response}")
             # 定义业务逻辑错误码与说明的对应关系
             error_map = {
                 1001: "INVALID_PARAMS: 参数不正确，请参考集成文档",
@@ -189,6 +201,7 @@ class UpdateCheckThread(QThread):
             data = result.get("data", {})
             latest_version = data.get("version_name", "")
             download_url = data.get("url", "")
+            update_type=data.get("update_type", "full")
 
             if latest_version and latest_version != resource.resource_version:
                 # 检测到新版本，发出更新通知
@@ -196,7 +209,8 @@ class UpdateCheckThread(QThread):
                     resource.resource_name,
                     latest_version,
                     resource.resource_version,
-                    download_url
+                    download_url,
+                    update_type
                 )
                 return 1
             elif self.single_mode:

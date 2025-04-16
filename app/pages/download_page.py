@@ -332,33 +332,29 @@ class DownloadPage(QWidget):
         """Install an update for an existing resource"""
         # 获取传入的新版本号（从start_update方法传递过来的version参数）
         new_version = resource.temp_version if hasattr(resource, 'temp_version') else None
+        # 获取更新类型（从start_update方法传递过来的update_type参数）
+        update_type = resource.temp_update_type if hasattr(resource, 'temp_update_type') else "full"
 
         with tempfile.TemporaryDirectory() as extract_dir:
             # Extract ZIP
             with zipfile.ZipFile(file_path, 'r') as zip_ref:
                 zip_ref.extractall(extract_dir)
 
-            # Find resource directory
-            resource_dir = None
-            resource_config_path = None
-
-            for root, dirs, files in os.walk(extract_dir):
-                if "resource_config.json" in files:
-                    resource_config_path = os.path.join(root, "resource_config.json")
-                    resource_dir = root
-                    break
-
-            if not resource_config_path:
-                raise ValueError("更新包中未找到resource_config.json文件")
-
             # Get original resource directory
             original_resource_dir = Path(resource.source_file).parent
 
-            # Create selective backup of files that will be updated
-            self._create_selective_backup(resource, resource_dir, original_resource_dir)
+            # Handle incremental update
+            if update_type == "incremental":
+                changes_path = os.path.join(extract_dir, "changes.json")
 
-            # Selectively update files instead of replacing entire directory
-            self._selective_update(resource_dir, original_resource_dir)
+                if os.path.exists(changes_path):
+                    self._apply_incremental_update(resource, extract_dir, original_resource_dir, changes_path)
+                else:
+                    # Fall back to full update if changes.json is missing
+                    self._apply_full_update(resource, extract_dir, original_resource_dir)
+            else:
+                # Handle full update
+                self._apply_full_update(resource, extract_dir, original_resource_dir)
 
             # Reload resource config
             global_config.load_resource_config(str(original_resource_dir / "resource_config.json"))
@@ -371,6 +367,133 @@ class DownloadPage(QWidget):
 
             # Save all configs
             global_config.save_all_configs()
+
+    def _apply_full_update(self, resource, extract_dir, original_resource_dir):
+        """Apply a full update by replacing all files"""
+        # Find resource directory
+        resource_dir = None
+        resource_config_path = None
+
+        for root, dirs, files in os.walk(extract_dir):
+            if "resource_config.json" in files:
+                resource_config_path = os.path.join(root, "resource_config.json")
+                resource_dir = root
+                break
+
+        if not resource_config_path:
+            raise ValueError("更新包中未找到resource_config.json文件")
+
+        # Create selective backup of files that will be updated
+        self._create_selective_backup(resource, resource_dir, original_resource_dir)
+
+        # Selectively update files instead of replacing entire directory
+        self._selective_update(resource_dir, original_resource_dir)
+
+    def _apply_incremental_update(self, resource, extract_dir, original_resource_dir, changes_path):
+        """Apply an incremental update based on changes.json"""
+        try:
+            # Load changes.json
+            with open(changes_path, 'r', encoding='utf-8') as f:
+                changes = json.load(f)
+
+            # Create backup for modified files
+            self._create_incremental_backup(resource, changes, original_resource_dir)
+
+            # Handle modified files
+            if "modified" in changes:
+                for file_path in changes["modified"]:
+                    # Skip MFWPH.exe for now
+                    if file_path == "MFWPH.exe":
+                        # TODO: Handle MFWPH.exe specially
+                        continue
+
+                    # Get source and target paths
+                    source_file = Path(extract_dir) / file_path
+                    target_file = original_resource_dir.parent.parent / file_path
+
+                    # Ensure source file exists
+                    if source_file.exists():
+                        # Ensure target directory exists
+                        target_file.parent.mkdir(parents=True, exist_ok=True)
+
+                        # Replace file
+                        if target_file.exists():
+                            target_file.unlink()
+                        shutil.copy2(source_file, target_file)
+
+            # Handle added files
+            if "added" in changes:
+                for file_path in changes["added"]:
+                    # Skip MFWPH.exe for now
+                    if file_path == "MFWPH.exe":
+                        # TODO: Handle MFWPH.exe specially
+                        continue
+
+                    # Get source and target paths
+                    source_file = Path(extract_dir) / file_path
+                    target_file = original_resource_dir.parent.parent / file_path
+
+                    # Ensure source file exists
+                    if source_file.exists():
+                        # Ensure target directory exists
+                        target_file.parent.mkdir(parents=True, exist_ok=True)
+
+                        # Add new file
+                        shutil.copy2(source_file, target_file)
+
+            # Handle deleted files
+            if "deleted" in changes:
+                for file_path in changes["deleted"]:
+                    # Skip MFWPH.exe for now
+                    if file_path == "MFWPH.exe":
+                        # TODO: Handle MFWPH.exe specially
+                        continue
+
+                    # Get target path
+                    target_file = original_resource_dir.parent.parent / file_path
+
+                    # Delete file if it exists
+                    if target_file.exists():
+                        target_file.unlink()
+
+        except Exception as e:
+            # If anything goes wrong, fall back to full update
+            QMessageBox.warning(self, "增量更新失败",
+                                f"应用增量更新时出错: {str(e)}\n正在尝试完整更新...")
+            self._apply_full_update(resource, extract_dir, original_resource_dir)
+
+    def _create_incremental_backup(self, resource, changes, original_dir):
+        """Create a backup of only the modified and deleted files in an incremental update"""
+        # Create history directory
+        history_dir = Path("assets/history")
+        history_dir.mkdir(parents=True, exist_ok=True)
+
+        # Create timestamped backup filename
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_filename = f"{resource.resource_name}_{resource.resource_version}_{timestamp}.zip"
+        backup_path = history_dir / backup_filename
+
+        # Only backup files that will be modified or deleted
+        with zipfile.ZipFile(backup_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            # Backup modified files
+            if "modified" in changes:
+                for file_path in changes["modified"]:
+                    # Get the original file path
+                    original_file_path = original_dir.parent.parent / file_path
+                    if original_file_path.exists():
+                        # Add to backup with proper relative path
+                        arcname = file_path
+                        zipf.write(original_file_path, arcname)
+
+            # Backup deleted files
+            if "deleted" in changes:
+                for file_path in changes["deleted"]:
+                    # Get the original file path
+                    original_file_path = original_dir.parent.parent / file_path
+                    if original_file_path.exists():
+                        # Add to backup with proper relative path
+                        arcname = file_path
+                        zipf.write(original_file_path, arcname)
 
     def _create_selective_backup(self, resource, update_dir, original_dir):
         """Create a backup of only the files that will be updated"""
@@ -485,7 +608,7 @@ class DownloadPage(QWidget):
         self.threads.append(thread)
         thread.start()
 
-    def _handle_update_found(self, resource_name, latest_version, current_version, download_url):
+    def _handle_update_found(self, resource_name, latest_version, current_version, download_url, update_type):
         """Handle update found for a resource"""
         for row in range(self.resources_table.rowCount()):
             item = self.resources_table.item(row, 0)
@@ -498,12 +621,14 @@ class DownloadPage(QWidget):
                                  if r.resource_name == resource_name), None)
 
                 if resource:
-                    update_btn = QPushButton("更新")
+                    # Add update type indicator to the button
+                    update_type_display = "增量" if update_type == "incremental" else "完整"
+                    update_btn = QPushButton(f"{update_type_display}更新")
                     update_btn.setObjectName("update_btn")
                     update_btn.setFixedHeight(30)
                     update_btn.clicked.connect(
-                        lambda checked, r=resource, url=download_url, v=latest_version:
-                        self.start_update(r, url, v)
+                        lambda checked, r=resource, url=download_url, v=latest_version, up=update_type:
+                        self.start_update(r, url, v, up)
                     )
                     self.resources_table.setCellWidget(row, 4, update_btn)
                 break
@@ -545,10 +670,11 @@ class DownloadPage(QWidget):
                     self.resources_table.setCellWidget(row, 4, check_btn)
                 break
 
-    def start_update(self, resource, url, version):
+    def start_update(self, resource, url, version, update_type):
         """Start downloading an update"""
         # Create temp directory
         resource.temp_version = version
+        resource.temp_update_type = update_type  # Store update_type for later use
         temp_dir = Path("assets/temp")
         temp_dir.mkdir(parents=True, exist_ok=True)
 
@@ -581,7 +707,9 @@ class DownloadPage(QWidget):
         for i in range(self.resources_table.rowCount()):
             item = self.resources_table.item(i, 0)
             if item and item.text() == resource.resource_name:
-                downloading_btn = QPushButton("下载中...")
+                # Show update type in the button text
+                update_type_display = "增量" if update_type == "incremental" else "完整"
+                downloading_btn = QPushButton(f"下载{update_type_display}更新...")
                 downloading_btn.setObjectName("downloading_btn")
                 downloading_btn.setFixedHeight(30)
                 downloading_btn.setEnabled(False)

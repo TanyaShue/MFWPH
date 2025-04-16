@@ -25,12 +25,21 @@ class LogManager(QObject):
         self.handle_to_device: Dict[Any, str] = {}
         self.context_to_logger: Dict[Any, logging.Logger] = {}
 
+        # Record session start time for filtering logs
+        self.session_start_time = datetime.now()
+        self.session_start_str = self.session_start_time.strftime("%Y-%m-%d %H:%M:%S")
+
         # Setup directories and check log size
         self._ensure_directories()
         self._check_and_backup_logs()
 
         # Initialize the main application logger
         self.initialize_logger("app", "app.log")
+
+        # Log session start
+        app_logger = self.get_app_logger()
+        if app_logger:
+            app_logger.info(f"=== New session started at {self.session_start_str} ===")
 
     def _ensure_directories(self):
         """Ensure the log directory and backup directory exist"""
@@ -49,13 +58,13 @@ class LogManager(QObject):
                 log_files_to_backup.append(file_path)
                 total_size += os.path.getsize(file_path)
 
-        # If total size > 10MB, backup logs
+        # If total size > 10MB, backup logs and then clear them
         if total_size > 10 * 1024 * 1024:
             self._backup_logs(log_files_to_backup)
 
-        # Clear existing log files for fresh start
-        for file_path in log_files_to_backup:
-            open(file_path, 'w', encoding='utf-8').close()
+            # Clear existing log files for fresh start ONLY after backup
+            for file_path in log_files_to_backup:
+                open(file_path, 'w', encoding='utf-8').close()
 
     def _backup_logs(self, log_files):
         """Backup log files to a zip archive"""
@@ -208,24 +217,59 @@ class LogManager(QObject):
         self.context_to_logger.clear()
 
     def get_device_logs(self, device_name: str, max_lines: int = 100) -> List[str]:
-        """Retrieve recent logs for a specific device"""
+        """Retrieve recent logs for a specific device, filtered by current session"""
         log_file = os.path.join(self.log_dir, f"{device_name}.log")
         if not os.path.exists(log_file):
             return []
 
         with open(log_file, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-            return lines[-max_lines:] if len(lines) > max_lines else lines
+            all_lines = f.readlines()
+
+        # Filter lines by session start time
+        session_lines = []
+        for line in all_lines:
+            try:
+                # Extract timestamp from log line (assuming format: '2023-01-01 12:34:56 - INFO - message')
+                timestamp_str = line.split(' - ')[0].strip()
+                log_time = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
+
+                # Only include logs from current session
+                if log_time >= self.session_start_time:
+                    session_lines.append(line)
+            except (ValueError, IndexError):
+                # If we can't parse the timestamp, include the line anyway
+                # This ensures we don't lose any logs due to format issues
+                session_lines.append(line)
+
+        # Return the last 'max_lines' lines from the current session
+        return session_lines[-max_lines:] if len(session_lines) > max_lines else session_lines
 
     def get_all_logs(self, max_lines: int = 100) -> List[str]:
-        """Retrieve recent logs from the main application log"""
+        """Retrieve recent logs from the main application log, filtered by current session"""
         log_file = os.path.join(self.log_dir, "app.log")
         if not os.path.exists(log_file):
             return []
 
         with open(log_file, 'r', encoding='utf-8') as f:
-            lines = f.readlines()
-            return lines[-max_lines:] if len(lines) > max_lines else lines
+            all_lines = f.readlines()
+
+        # Filter lines by session start time
+        session_lines = []
+        for line in all_lines:
+            try:
+                # Extract timestamp from log line (assuming format: '2023-01-01 12:34:56 - INFO - message')
+                timestamp_str = line.split(' - ')[0].strip()
+                log_time = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
+
+                # Only include logs from current session
+                if log_time >= self.session_start_time:
+                    session_lines.append(line)
+            except (ValueError, IndexError):
+                # If we can't parse the timestamp, include the line anyway
+                session_lines.append(line)
+
+        # Return the last 'max_lines' lines from the current session
+        return session_lines[-max_lines:] if len(session_lines) > max_lines else session_lines
 
 
 class AppLogSignalHandler(logging.Handler):
@@ -292,26 +336,6 @@ class ContextLogger:
 
         return logger
 
-
-# 示例用法
-"""
-# 使用方式:
-
-# 1. 获取context关联的logger
-logger = log_manager.get_context_logger(context)
-
-# 2. 直接使用logger记录日志
-logger.debug("这是一条调试日志")
-logger.info("这是一条信息日志")
-logger.warning("这是一条警告日志")
-logger.error("这是一条错误日志")
-
-# 3. 如果需要同步到应用日志，可以使用*_context方法
-logger.debug_context(context, "这条调试日志会同步到应用日志")
-logger.info_context(context, "这条信息日志会同步到应用日志")
-logger.warning_context(context, "这条警告日志会同步到应用日志")
-logger.error_context(context, "这条错误日志会同步到应用日志")
-"""
 
 # Create a singleton instance
 log_manager = LogManager()
