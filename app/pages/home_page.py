@@ -170,7 +170,7 @@ class HomePage(QFrame):
         cards_frame_layout.addWidget(scroll_area)
 
         # 创建并设置日志显示
-        self.log_display = LogDisplay(self)
+        self.log_display = LogDisplay(self,enable_log_level_filter=True)
         self.log_display.setObjectName("logFrame")
         self.log_display.setMinimumHeight(100)
         self.log_display.setVisible(False)

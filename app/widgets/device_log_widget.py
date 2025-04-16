@@ -38,7 +38,7 @@ class DeviceLogWidget(QFrame):
 
 
         # Create and configure log display with device logs
-        self.log_display = LogDisplay()
+        self.log_display = LogDisplay(enable_log_level_filter=True,show_device_selector=False)
         self.log_display.setObjectName("logDisplay")
         self.log_display.show_device_logs(self.device_name)
 

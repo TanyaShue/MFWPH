@@ -1,7 +1,8 @@
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QTextEdit,
-    QLabel, QComboBox, QFrame
+    QLabel, QComboBox, QFrame, QCheckBox
 )
 
 from app.models.logging.log_manager import log_manager
@@ -12,16 +13,25 @@ class LogDisplay(QFrame):
     Component to display application and device logs with real-time updates
     """
 
-    def __init__(self, parent=None):
+    def __init__(self, parent=None, enable_log_level_filter=False, show_device_selector=True):
         super().__init__(parent)
         self.setObjectName("logDisplay")
         self.setFrameShape(QFrame.StyledPanel)
+
+        # Flag to control device selector visibility
+        self.show_device_selector = show_device_selector
 
         # Current display mode: "all" or device name
         self.current_device = "all"
 
         # Current log level filter: "all" or specific level
         self.current_log_level = "all"
+
+        # Flag to enable/disable log level filtering
+        self.enable_log_level_filter = enable_log_level_filter
+
+        # Log level hierarchy (from lowest to highest)
+        self.log_level_hierarchy = ["DEBUG", "INFO", "WARNING", "ERROR"]
 
         # Dictionary to map device handles to device names
         self.handle_to_device = {}
@@ -53,10 +63,7 @@ class LogDisplay(QFrame):
         title_label.setFont(QFont("Arial", 12, QFont.Bold))
         header_layout.addWidget(title_label)
 
-        # Dropdown for device selection
-        self.device_selector = QComboBox()
-        self.device_selector.addItem("全部日志", "all")
-        self.device_selector.currentIndexChanged.connect(self.on_device_changed)
+        # Add stretch to push device selector to the right
         header_layout.addStretch()
 
         # Add log level selector
@@ -67,15 +74,27 @@ class LogDisplay(QFrame):
         self.log_level_selector.addItem("WARNING", "WARNING")
         self.log_level_selector.addItem("ERROR", "ERROR")
         self.log_level_selector.currentIndexChanged.connect(self.on_log_level_changed)
+        self.log_level_selector.setVisible(self.enable_log_level_filter)
         header_layout.addWidget(self.log_level_selector)
 
-        # Add some spacing between selectors
-        header_layout.addSpacing(10)
+        # Only show device selector if enabled
+        if self.show_device_selector:
+            # Add some spacing between selectors
+            header_layout.addSpacing(10)
 
-        # Device selector label
-        device_label = QLabel("设备:")
-        header_layout.addWidget(device_label)
-        header_layout.addWidget(self.device_selector)
+            # Device selector label
+            device_label = QLabel("设备:")
+            header_layout.addWidget(device_label)
+
+            # Dropdown for device selection
+            self.device_selector = QComboBox()
+            self.device_selector.addItem("全部日志", "all")
+            self.device_selector.currentIndexChanged.connect(self.on_device_changed)
+            header_layout.addWidget(self.device_selector)
+        else:
+            # Create a hidden device selector to maintain API compatibility
+            self.device_selector = QComboBox()
+            self.device_selector.setVisible(False)
 
         main_layout.addLayout(header_layout)
 
@@ -93,6 +112,9 @@ class LogDisplay(QFrame):
 
     def update_device_list(self, devices):
         """Update the device dropdown list"""
+        if not self.show_device_selector:
+            return
+
         # Store current selection
         current_index = self.device_selector.currentIndex()
         current_data = self.device_selector.currentData() if current_index >= 0 else "all"
@@ -134,15 +156,43 @@ class LogDisplay(QFrame):
             logs = log_manager.get_device_logs(self.current_device)
 
         # Apply log level filtering
-        if self.current_log_level != "all":
-            filtered_logs = []
-            for log in logs:
-                level_marker = f" - {self.current_log_level} - "
-                if level_marker in log:
-                    filtered_logs.append(log)
-            logs = filtered_logs
+        filtered_logs = []
 
-        self.display_logs(logs)
+        for log in logs:
+            # Determine the log level
+            log_level = None
+            for level in self.log_level_hierarchy:
+                if f" - {level} - " in log:
+                    log_level = level
+                    break
+
+            if log_level is None:
+                # If no level marker found, assume it's INFO
+                log_level = "INFO"
+
+            # Get the index of the log level in the hierarchy
+            log_level_index = self.log_level_hierarchy.index(log_level)
+
+            if self.enable_log_level_filter:
+                # If filtering is enabled
+                if self.current_log_level == "all":
+                    # Show all logs when "all" is selected
+                    filtered_logs.append(log)
+                else:
+                    # Get the index of the selected level in the hierarchy
+                    selected_level_index = self.log_level_hierarchy.index(self.current_log_level)
+
+                    # Show logs of selected level and above
+                    if log_level_index >= selected_level_index:
+                        filtered_logs.append(log)
+            else:
+                # If filtering is disabled, show INFO and above (not DEBUG)
+                info_level_index = self.log_level_hierarchy.index("INFO")
+                if log_level_index >= info_level_index:
+                    filtered_logs.append(log)
+
+        # Update logs with filtered list
+        self.display_logs(filtered_logs)
 
     def display_logs(self, logs):
         """Display logs with optimized formatting - only time and message"""
@@ -214,6 +264,12 @@ class LogDisplay(QFrame):
 
     def show_device_logs(self, device_name):
         """Show logs for a specific device"""
+        # Set the current device directly when device selector is not shown
+        if not self.show_device_selector:
+            self.current_device = device_name
+            self.request_logs_update()
+            return
+
         # Find and select the device in the dropdown
         index = self.device_selector.findData(device_name)
         if index >= 0:
