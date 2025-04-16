@@ -17,6 +17,7 @@ jobs:
         uses: actions/checkout@v2
         with:
           submodules: true
+          fetch-depth: 0  # This is important for changelog generation
 
       - name: Set up Python
         uses: actions/setup-python@v2
@@ -27,37 +28,37 @@ jobs:
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
-          
 
       - name: Generate Changelog
         id: changelog
         shell: pwsh
         run: |
-          # 获取当前标签
+          # Get current tag
           $currentTag = "${{ github.ref_name }}"
           Write-Host "Current tag: $currentTag"
           
-          # 获取上一个标签
-          $previousTag = git describe --tags --abbrev=0 HEAD^ 2>$null
+          # Get previous tag - better method
+          $previousTag = $(git tag --sort=-creatordate | Select-Object -Skip 1 -First 1)
           if (-not $previousTag) {
             Write-Host "No previous tag found, using first commit"
-            $previousTag = git rev-list --max-parents=0 HEAD
+            $previousTag = $(git rev-list --max-parents=0 HEAD)
           }
           Write-Host "Previous tag/commit: $previousTag"
           
-          # 生成变更日志
-          $changelog = git log --pretty=format:"* %s (%h)" "$previousTag..$currentTag"
-          if (-not $changelog) {
+          # Generate changelog - fixed command
+          $changelog = $(git log --pretty=format:"* %s (%h)" "$previousTag..$currentTag")
+          if (-not $changelog -or $changelog -eq "") {
             $changelog = "* 首次发布"
           }
           
-          # 设置变更日志为GitHub Actions输出变量
-          $changelog = $changelog -replace "`n", "%0A"
-          echo "CHANGELOG<<EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          echo $changelog | Out-File -FilePath $env:GITHUB_OUTPUT -Append
-          echo "EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          # Set changelog as GitHub Actions output variable with proper multiline handling
+          $changelog = $changelog -replace "`r`n", "%0A" -replace "`n", "%0A"
+          "CHANGELOG<<EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          $changelog | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          "EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
           
-          Write-Host "Generated changelog for release"
+          Write-Host "Generated changelog for release:"
+          Write-Host $changelog
 
       - name: Copy DLL files to Python root
         shell: pwsh
