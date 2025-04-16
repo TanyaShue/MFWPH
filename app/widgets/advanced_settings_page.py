@@ -15,6 +15,7 @@ class AdvancedSettingsPage(QFrame):
     def __init__(self, device_config, parent=None):
         super().__init__(parent)
         self.device_config = device_config
+        self.logger=log_manager.get_device_logger(device_config.device_name)
         self.selected_resource_name = None
 
         self.setObjectName("contentCard")
@@ -166,8 +167,7 @@ class AdvancedSettingsPage(QFrame):
 
         # 示例中没有收集新的设置值，只做日志记录
         global_config.save_all_configs()
-        device_name = self.device_config.device_name if hasattr(self.device_config, 'device_name') else "未知设备"
-        log_manager.log_device_info(device_name, f"资源 {self.selected_resource_name} 的高级设置已更新")
+        self.logger.info( f"资源 {self.selected_resource_name} 的高级设置已更新")
 
     def clear_settings(self):
         """清除设置并显示占位符"""

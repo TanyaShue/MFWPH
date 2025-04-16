@@ -18,6 +18,7 @@ class BasicSettingsPage(QFrame):
     def __init__(self, device_config, parent=None):
         super().__init__(parent)
         self.device_config = device_config
+        self.logger=log_manager.get_device_logger(device_config.device_name)
         self.selected_resource_name = None
         self.task_option_widgets = {}
 
@@ -111,7 +112,7 @@ class BasicSettingsPage(QFrame):
 
                 # 记录创建新资源的日志
                 device_name = self.device_config.device_name if hasattr(self.device_config, 'device_name') else "未知设备"
-                log_manager.log_device_info(device_name, f"为设备自动创建了资源 {resource_name} 的配置")
+                self.logger.info( f"为设备自动创建了资源 {resource_name} 的配置")
             except Exception as e:
                 # 如果创建资源时出错，记录并显示警告
                 log_manager.log_device_error(
@@ -278,7 +279,7 @@ class BasicSettingsPage(QFrame):
 
             # 记录创建新资源的日志
             device_name = self.device_config.device_name if hasattr(self.device_config, 'device_name') else "未知设备"
-            log_manager.log_device_info(device_name, f"已创建资源 {resource_name} 的配置")
+            self.logger.info( f"已创建资源 {resource_name} 的配置")
 
             # 使用新资源刷新设置显示
             self.show_resource_settings(resource_name)
@@ -411,7 +412,7 @@ class BasicSettingsPage(QFrame):
         status_text = "已选择" if is_selected else "已取消选择"
         device_name = self.device_config.device_name if hasattr(self.device_config, 'device_name') else "未知设备"
         resource_name = resource_config.resource_name if hasattr(resource_config, 'resource_name') else "未知资源"
-        log_manager.log_device_info(device_name, f"资源 [{resource_name}] 的任务 [{task_name}] {status_text}")
+        self.logger.info( f"资源 [{resource_name}] 的任务 [{task_name}] {status_text}")
 
     def update_option_value(self, resource_config, option_name, value):
         """Update option value for a resource with improved feedback"""
@@ -450,7 +451,7 @@ class BasicSettingsPage(QFrame):
                         # 转换失败时记录错误并返回
                         device_name = self.device_config.device_name if hasattr(self.device_config,
                                                                                 'device_name') else "未知设备"
-                        log_manager.log_device_error(device_name, f"选项 {option_name} 的值 '{value}' 无法转换为数字")
+                        self.logger.error( f"选项 {option_name} 的值 '{value}' 无法转换为数字")
                         return
 
         if option:
@@ -469,10 +470,7 @@ class BasicSettingsPage(QFrame):
 
             # Log the change with more details
             device_name = self.device_config.device_name if hasattr(self.device_config, 'device_name') else "未知设备"
-            log_manager.log_device_info(
-                device_name,
-                f"资源 [{resource_name}] 的选项 [{option_name}] 已更新: {prev_value} → {value_str}"
-            )
+            self.logger.info(f"资源 [{resource_name}] 的选项 [{option_name}] 已更新: {prev_value} → {value_str}")
         else:
             # 创建新的选项配置
             from app.models.config.app_config import OptionConfig  # 正确导入OptionConfig类
@@ -494,10 +492,7 @@ class BasicSettingsPage(QFrame):
 
             # 记录日志 - 修复资源名称获取
             device_name = self.device_config.device_name if hasattr(self.device_config, 'device_name') else "未知设备"
-            log_manager.log_device_info(
-                device_name,
-                f"资源 [{resource_name}] 添加了新选项 [{option_name}]，值为: {value_str}"
-            )
+            self.logger.info(f"资源 [{resource_name}] 添加了新选项 [{option_name}]，值为: {value_str}")
 
     def on_drag_tasks(self, current_order):
         """处理任务拖放重新排序"""
@@ -519,7 +514,7 @@ class BasicSettingsPage(QFrame):
 
         # 记录更改
         device_name = self.device_config.device_name if hasattr(self.device_config, 'device_name') else "未知设备"
-        log_manager.log_device_info(device_name, f"资源 {self.selected_resource_name} 的任务顺序已更新")
+        self.logger.info( f"资源 {self.selected_resource_name} 的任务顺序已更新")
 
     def _clear_layout(self, layout):
         """清除布局中的所有小部件"""

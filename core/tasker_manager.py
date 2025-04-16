@@ -41,6 +41,8 @@ class TaskerManager(QObject):
             try:
                 self.logger.info(f"正在为设备 {device_config.device_name} 创建任务执行器")
                 executor = TaskExecutor(device_config, parent=self)
+                log_manager.set_device_handle(device_config.device_name, executor._tasker._handle)
+                self.logger.debug(f"以为设备{device_config.device_name}设置handle:{executor._tasker._handle}")
                 if executor.start():
                     self._executors[device_config.device_name] = executor
                     self.device_added.emit(device_config.device_name)
@@ -139,7 +141,6 @@ class TaskerManager(QObject):
             self.logger.debug(f"当前活跃设备数量: {len(devices)}")
             return devices
 
-    @Slot()
     @asyncSlot()  # Qt 信号槽中使用 asyncSlot
     async def stop_all(self) -> None:
         """

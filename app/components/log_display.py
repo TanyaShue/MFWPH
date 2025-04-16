@@ -20,6 +20,14 @@ class LogDisplay(QFrame):
         # Current display mode: "all" or device name
         self.current_device = "all"
 
+        # Current log level filter: "all" or specific level
+        self.current_log_level = "all"
+
+        # Dictionary to map device handles to device names
+        self.handle_to_device = {}
+        # Dictionary to map device names to handles
+        self.device_to_handle = {}
+
         # Configure colors for different log levels
         self.log_colors = {
             "INFO": QColor("#888888"),  # Gray instead of blue
@@ -50,6 +58,23 @@ class LogDisplay(QFrame):
         self.device_selector.addItem("全部日志", "all")
         self.device_selector.currentIndexChanged.connect(self.on_device_changed)
         header_layout.addStretch()
+
+        # Add log level selector
+        self.log_level_selector = QComboBox()
+        self.log_level_selector.addItem("全部级别", "all")
+        self.log_level_selector.addItem("INFO", "INFO")
+        self.log_level_selector.addItem("DEBUG", "DEBUG")
+        self.log_level_selector.addItem("WARNING", "WARNING")
+        self.log_level_selector.addItem("ERROR", "ERROR")
+        self.log_level_selector.currentIndexChanged.connect(self.on_log_level_changed)
+        header_layout.addWidget(self.log_level_selector)
+
+        # Add some spacing between selectors
+        header_layout.addSpacing(10)
+
+        # Device selector label
+        device_label = QLabel("设备:")
+        header_layout.addWidget(device_label)
         header_layout.addWidget(self.device_selector)
 
         main_layout.addLayout(header_layout)
@@ -63,7 +88,6 @@ class LogDisplay(QFrame):
         # Set line spacing and text formatting
         self.log_text.document().setDocumentMargin(8)
         self.log_text.setObjectName("log_text")
-
 
         main_layout.addWidget(self.log_text)
 
@@ -96,12 +120,27 @@ class LogDisplay(QFrame):
             self.current_device = self.device_selector.currentData()
             self.request_logs_update()
 
+    def on_log_level_changed(self, index):
+        """Handle log level selection change"""
+        if index >= 0:
+            self.current_log_level = self.log_level_selector.currentData()
+            self.request_logs_update()
+
     def request_logs_update(self):
         """Request a log update for the current device"""
         if self.current_device == "all":
             logs = log_manager.get_all_logs()
         else:
             logs = log_manager.get_device_logs(self.current_device)
+
+        # Apply log level filtering
+        if self.current_log_level != "all":
+            filtered_logs = []
+            for log in logs:
+                level_marker = f" - {self.current_log_level} - "
+                if level_marker in log:
+                    filtered_logs.append(log)
+            logs = filtered_logs
 
         self.display_logs(logs)
 
@@ -193,3 +232,34 @@ class LogDisplay(QFrame):
         """Handle device log update signal"""
         if self.current_device == device_name or self.current_device == "all":
             self.request_logs_update()
+
+    def set_device_handle(self, device_name, handle):
+        """Set a handle for a device name"""
+        # Store handle to device mapping
+        self.handle_to_device[handle] = device_name
+        # Store device to handle mapping
+        self.device_to_handle[device_name] = handle
+
+    def add_log_by_handle(self, handle, message, level="INFO"):
+        """Add a log entry to a device identified by its handle"""
+        if handle in self.handle_to_device:
+            device_name = self.handle_to_device[handle]
+            # Use log_manager to add the log
+            import datetime
+            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            log_entry = f"{timestamp} - {level} - {message}"
+
+            # Add log to device logs
+            log_manager.add_device_log(device_name, log_entry)
+            return True
+        else:
+            # Handle not found
+            return False
+
+    def get_device_by_handle(self, handle):
+        """Get device name associated with a handle"""
+        return self.handle_to_device.get(handle)
+
+    def get_handle_by_device(self, device_name):
+        """Get handle associated with a device name"""
+        return self.device_to_handle.get(device_name)

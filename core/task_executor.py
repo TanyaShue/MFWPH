@@ -88,6 +88,8 @@ class TaskExecutor(QObject):
     def __init__(self, device_config: DeviceConfig, parent=None):
         super().__init__(parent)
         self.device_name = device_config.device_name
+        self.logger=log_manager.get_device_logs(self.device_name)
+        self.device_config = device_config
         self.device_config = device_config
         self.resource_path: Optional[str] = None
 
@@ -136,13 +138,13 @@ class TaskExecutor(QObject):
             try:
                 self._active = True
                 self.state.update_status(DeviceStatus.IDLE)
-                log_manager.log_device_info(self.device_name, f"任务执行器 {self.device_name} 已启动")
+                self.logger.debug( f"任务执行器 {self.device_name} 已启动")
                 self.executor_started.emit()
                 return True
             except Exception as e:
                 error_msg = f"启动任务执行器失败: {e}"
                 self.state.update_status(DeviceStatus.ERROR, error_msg)
-                log_manager.log_device_error(self.device_name, error_msg)
+                self.logger.error( error_msg)
                 return False
 
     def _initialize_resources(self, resource_path: str) -> bool:
@@ -151,20 +153,20 @@ class TaskExecutor(QObject):
             self.resource_path = resource_path
             self.resource = Resource()
             self.resource.post_bundle(resource_path).wait()
-            log_manager.log_device_info(self.device_name, f"资源初始化成功: {resource_path}")
+            self.logger.debug( f"资源初始化成功: {resource_path}")
             return True
         except Exception as e:
             error_msg = f"资源初始化失败: {e}"
-            log_manager.log_device_error(self.device_name, error_msg)
+            self.logger.error( error_msg)
             raise
 
     def load_custom_objects(self, custom_dir):
         if not os.path.exists(custom_dir):
-            log_manager.log_device_info(self.device_name, f"自定义文件夹 {custom_dir} 不存在")
+            self.logger.debug( f"自定义文件夹 {custom_dir} 不存在")
             return
 
         if not os.listdir(custom_dir):
-            log_manager.log_device_info(self.device_name, f"自定义文件夹 {custom_dir} 为空")
+            self.logger.debug( f"自定义文件夹 {custom_dir} 为空")
             return
 
         # Traverse module type folders
@@ -173,10 +175,10 @@ class TaskExecutor(QObject):
             module_type_dir = os.path.join(custom_dir, module_type)
 
             if not os.path.exists(module_type_dir):
-                log_manager.log_device_info(self.device_name, f"{module_type} 文件夹不存在于 {custom_dir}")
+                self.logger.debug( f"{module_type} 文件夹不存在于 {custom_dir}")
                 continue
 
-            log_manager.log_device_info(self.device_name, f"开始加载 {module_type} 模块")
+            self.logger.debug( f"开始加载 {module_type} 模块")
 
             # Traverse all Python files in the directory
             for file in os.listdir(module_type_dir):
@@ -204,16 +206,16 @@ class TaskExecutor(QObject):
 
                                 if module_type == "custom_actions":
                                     if self.resource.register_custom_action(class_name, instance):
-                                        log_manager.log_device_info(self.device_name,
+                                        self.logger.debug(
                                                                     f"加载自定义动作 {class_name} 成功")
 
                                 elif module_type == "custom_recognition":
                                     if self.resource.register_custom_recognition(class_name, instance):
-                                        log_manager.log_device_info(self.device_name,
+                                        self.logger.debug(
                                                                     f"加载自定义识别器 {class_name} 成功")
 
                     except Exception as e:
-                        log_manager.log_device_error(self.device_name, f"加载自定义内容时发生错误 {file_path}: {e}")
+                        self.logger.error( f"加载自定义内容时发生错误 {file_path}: {e}")
 
     @Slot()
     def _process_next_task(self):
@@ -253,14 +255,14 @@ class TaskExecutor(QObject):
             # Update device status
             self.state.update_status(DeviceStatus.RUNNING)
             self.state.current_task = task
-            log_manager.log_device_info(self.device_name, f"设备 {self.device_name} 开始执行任务 {task.id}")
+            self.logger.debug( f"设备 {self.device_name} 开始执行任务 {task.id}")
 
     @Slot(str, object)
     def _handle_task_completed(self, task_id):
         """Task completion handler"""
         with QMutexLocker(self._mutex):
             if self._running_task and self._running_task.id == task_id:
-                log_manager.log_device_info(self.device_name, f"任务 {task_id} 完成")
+                self.logger.debug( f"任务 {task_id} 完成")
                 self._running_task = None
                 self.process_next_task_signal.emit()
 
@@ -269,7 +271,7 @@ class TaskExecutor(QObject):
         """Task failure handler"""
         with QMutexLocker(self._mutex):
             if self._running_task and self._running_task.id == task_id:
-                log_manager.log_device_error(self.device_name, f"任务 {task_id} 失败: {error}")
+                self.logger.error( f"任务 {task_id} 失败: {error}")
                 self._running_task = None
                 self.process_next_task_signal.emit()
 
@@ -282,7 +284,7 @@ class TaskExecutor(QObject):
         with QMutexLocker(self._mutex):
             if not self._active:
                 error_msg = "任务执行器未运行"
-                log_manager.log_device_error(self.device_name, error_msg)
+                self.logger.error( error_msg)
                 raise RuntimeError(error_msg)
 
             task_ids = []
@@ -292,14 +294,14 @@ class TaskExecutor(QObject):
                     task = Task(data)
                     self._task_queue.append(task)
                     self.task_queued.emit(task.id)
-                    log_manager.log_device_info(self.device_name,
+                    self.logger.debug(
                                                 f"任务 {task.id} 已提交到设备 {self.device_name} 队列")
                     task_ids.append(task.id)
             else:
                 task = Task(task_data)
                 self._task_queue.append(task)
                 self.task_queued.emit(task.id)
-                log_manager.log_device_info(self.device_name,
+                self.logger.debug(
                                             f"任务 {task.id} 已提交到设备 {self.device_name} 队列")
                 task_ids.append(task.id)
 
@@ -316,7 +318,7 @@ class TaskExecutor(QObject):
             if not self._active:
                 return
 
-            log_manager.log_device_info(self.device_name, f"正在停止任务执行器 {self.device_name}")
+            self.logger.debug( f"正在停止任务执行器 {self.device_name}")
             self._active = False
             self.state.update_status(DeviceStatus.STOPPING)
 
@@ -324,10 +326,10 @@ class TaskExecutor(QObject):
             for task in self._task_queue:
                 task.status = TaskStatus.CANCELED
                 self.task_canceled.emit(task.id)
-                log_manager.log_device_info(self.device_name, f"任务 {task.id} 已取消")
+                self.logger.debug( f"任务 {task.id} 已取消")
             self._task_queue.clear()
 
-            log_manager.log_device_info(self.device_name, f"任务执行器 {self.device_name} 已停止")
+            self.logger.debug( f"任务执行器 {self.device_name} 已停止")
             self.executor_stopped.emit()
 
     def get_state(self):
@@ -352,6 +354,7 @@ class TaskRunner(QRunnable):
         self.canceled = False
         self.task.runner = self
         self.device_name = executor.device_name
+        self.logger = executor.logger
 
     def run(self):
         """Run the task"""
@@ -359,13 +362,13 @@ class TaskRunner(QRunnable):
         self.task.started_at = datetime.now()
         self.executor.task_started.emit(self.task.id)
 
-        log_manager.log_device_info(self.device_name, f"开始执行任务 {self.task.id}")
+        self.logger.debug( f"开始执行任务 {self.task.id}")
 
         try:
             # Check if already canceled
             if self.canceled:
                 self.task.status = TaskStatus.CANCELED
-                log_manager.log_device_info(self.device_name, f"任务 {self.task.id} 已取消")
+                self.logger.debug( f"任务 {self.task.id} 已取消")
                 self.executor.task_canceled.emit(self.task.id)
                 return
 
@@ -375,32 +378,31 @@ class TaskRunner(QRunnable):
             # Task completed successfully
             self.task.status = TaskStatus.COMPLETED
             self.task.completed_at = datetime.now()
-            log_manager.log_device_info(self.device_name, f"任务 {self.task.id} 成功完成")
+            self.logger.debug( f"任务 {self.task.id} 成功完成")
             self.executor.task_completed.emit(self.task.id, result)
 
         except Exception as e:
             if self.canceled:
                 self.task.status = TaskStatus.CANCELED
-                log_manager.log_device_info(self.device_name, f"任务 {self.task.id} 已取消")
+                self.logger.debug( f"任务 {self.task.id} 已取消")
                 self.executor.task_canceled.emit(self.task.id)
             else:
                 # Task execution failed
                 self.task.status = TaskStatus.FAILED
                 self.task.error = str(e)
                 self.task.completed_at = datetime.now()
-                log_manager.log_device_error(self.device_name, f"任务 {self.task.id} 失败: {e}")
+                self.logger.error( f"任务 {self.task.id} 失败: {e}")
                 self.executor.task_failed.emit(self.task.id, str(e))
-
     def execute_task(self, task_data):
         """Method to execute specific task"""
         # Execute all tasks in the task list
-        log_manager.log_device_info(self.device_name, f"执行任务列表，共 {len(task_data.task_list)} 个子任务")
+        self.logger.debug( f"执行任务列表，共 {len(task_data.task_list)} 个子任务")
 
         for i, task in enumerate(task_data.task_list):
-            log_manager.log_device_info(self.device_name,
+            self.logger.debug(
                                         f"执行子任务 {i + 1}/{len(task_data.task_list)}: {task.task_entry}")
             self.tasker.post_task(task.task_entry, task.pipeline_override).wait()
-            log_manager.log_device_info(self.device_name, f"子任务 {i + 1} 完成")
+            self.logger.debug( f"子任务 {i + 1} 完成")
 
         # Send progress update signal
         self.executor.progress_updated.emit(self.task.id, 100)

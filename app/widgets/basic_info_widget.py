@@ -22,6 +22,7 @@ class BasicInfoWidget(QFrame):
         self.device_name = device_name
         self.device_config = device_config
         self.parent_widget = parent
+        self.logger = log_manager.get_device_logger(device_name)
 
         # 设置基本属性
         self.setObjectName("infoFrame")
@@ -255,12 +256,12 @@ class BasicInfoWidget(QFrame):
         try:
             if self.device_config:
                 # Log the start of task execution
-                log_manager.log_device_info(self.device_name, f"开始执行设备任务")
+                self.logger.info( f"开始执行设备任务")
                 # Execute tasks
                 success = await task_manager.run_device_all_resource_task(self.device_config)
                 # Log completion
                 if success:
-                    log_manager.log_device_info(self.device_name, f"设备任务执行完成")
+                    self.logger.info( f"设备任务执行完成")
                 # Update status display
                 self.update_status_display()
 
@@ -269,7 +270,7 @@ class BasicInfoWidget(QFrame):
                     self.connect_executor_signals()
         except Exception as e:
             # Log error
-            log_manager.log_device_error(self.device_name, f"运行任务时出错: {str(e)}")
+            self.logger.error( f"运行任务时出错: {str(e)}")
 
     def open_settings_dialog(self):
         """Open device settings dialog"""
@@ -285,11 +286,11 @@ class BasicInfoWidget(QFrame):
 
             if updated_device_config:
                 # Device was updated, not deleted
-                log_manager.log_device_info(original_device_name, "设备配置已更新")
+                self.logger.info( "设备配置已更新")
 
                 # 更新定时任务设置
                 task_manager.update_device_scheduled_tasks(updated_device_config)
-                log_manager.log_device_info(original_device_name, "设备定时任务已更新")
+                self.logger.info( "设备定时任务已更新")
 
                 # 更新本地设备配置引用
                 self.device_config = updated_device_config

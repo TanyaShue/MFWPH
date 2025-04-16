@@ -24,6 +24,7 @@ class ResourceWidget(QFrame):
     def __init__(self, device_name, device_config, parent=None):
         super().__init__(parent)
         self.device_name = device_name
+        self.logger=log_manager.get_device_logger(device_name)
         self.device_config = device_config
 
         self.setObjectName("resourceFrame")
@@ -154,7 +155,7 @@ class ResourceWidget(QFrame):
             resource.enable = enabled
         else:
             # Log error if resource doesn't exist
-            log_manager.log_device_info(self.device_name, f"资源 {resource_name} 不存在，无法更新状态")
+            self.logger.debug( f"资源 {resource_name} 不存在，无法更新状态")
             return
 
         # Save the updated configuration
@@ -162,7 +163,7 @@ class ResourceWidget(QFrame):
 
         # Log the change
         status_text = "启用" if enabled else "禁用"
-        log_manager.log_device_info(self.device_name, f"资源 {resource_name} 已{status_text}")
+        self.logger.debug( f"资源 {resource_name} 已{status_text}")
 
         # Emit signal with resource name and new status
         self.resource_status_changed.emit(resource_name, enabled)
@@ -177,15 +178,15 @@ class ResourceWidget(QFrame):
         try:
             if self.device_config:
                 # Log the start of task execution
-                log_manager.log_device_info(self.device_name, f"开始执行所有资源任务")
+                self.logger.debug( f"开始执行所有资源任务")
                 # Execute tasks
                 success =await task_manager.run_device_all_resource_task(self.device_config)
                 if success:
                     # Log completion
-                    log_manager.log_device_info(self.device_name, f"所有资源任务执行完成")
+                    self.logger.debug( f"所有资源任务执行完成")
         except Exception as e:
             # Log error
-            log_manager.log_device_error(self.device_name, f"运行任务时出错: {str(e)}")
+            self.logger.error( f"运行任务时出错: {str(e)}")
 
     def refresh_ui(self, device_config):
         """Refresh widget with updated device config"""

@@ -15,6 +15,7 @@ class DeviceCard(QFrame):
     def __init__(self, device_config, parent=None):
         super().__init__(parent)
         self.device_config = device_config
+        self.logger = log_manager.get_device_logger(self.device_config.device_name)
         self.parent_widget = parent
 
         # Set frame style
@@ -184,7 +185,7 @@ class DeviceCard(QFrame):
             device_name = self.device_config.device_name
             try:
                 # Log the start of task execution
-                log_manager.log_device_info(device_name, f"开始执行设备任务")
+                self.logger.info( f"开始执行设备任务")
 
                 # Execute tasks
                 self.run_btn.setEnabled(False)
@@ -194,7 +195,7 @@ class DeviceCard(QFrame):
 
                 # Log completion
                 if success:
-                    log_manager.log_device_info(device_name, f"设备任务执行完成")
+                    self.logger.info( f"设备任务执行完成")
 
                 self.run_btn.setEnabled(True)
                 self.run_btn.setText("运行")
@@ -203,7 +204,7 @@ class DeviceCard(QFrame):
                 self.update_status()
             except Exception as e:
                 # Log error
-                log_manager.log_device_error(device_name, f"运行任务时出错: {str(e)}")
+                self.logger.error( f"运行任务时出错: {str(e)}")
                 self.run_btn.setEnabled(True)
                 self.run_btn.setText("运行")
 

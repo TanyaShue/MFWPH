@@ -1,8 +1,9 @@
 import logging
 import os
 import zipfile
+import functools
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Any, Callable
 
 from PySide6.QtCore import QObject, Signal
 
@@ -11,10 +12,6 @@ class LogManager(QObject):
     """
     Manages logs for the application, supporting both global and device-specific logs.
     Emits signals when new logs are added.
-    Features:
-    - Fresh logs on each start
-    - Automatic backup of old logs when size exceeds threshold
-    - Real-time signal updates
     """
     # Signals for log updates
     app_log_updated = Signal()
@@ -25,64 +22,52 @@ class LogManager(QObject):
         self.loggers: Dict[str, logging.Logger] = {}
         self.log_dir = "logs"
         self.backup_dir = os.path.join(self.log_dir, "backup")
-        self.ensure_log_directory()
+        self.handle_to_device: Dict[Any, str] = {}
+        self.context_to_logger: Dict[Any, logging.Logger] = {}
 
-        # Check log size and backup if needed before creating new loggers
-        self.check_and_backup_logs()
+        # Setup directories and check log size
+        self._ensure_directories()
+        self._check_and_backup_logs()
 
         # Initialize the main application logger
         self.initialize_logger("app", "app.log")
 
-    def ensure_log_directory(self):
+    def _ensure_directories(self):
         """Ensure the log directory and backup directory exist"""
-        if not os.path.exists(self.log_dir):
-            os.makedirs(self.log_dir)
+        os.makedirs(self.log_dir, exist_ok=True)
+        os.makedirs(self.backup_dir, exist_ok=True)
 
-        if not os.path.exists(self.backup_dir):
-            os.makedirs(self.backup_dir)
-
-    def check_and_backup_logs(self):
-        """
-        Check the total size of all log files and backup if exceeds threshold.
-        Creates fresh log files for this session.
-        """
-        # Store old log files that need to be backed up
+    def _check_and_backup_logs(self):
+        """Backup logs if size exceeds threshold and create fresh log files"""
         log_files_to_backup = []
-
-        # Calculate total size of log files in the logs directory
         total_size = 0
+
+        # Calculate total size of log files
         for filename in os.listdir(self.log_dir):
             if filename.endswith('.log'):
                 file_path = os.path.join(self.log_dir, filename)
-                # Add to backup list
                 log_files_to_backup.append(file_path)
-                # Add to total size
                 total_size += os.path.getsize(file_path)
 
-        # If total size is greater than 10MB (10 * 1024 * 1024 bytes), backup and clear logs
+        # If total size > 10MB, backup logs
         if total_size > 10 * 1024 * 1024:
-            self.backup_logs(log_files_to_backup)
+            self._backup_logs(log_files_to_backup)
 
-        # Clear existing log files for fresh start (regardless of backup)
+        # Clear existing log files for fresh start
         for file_path in log_files_to_backup:
-            # Don't delete, just clear the content by opening in write mode
-            with open(file_path, 'w', encoding='utf-8') as f:
-                pass
+            open(file_path, 'w', encoding='utf-8').close()
 
-    def backup_logs(self, log_files):
+    def _backup_logs(self, log_files):
         """Backup log files to a zip archive"""
         if not log_files:
             return
 
-        # Create timestamped zip filename
         timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
         zip_filename = os.path.join(self.backup_dir, f"logs_backup_{timestamp}.zip")
 
-        # Create zip file
         with zipfile.ZipFile(zip_filename, 'w', zipfile.ZIP_DEFLATED) as zipf:
             for file_path in log_files:
                 if os.path.exists(file_path) and os.path.getsize(file_path) > 0:
-                    # Add file to zip with just the filename (not the full path)
                     zipf.write(file_path, os.path.basename(file_path))
 
     def initialize_logger(self, name: str, log_file: str) -> logging.Logger:
@@ -91,95 +76,136 @@ class LogManager(QObject):
             return self.loggers[name]
 
         logger = logging.getLogger(name)
-        logger.setLevel(logging.INFO)
+        logger.setLevel(logging.DEBUG)
 
-        # Remove any existing handlers to avoid duplicates
+        # Remove any existing handlers
         for handler in logger.handlers[:]:
             logger.removeHandler(handler)
 
-        # Sanitize the log filename to ensure it's valid
-        sanitized_log_file = self.sanitize_filename(log_file)
-
-        # Create file handler
+        # Create file handler with sanitized filename
+        sanitized_log_file = self._sanitize_filename(log_file)
         file_handler = logging.FileHandler(
             os.path.join(self.log_dir, sanitized_log_file),
             encoding='utf-8',
-            mode='a'  # Use append mode
+            mode='a'
         )
 
-        # Create formatter
+        # Set formatter
         formatter = logging.Formatter(
             '%(asctime)s - %(levelname)s - %(message)s',
             datefmt='%Y-%m-%d %H:%M:%S'
         )
-
-        # Set formatter and add handler
         file_handler.setFormatter(formatter)
         logger.addHandler(file_handler)
 
-        # Add signal handler for this logger
+        # Add signal handler
         if name == "app":
             logger.addHandler(AppLogSignalHandler(self))
         elif name.startswith("device_"):
             device_name = name[7:]  # Remove "device_" prefix
             logger.addHandler(DeviceLogSignalHandler(device_name, self))
 
-        # Store the logger
+        # 添加context日志记录能力
+        ContextLogger.add_context_logging(logger, self)
+
         self.loggers[name] = logger
         return logger
 
-    def sanitize_filename(self, filename: str) -> str:
-        """
-        Sanitize a filename to ensure it's valid for the file system.
-        Replace invalid characters with underscores.
-        """
-        # Replace common invalid characters
+    def _sanitize_filename(self, filename: str) -> str:
+        """Sanitize a filename to ensure it's valid for the file system"""
         invalid_chars = ['<', '>', ':', '"', '/', '\\', '|', '?', '*', '\r', '\n']
         sanitized = filename
+
         for char in invalid_chars:
             sanitized = sanitized.replace(char, '_')
 
-        # Remove leading/trailing whitespace and periods
         sanitized = sanitized.strip().strip('.')
 
-        # If the filename became empty after sanitizing, use a default name
-        if not sanitized:
-            sanitized = "unnamed_device.log"
+        return sanitized if sanitized else "unnamed_device.log"
 
-        return sanitized
     def get_device_logger(self, device_name: str) -> logging.Logger:
         """Get or create a logger for a specific device"""
         logger_name = f"device_{device_name}"
         log_file = f"{device_name}.log"
 
-        if logger_name not in self.loggers:
-            return self.initialize_logger(logger_name, log_file)
-
-        return self.loggers[logger_name]
+        return self.loggers.get(logger_name) or self.initialize_logger(logger_name, log_file)
 
     def get_app_logger(self) -> logging.Logger:
         """Get the main application logger"""
         return self.loggers.get("app")
 
-    def log_device_info(self, device_name: str, message: str):
-        """Log an info message for a device and to the app log"""
-        device_logger = self.get_device_logger(device_name)
-        device_logger.info(message)
+    def get_context_logger(self, context: Any) -> logging.Logger:
+        """Get logger associated with a context object"""
+        # 如果已经缓存了此context的logger，直接返回
+        if context in self.context_to_logger:
+            return self.context_to_logger[context]
 
-        # Also log to the main app log with device name prefix
-        app_logger = self.get_app_logger()
-        if app_logger:
-            app_logger.info(f"[{device_name}] {message}")
+        try:
+            handle = context.tasker._handle
+            device_name = self.handle_to_device.get(handle)
 
-    def log_device_error(self, device_name: str, message: str):
-        """Log an error message for a device and to the app log"""
-        device_logger = self.get_device_logger(device_name)
-        device_logger.error(message)
+            if device_name:
+                # 获取设备logger
+                logger = self.get_device_logger(device_name)
+                # 缓存起来，提高性能
+                self.context_to_logger[context] = logger
+                return logger
+            else:
+                # 如果找不到设备，返回应用logger
+                app_logger = self.get_app_logger()
+                app_logger.warning(f"No device found for handle: {handle}, using app logger")
+                self.context_to_logger[context] = app_logger
+                return app_logger
+        except (AttributeError, Exception) as e:
+            # 发生错误时返回应用logger
+            app_logger = self.get_app_logger()
+            if app_logger:
+                app_logger.warning(f"Error getting context logger: {str(e)}")
+            self.context_to_logger[context] = app_logger
+            return app_logger
 
-        # Also log to the main app log with device name prefix
-        app_logger = self.get_app_logger()
-        if app_logger:
-            app_logger.error(f"[{device_name}] {message}")
+    # 装饰器，用于自动同步日志到app logger
+    def sync_to_app(level: str = 'info') -> Callable:
+        """装饰器：将日志同步到应用日志"""
+
+        def decorator(func):
+            @functools.wraps(func)
+            def wrapper(logger, message, *args, **kwargs):
+                # 执行原始日志记录
+                result = func(logger, message, *args, **kwargs)
+
+                # 同步到应用日志
+                try:
+                    log_manager = logger.log_manager
+                    app_logger = log_manager.get_app_logger()
+                    if app_logger and app_logger != logger:
+                        # 确定设备名称
+                        device_name = "unknown"
+                        for name, lg in log_manager.loggers.items():
+                            if lg == logger and name.startswith("device_"):
+                                device_name = name[7:]  # Remove "device_" prefix
+                                break
+
+                        log_method = getattr(app_logger, level)
+                        log_method(f"[{device_name}] {message}")
+                except Exception:
+                    # 同步失败不影响原始日志记录
+                    pass
+
+                return result
+
+            return wrapper
+
+        return decorator
+
+    def set_device_handle(self, device_name: str, handle: Any) -> None:
+        """Associate a handle with a device name"""
+        self.get_device_logger(device_name)  # Ensure logger is initialized
+        self.handle_to_device[handle] = device_name
+
+        # 清除可能已缓存的context_to_logger映射
+        # 因为handle关联变化可能影响context的logger映射
+        self.context_to_logger.clear()
 
     def get_device_logs(self, device_name: str, max_lines: int = 100) -> List[str]:
         """Retrieve recent logs for a specific device"""
@@ -188,7 +214,6 @@ class LogManager(QObject):
             return []
 
         with open(log_file, 'r', encoding='utf-8') as f:
-            # Get the last max_lines lines
             lines = f.readlines()
             return lines[-max_lines:] if len(lines) > max_lines else lines
 
@@ -199,7 +224,6 @@ class LogManager(QObject):
             return []
 
         with open(log_file, 'r', encoding='utf-8') as f:
-            # Get the last max_lines lines
             lines = f.readlines()
             return lines[-max_lines:] if len(lines) > max_lines else lines
 
@@ -212,7 +236,6 @@ class AppLogSignalHandler(logging.Handler):
         self.log_manager = log_manager
 
     def emit(self, record):
-        # Emit the signal to notify that app logs have been updated
         self.log_manager.app_log_updated.emit()
 
 
@@ -225,9 +248,70 @@ class DeviceLogSignalHandler(logging.Handler):
         self.log_manager = log_manager
 
     def emit(self, record):
-        # Emit the signal to notify that device logs have been updated
         self.log_manager.device_log_updated.emit(self.device_name)
 
+
+# 扩展Logger类，添加辅助方法，使其能够直接使用context记录日志
+class ContextLogger:
+    """Helper class to provide context-based logging capabilities"""
+
+    @staticmethod
+    def add_context_logging(logger, log_manager):
+        """Add context logging methods to a logger"""
+        # 存储对log_manager的引用
+        logger.log_manager = log_manager
+
+        # 添加context日志记录方法
+        def log_with_context(level, context, message):
+            # 记录到当前logger
+            log_method = getattr(logger, level)
+            log_method(message)
+
+            # 同步到应用logger（如果当前不是应用logger）
+            try:
+                app_logger = log_manager.get_app_logger()
+                if app_logger and app_logger != logger:
+                    # 查找设备名称
+                    device_name = "unknown"
+                    for name, lg in log_manager.loggers.items():
+                        if lg == logger and name.startswith("device_"):
+                            device_name = name[7:]  # Remove "device_" prefix
+                            break
+
+                    app_log_method = getattr(app_logger, level)
+                    app_log_method(f"[{device_name}] {message}")
+            except Exception:
+                pass  # 同步失败不影响原始日志
+
+        # 添加各个日志级别的context方法
+        logger.debug_context = lambda context, message: log_with_context("debug", context, message)
+        logger.info_context = lambda context, message: log_with_context("info", context, message)
+        logger.warning_context = lambda context, message: log_with_context("warning", context, message)
+        logger.error_context = lambda context, message: log_with_context("error", context, message)
+        logger.critical_context = lambda context, message: log_with_context("critical", context, message)
+
+        return logger
+
+
+# 示例用法
+"""
+# 使用方式:
+
+# 1. 获取context关联的logger
+logger = log_manager.get_context_logger(context)
+
+# 2. 直接使用logger记录日志
+logger.debug("这是一条调试日志")
+logger.info("这是一条信息日志")
+logger.warning("这是一条警告日志")
+logger.error("这是一条错误日志")
+
+# 3. 如果需要同步到应用日志，可以使用*_context方法
+logger.debug_context(context, "这条调试日志会同步到应用日志")
+logger.info_context(context, "这条信息日志会同步到应用日志")
+logger.warning_context(context, "这条警告日志会同步到应用日志")
+logger.error_context(context, "这条错误日志会同步到应用日志")
+"""
 
 # Create a singleton instance
 log_manager = LogManager()
