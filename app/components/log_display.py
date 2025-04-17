@@ -23,8 +23,8 @@ class LogDisplay(QFrame):
         # Current display mode: "all" or device name
         self.current_device = "all"
 
-        # Current log level filter: "all" or specific level
-        self.current_log_level = "all"
+        # Current log level filter: now default to "INFO" instead of "all"
+        self.current_log_level = "INFO"
 
         # Flag to enable/disable log level filtering
         self.enable_log_level_filter = enable_log_level_filter
@@ -67,13 +67,17 @@ class LogDisplay(QFrame):
 
         # Add log level selector
         self.log_level_selector = QComboBox()
-        # self.log_level_selector.addItem("全部级别", "all")
+        # 注意：不再添加"全部级别"选项
         self.log_level_selector.addItem("INFO", "INFO")
         self.log_level_selector.addItem("DEBUG", "DEBUG")
         self.log_level_selector.addItem("WARNING", "WARNING")
         self.log_level_selector.addItem("ERROR", "ERROR")
         self.log_level_selector.currentIndexChanged.connect(self.on_log_level_changed)
-        self.log_level_selector.setVisible(self.enable_log_level_filter)
+
+        # 显示log_level_selector，但只在enable_log_level_filter为True时可交互
+        if not self.enable_log_level_filter:
+            self.log_level_selector.setEnabled(False)
+
         header_layout.addWidget(self.log_level_selector)
 
         # Only show device selector if enabled
@@ -173,19 +177,14 @@ class LogDisplay(QFrame):
             log_level_index = self.log_level_hierarchy.index(log_level)
 
             if self.enable_log_level_filter:
-                # If filtering is enabled
-                if self.current_log_level == "all":
-                    # Show all logs when "all" is selected
-                    filtered_logs.append(log)
-                else:
-                    # Get the index of the selected level in the hierarchy
-                    selected_level_index = self.log_level_hierarchy.index(self.current_log_level)
+                # 获取选定日志级别的索引
+                selected_level_index = self.log_level_hierarchy.index(self.current_log_level)
 
-                    # Show logs of selected level and above
-                    if log_level_index >= selected_level_index:
-                        filtered_logs.append(log)
+                # 只显示选定级别及以上的日志
+                if log_level_index >= selected_level_index:
+                    filtered_logs.append(log)
             else:
-                # If filtering is disabled, show INFO and above (not DEBUG)
+                # 如果禁用过滤，默认显示INFO及以上级别（不显示DEBUG）
                 info_level_index = self.log_level_hierarchy.index("INFO")
                 if log_level_index >= info_level_index:
                     filtered_logs.append(log)

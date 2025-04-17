@@ -102,7 +102,6 @@ class MainWindow(QMainWindow):
         sidebar_layout.addStretch()  # Push bottom buttons to the bottom
         sidebar_layout.addWidget(separator_bottom)
 
-        # Add bottom buttons
         # Add settings button
         self.settings_btn = NavigationButton("设置", "assets/icons/settings.svg")
         sidebar_layout.addWidget(self.settings_btn)
@@ -143,11 +142,6 @@ class MainWindow(QMainWindow):
 
         # Update scroll area visibility
         self.update_scroll_area_visibility()
-
-    # 添加一个方法作为HomePage的add_device的别名，以兼容现有代码
-    def add_device(self):
-        """添加设备的别名方法，调用open_add_device_dialog"""
-        self.open_add_device_dialog()
 
     def load_devices(self):
         """Load devices from config and create navigation buttons"""
