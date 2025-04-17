@@ -118,7 +118,6 @@ class TaskerManager(QObject):
         with QMutexLocker(self._mutex):
             executor = self._get_executor(device_name)
             if executor:
-                self.logger.debug(f"成功获取设备 {device_name} 的状态")
                 return executor.get_state()
             self.logger.warning(f"获取状态失败: 设备 {device_name} 的执行器未找到")
             return None
@@ -178,7 +177,6 @@ class TaskerManager(QObject):
         """
         with QMutexLocker(self._mutex):
             queue_info = {name: executor.get_queue_length() for name, executor in self._executors.items()}
-            self.logger.debug(f"当前设备队列状态: {queue_info}")
             return queue_info
 
     @asyncSlot(DeviceConfig)
