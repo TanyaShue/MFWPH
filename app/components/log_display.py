@@ -1,4 +1,3 @@
-from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QTextEdit,
@@ -68,7 +67,7 @@ class LogDisplay(QFrame):
 
         # Add log level selector
         self.log_level_selector = QComboBox()
-        self.log_level_selector.addItem("全部级别", "all")
+        # self.log_level_selector.addItem("全部级别", "all")
         self.log_level_selector.addItem("INFO", "INFO")
         self.log_level_selector.addItem("DEBUG", "DEBUG")
         self.log_level_selector.addItem("WARNING", "WARNING")

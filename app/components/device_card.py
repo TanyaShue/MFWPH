@@ -3,9 +3,7 @@ from PySide6.QtGui import QPixmap, QIcon
 from PySide6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QSizePolicy, QGridLayout
 from qasync import asyncSlot
 
-from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager
-from app.widgets.add_device_dialog import AddDeviceDialog
 from core.tasker_manager import task_manager
 
 
@@ -80,7 +78,23 @@ class DeviceCard(QFrame):
         # Device type
         type_key = QLabel("类型:")
         type_key.setObjectName("infoLabel")
-        type_value = QLabel(self.device_config.adb_config.name if hasattr(self.device_config, 'adb_config') else "未知")
+        # 更安全的方式获取设备类型文本
+        device_type_text = ""
+        if hasattr(self.device_config.device_type, "value"):
+            # 如果是枚举类型
+            device_type_text = self.device_config.device_type.value
+        else:
+            # 如果是字符串类型
+            device_type_text = str(self.device_config.device_type)
+
+        # 将设备类型转换为用户友好的显示文本
+        if device_type_text == "adb":
+            display_text = "ADB设备"
+        elif device_type_text == "win32":
+            display_text = "Win32窗口"
+        else:
+            display_text = device_type_text
+        type_value = QLabel(display_text)
         type_value.setObjectName("infoValue")
         info_grid.addWidget(type_key, 0, 0)
         info_grid.addWidget(type_value, 0, 1)

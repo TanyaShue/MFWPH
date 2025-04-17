@@ -69,7 +69,25 @@ class BasicInfoWidget(QFrame):
             type_layout = QHBoxLayout()
             type_label = QLabel("设备类型:")
             type_label.setObjectName("infoLabel")
-            type_value = QLabel(self.device_config.adb_config.name)
+
+            # 更安全的方式获取设备类型文本
+            device_type_text = ""
+            if hasattr(self.device_config.device_type, "value"):
+                # 如果是枚举类型
+                device_type_text = self.device_config.device_type.value
+            else:
+                # 如果是字符串类型
+                device_type_text = str(self.device_config.device_type)
+
+            # 将设备类型转换为用户友好的显示文本
+            if device_type_text == "adb":
+                display_text = "ADB设备"
+            elif device_type_text == "win32":
+                display_text = "Win32窗口"
+            else:
+                display_text = device_type_text
+
+            type_value = QLabel(display_text)
             type_value.setObjectName("infoValue")
             type_layout.addWidget(type_label)
             type_layout.addWidget(type_value)

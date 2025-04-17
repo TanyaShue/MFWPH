@@ -3,10 +3,16 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
                                QLabel, QLineEdit, QPushButton, QComboBox,
                                QWidget, QCheckBox, QGroupBox, QScrollArea,
-                               QTimeEdit, QMessageBox)
+                               QTimeEdit, QMessageBox, QStackedWidget)
 from maa.toolkit import Toolkit
+# Import the necessary enums from maa.define
+from maa.define import (MaaAdbScreencapMethodEnum, MaaAdbInputMethodEnum,
+                        MaaWin32ScreencapMethodEnum, MaaWin32InputMethodEnum)
 
-from app.models.config.app_config import DeviceConfig, AdbDevice
+from app.models.config.app_config import DeviceConfig, AdbDevice, Win32Device, DeviceType
+from app.models.logging.log_manager import log_manager
+
+logger = log_manager.get_app_logger()
 
 
 class DeviceSearchThread(QThread):
@@ -14,13 +20,19 @@ class DeviceSearchThread(QThread):
     devices_found = Signal(list)
     search_error = Signal(str)
 
-    def __init__(self, adb_path):
+    def __init__(self, search_type):
         super().__init__()
-        self.adb_path = adb_path
+        self.search_type = search_type
 
     def run(self):
         try:
-            devices = Toolkit.find_adb_devices()
+            devices = None
+            if self.search_type == DeviceType.ADB:
+                devices = Toolkit.find_adb_devices()
+            elif self.search_type == DeviceType.WIN32:
+                devices = Toolkit.find_desktop_windows()
+                devices = [device for device in devices if device.window_name != '']
+            logger.debug(f"搜索发现:{len(devices)}个设备:{devices}")
             self.devices_found.emit(devices)
         except Exception as e:
             self.search_error.emit(str(e))
@@ -28,6 +40,7 @@ class DeviceSearchThread(QThread):
 
 class AddDeviceDialog(QDialog):
     delete_devices_signal = Signal()
+
     def __init__(self, global_config, parent=None, edit_mode=False, device_config=None):
         super().__init__(parent)
         self.global_config = global_config
@@ -35,8 +48,8 @@ class AddDeviceDialog(QDialog):
         self.search_thread = None
         self.edit_mode = edit_mode
         self.device_config = device_config
-        self.schedule_time_widgets = []    # 存储各个时间组件
-        self.time_container_layouts = []   # 存储各行容器的布局
+        self.schedule_time_widgets = []  # 存储各个时间组件
+        self.time_container_layouts = []  # 存储各行容器的布局
 
         self.setObjectName("addDeviceDialog")
         self.setWindowTitle("编辑设备" if edit_mode else "添加设备")
@@ -63,9 +76,23 @@ class AddDeviceDialog(QDialog):
         scroll_content.setObjectName("scroll_content")
         scroll_layout = QVBoxLayout(scroll_content)
 
+        # 设备类型选择区域
+        device_type_group = QGroupBox("设备类型")
+        device_type_group.setObjectName("addDeviceGroupBox")
+        device_type_layout = QHBoxLayout()
+        device_type_layout.addWidget(QLabel("控制器类型:"))
+        self.controller_type_combo = QComboBox()
+        self.controller_type_combo.addItem("ADB设备", DeviceType.ADB)
+        self.controller_type_combo.addItem("Win32窗口", DeviceType.WIN32)
+        self.controller_type_combo.currentIndexChanged.connect(self.controller_type_changed)
+        device_type_layout.addWidget(self.controller_type_combo)
+        device_type_layout.addStretch()
+        device_type_group.setLayout(device_type_layout)
+        scroll_layout.addWidget(device_type_group)
+
         # 设备搜索区域
-        search_group = QGroupBox("设备搜索")
-        search_group.setObjectName("addDeviceGroupBox")
+        self.search_group = QGroupBox("设备搜索")
+        self.search_group.setObjectName("addDeviceGroupBox")
         search_layout = QVBoxLayout()
         search_btn_layout = QHBoxLayout()
         self.search_btn = QPushButton("搜索设备")
@@ -83,27 +110,70 @@ class AddDeviceDialog(QDialog):
         device_select_layout.addWidget(self.device_combo)
         search_layout.addLayout(search_btn_layout)
         search_layout.addLayout(device_select_layout)
-        search_group.setLayout(search_layout)
-        scroll_layout.addWidget(search_group)
+        self.search_group.setLayout(search_layout)
+        scroll_layout.addWidget(self.search_group)
 
-        # 设备基本信息
-        info_group = QGroupBox("设备信息")
-        info_group.setObjectName("addDeviceGroupBox")
-        form_layout = QFormLayout()
+        # 设备基本信息 - 使用堆叠部件以便切换不同类型的控制器配置
+        self.info_group = QGroupBox("设备信息")
+        self.info_group.setObjectName("addDeviceGroupBox")
+        info_layout = QVBoxLayout()
+
+        # 设备名称 - 对所有设备类型都适用
+        name_layout = QHBoxLayout()
+        name_layout.addWidget(QLabel("设备名称:"))
         self.name_edit = QLineEdit()
+        name_layout.addWidget(self.name_edit)
+        info_layout.addLayout(name_layout)
+
+        # 控制器配置堆叠部件
+        self.controller_stack = QStackedWidget()
+
+        # ADB设备配置页
+        adb_widget = QWidget()
+        adb_form = QFormLayout(adb_widget)
         self.adb_path_edit = QLineEdit()
         self.adb_address_edit = QLineEdit()
-        self.screenshot_method_edit = QLineEdit()
-        self.input_method_edit = QLineEdit()
+
+        # 替换文本框为下拉框: ADB设备截图方法
+        self.screenshot_method_combo = QComboBox()
+        self._populate_adb_screencap_combo()
+
+        # 替换文本框为下拉框: ADB设备输入方法
+        self.input_method_combo = QComboBox()
+        self._populate_adb_input_combo()
+
         self.config_edit = QLineEdit()
-        form_layout.addRow("设备名称:", self.name_edit)
-        form_layout.addRow("ADB 路径:", self.adb_path_edit)
-        form_layout.addRow("ADB 地址:", self.adb_address_edit)
-        form_layout.addRow("截图方法:", self.screenshot_method_edit)
-        form_layout.addRow("输入方法:", self.input_method_edit)
-        form_layout.addRow("配置:", self.config_edit)
-        info_group.setLayout(form_layout)
-        scroll_layout.addWidget(info_group)
+        self.agent_path_edit = QLineEdit()
+
+        adb_form.addRow("ADB 路径:", self.adb_path_edit)
+        adb_form.addRow("ADB 地址:", self.adb_address_edit)
+        adb_form.addRow("截图方法:", self.screenshot_method_combo)
+        adb_form.addRow("输入方法:", self.input_method_combo)
+        adb_form.addRow("Agent 路径:", self.agent_path_edit)
+        adb_form.addRow("配置:", self.config_edit)
+        self.controller_stack.addWidget(adb_widget)
+
+        # Win32设备配置页
+        win32_widget = QWidget()
+        win32_form = QFormLayout(win32_widget)
+        self.hwnd_edit = QLineEdit()
+
+        # 替换文本框为下拉框: Win32设备截图方法
+        self.win32_screenshot_method_combo = QComboBox()
+        self._populate_win32_screencap_combo()
+
+        # 替换文本框为下拉框: Win32设备输入方法
+        self.win32_input_method_combo = QComboBox()
+        self._populate_win32_input_combo()
+
+        win32_form.addRow("窗口句柄 (hWnd):", self.hwnd_edit)
+        win32_form.addRow("截图方法:", self.win32_screenshot_method_combo)
+        win32_form.addRow("输入方法:", self.win32_input_method_combo)
+        self.controller_stack.addWidget(win32_widget)
+
+        info_layout.addWidget(self.controller_stack)
+        self.info_group.setLayout(info_layout)
+        scroll_layout.addWidget(self.info_group)
 
         # 高级设置
         advanced_group = QGroupBox("高级设置")
@@ -165,6 +235,57 @@ class AddDeviceDialog(QDialog):
         buttons_layout.addWidget(save_btn)
         buttons_layout.addWidget(cancel_btn)
         main_layout.addLayout(buttons_layout)
+
+    def _populate_adb_screencap_combo(self):
+        """填充ADB截图方法下拉框"""
+        # 添加各个枚举值作为选项
+        self.screenshot_method_combo.addItem("默认 (Default)", MaaAdbScreencapMethodEnum.Default)
+        self.screenshot_method_combo.addItem("全部 (All)", MaaAdbScreencapMethodEnum.All)
+        self.screenshot_method_combo.addItem("EncodeToFileAndPull", MaaAdbScreencapMethodEnum.EncodeToFileAndPull)
+        self.screenshot_method_combo.addItem("Encode", MaaAdbScreencapMethodEnum.Encode)
+        self.screenshot_method_combo.addItem("RawWithGzip", MaaAdbScreencapMethodEnum.RawWithGzip)
+        self.screenshot_method_combo.addItem("RawByNetcat", MaaAdbScreencapMethodEnum.RawByNetcat)
+        self.screenshot_method_combo.addItem("MinicapDirect", MaaAdbScreencapMethodEnum.MinicapDirect)
+        self.screenshot_method_combo.addItem("MinicapStream", MaaAdbScreencapMethodEnum.MinicapStream)
+        self.screenshot_method_combo.addItem("EmulatorExtras", MaaAdbScreencapMethodEnum.EmulatorExtras)
+
+    def _populate_adb_input_combo(self):
+        """填充ADB输入方法下拉框"""
+        # 添加各个枚举值作为选项
+        self.input_method_combo.addItem("默认 (Default)", MaaAdbInputMethodEnum.Default)
+        self.input_method_combo.addItem("全部 (All)", MaaAdbInputMethodEnum.All)
+        self.input_method_combo.addItem("AdbShell", MaaAdbInputMethodEnum.AdbShell)
+        self.input_method_combo.addItem("MinitouchAndAdbKey", MaaAdbInputMethodEnum.MinitouchAndAdbKey)
+        self.input_method_combo.addItem("Maatouch", MaaAdbInputMethodEnum.Maatouch)
+        self.input_method_combo.addItem("EmulatorExtras", MaaAdbInputMethodEnum.EmulatorExtras)
+
+    def _populate_win32_screencap_combo(self):
+        """填充Win32截图方法下拉框"""
+        # Win32截图方法不使用位运算组合，而是直接选择一种方法
+        self.win32_screenshot_method_combo.addItem("GDI", MaaWin32ScreencapMethodEnum.GDI)
+        self.win32_screenshot_method_combo.addItem("FramePool", MaaWin32ScreencapMethodEnum.FramePool)
+        self.win32_screenshot_method_combo.addItem("DXGI_DesktopDup", MaaWin32ScreencapMethodEnum.DXGI_DesktopDup)
+
+    def _populate_win32_input_combo(self):
+        """填充Win32输入方法下拉框"""
+        # Win32输入方法只有两种选择
+        self.win32_input_method_combo.addItem("Seize", 1)  # 对应枚举值为1
+        self.win32_input_method_combo.addItem("SendMessage", 2)  # 对应枚举值为2
+
+    def _find_combo_index_by_value(self, combo, value):
+        """根据值查找下拉框中的索引位置"""
+        for i in range(combo.count()):
+            if combo.itemData(i) == value:
+                return i
+        # 如果找不到匹配的值，则返回默认值的索引
+        for i in range(combo.count()):
+            if 'Default' in combo.itemText(i):
+                return i
+        return 0  # 如果没有默认值，则返回第一个选项
+
+    def controller_type_changed(self, index):
+        """当控制器类型变更时的处理函数"""
+        self.controller_stack.setCurrentIndex(index)
 
     def toggle_schedule_widgets(self, enabled):
         """统一控制定时启动区域的使能状态"""
@@ -247,15 +368,53 @@ class AddDeviceDialog(QDialog):
         """将已有设备数据填充到表单中"""
         if not self.device_config:
             return
-        # 填充基本信息
+
+        # 设置设备名称
         self.name_edit.setText(self.device_config.device_name)
-        self.adb_path_edit.setText(self.device_config.adb_config.adb_path)
-        self.adb_address_edit.setText(self.device_config.adb_config.address)
-        self.screenshot_method_edit.setText(str(self.device_config.adb_config.screencap_methods))
-        self.input_method_edit.setText(str(self.device_config.adb_config.input_methods))
-        import json
-        config_str = json.dumps(self.device_config.adb_config.config)
-        self.config_edit.setText(config_str)
+
+        # 设置控制器类型
+        device_type = self.device_config.device_type
+        if device_type == DeviceType.ADB:
+            self.controller_type_combo.setCurrentIndex(0)
+            controller = self.device_config.controller_config
+
+            # 填充ADB设备信息
+            self.adb_path_edit.setText(controller.adb_path)
+            self.adb_address_edit.setText(controller.address)
+
+            # 设置截图方法下拉框
+            screencap_method = controller.screencap_methods
+            index = self._find_combo_index_by_value(self.screenshot_method_combo, screencap_method)
+            self.screenshot_method_combo.setCurrentIndex(index)
+
+            # 设置输入方法下拉框
+            input_method = controller.input_methods
+            index = self._find_combo_index_by_value(self.input_method_combo, input_method)
+            self.input_method_combo.setCurrentIndex(index)
+
+            # 填充新增的agent_path
+            if hasattr(controller, 'agent_path') and controller.agent_path:
+                self.agent_path_edit.setText(controller.agent_path)
+
+            import json
+            config_str = json.dumps(controller.config)
+            self.config_edit.setText(config_str)
+        elif device_type == DeviceType.WIN32:
+            self.controller_type_combo.setCurrentIndex(1)
+            controller = self.device_config.controller_config
+
+            # 填充Win32设备信息
+            self.hwnd_edit.setText(str(controller.hWnd))
+
+            # 设置Win32截图方法下拉框
+            screencap_method = controller.screencap_method
+            index = self._find_combo_index_by_value(self.win32_screenshot_method_combo, screencap_method)
+            self.win32_screenshot_method_combo.setCurrentIndex(index)
+
+            # 设置Win32输入方法下拉框
+            input_method = controller.input_method
+            index = self._find_combo_index_by_value(self.win32_input_method_combo, input_method)
+            self.win32_input_method_combo.setCurrentIndex(index)
 
         # 填充高级设置
         self.schedule_enabled.setChecked(self.device_config.schedule_enabled)
@@ -296,8 +455,7 @@ class AddDeviceDialog(QDialog):
     def search_devices(self):
         self.search_btn.setEnabled(False)
         self.search_status.setText("正在搜索...")
-        adb_path = self.adb_path_edit.text() or "adb"
-        self.search_thread = DeviceSearchThread(adb_path)
+        self.search_thread = DeviceSearchThread(self.controller_type_combo.currentData())
         self.search_thread.devices_found.connect(self.on_devices_found)
         self.search_thread.search_error.connect(self.on_search_error)
         self.search_thread.finished.connect(self.on_search_completed)
@@ -308,7 +466,8 @@ class AddDeviceDialog(QDialog):
         self.found_devices = devices
         if devices:
             for device in devices:
-                self.device_combo.addItem(device.address)
+                text = getattr(device, "address", None) or getattr(device, "window_name", "")
+                self.device_combo.addItem(text)
             self.search_status.setText(f"找到 {len(devices)} 个设备")
         else:
             self.device_combo.addItem("未找到设备")
@@ -324,32 +483,88 @@ class AddDeviceDialog(QDialog):
         self.search_thread = None
 
     def device_selected(self, index):
+        # 获取当前选择的控制器类型
+        controller_type = self.controller_type_combo.currentData()
+
         if 0 <= index < len(self.found_devices):
             device = self.found_devices[index]
-            self.adb_address_edit.setText(device.address)
-            self.adb_path_edit.setText(str(device.adb_path))
-            self.screenshot_method_edit.setText(str(device.screencap_methods))
-            self.input_method_edit.setText(str(device.input_methods))
-            self.config_edit.setText(str(device.config))
+
+            # 设置通用字段
             if not self.name_edit.text():
-                self.name_edit.setText(f"设备 {device.address}")
+                if controller_type == DeviceType.ADB:
+                    self.name_edit.setText(f"设备 {device.address}")
+                elif controller_type == DeviceType.WIN32:
+                    window_title = getattr(device, 'title', f"窗口 {device.hwnd}")
+                    self.name_edit.setText(window_title)
+
+            # 根据控制器类型填充相应字段
+            if controller_type == DeviceType.ADB:
+                # 填充ADB设备字段
+                self.adb_address_edit.setText(device.address)
+                self.adb_path_edit.setText(str(device.adb_path))
+
+                self.config_edit.setText(str(device.config))
+            elif controller_type == DeviceType.WIN32:
+                # 填充Win32设备字段
+                self.hwnd_edit.setText(str(device.hwnd))
 
     def save_device(self):
         """保存设备信息"""
         # 检查必填字段
-        if not self.name_edit.text() or not self.adb_address_edit.text():
+        if not self.name_edit.text():
+            QMessageBox.warning(self, "输入错误", "设备名称不能为空")
             return
 
         try:
             import json
 
-            # 尝试解析配置文本为字典，如果解析失败则使用空字典
-            try:
-                config_text = self.config_edit.text()
-                config_dict = json.loads(config_text) if config_text.strip() != "" else {}
-            except json.JSONDecodeError as e:
-                print("配置数据格式错误，无法解析为字典。", e)
-                config_dict = {}
+            # 获取当前选择的控制器类型
+            controller_type = self.controller_type_combo.currentData()
+
+            # 根据控制器类型获取和验证输入
+            if controller_type == DeviceType.ADB:
+                if not self.adb_address_edit.text():
+                    QMessageBox.warning(self, "输入错误", "ADB地址不能为空")
+                    return
+
+                # 尝试解析配置文本为字典，如果解析失败则使用空字典
+                try:
+                    config_text = self.config_edit.text()
+                    config_dict = json.loads(config_text) if config_text.strip() != "" else {}
+                except json.JSONDecodeError as e:
+                    print("配置数据格式错误，无法解析为字典。", e)
+                    config_dict = {}
+
+                # 获取下拉框中选择的枚举值
+                screencap_method = self.screenshot_method_combo.currentData()
+                input_method = self.input_method_combo.currentData()
+
+                # 创建ADB控制器配置
+                controller_config = AdbDevice(
+                    name=self.name_edit.text(),
+                    adb_path=self.adb_path_edit.text(),
+                    address=self.adb_address_edit.text(),
+                    screencap_methods=screencap_method,
+                    input_methods=input_method,
+                    agent_path=self.agent_path_edit.text() or None,
+                    config=config_dict
+                )
+            else:  # WIN32
+                if not self.hwnd_edit.text():
+                    QMessageBox.warning(self, "输入错误", "窗口句柄不能为空")
+                    return
+
+                # 获取下拉框中选择的枚举值
+                screencap_method = self.win32_screenshot_method_combo.currentData()
+                input_method = self.win32_input_method_combo.currentData()
+
+                # 创建Win32控制器配置
+                controller_config = Win32Device(
+                    hWnd=int(self.hwnd_edit.text() or "0"),
+                    screencap_method=screencap_method,
+                    input_method=input_method,
+                    notification_handler=None
+                )
 
             # 收集所有定时启动时间
             schedule_times = []
@@ -359,30 +574,21 @@ class AddDeviceDialog(QDialog):
                     schedule_times.append(time_edit.time().toString("hh:mm"))
 
             if self.edit_mode and self.device_config:
-                # 直接更新原有 DeviceConfig 的各项属性
+                # 更新设备配置
                 self.device_config.device_name = self.name_edit.text()
-                self.device_config.adb_config.name = self.name_edit.text()
-                self.device_config.adb_config.adb_path = self.adb_path_edit.text()
-                self.device_config.adb_config.address = self.adb_address_edit.text()
-                self.device_config.adb_config.screencap_methods = int(self.screenshot_method_edit.text())
-                self.device_config.adb_config.input_methods = int(self.input_method_edit.text())
-                self.device_config.adb_config.config = config_dict
+                self.device_config.device_type = controller_type
+                self.device_config.controller_config = controller_config
                 self.device_config.schedule_enabled = self.schedule_enabled.isChecked()
                 self.device_config.schedule_time = schedule_times
                 self.device_config.start_command = self.pre_command_edit.text()
                 if hasattr(self.device_config, 'stop_command'):
                     self.device_config.stop_command = self.post_command_edit.text()
             else:
+                # 创建新设备配置
                 new_config = DeviceConfig(
                     device_name=self.name_edit.text(),
-                    adb_config=AdbDevice(
-                        name=self.name_edit.text(),
-                        adb_path=self.adb_path_edit.text(),
-                        address=self.adb_address_edit.text(),
-                        screencap_methods=int(self.screenshot_method_edit.text()),
-                        input_methods=int(self.input_method_edit.text()),
-                        config=config_dict
-                    ),
+                    device_type=controller_type,
+                    controller_config=controller_config,
                     schedule_enabled=self.schedule_enabled.isChecked(),
                     schedule_time=schedule_times,
                     start_command=self.pre_command_edit.text()
@@ -394,6 +600,7 @@ class AddDeviceDialog(QDialog):
 
         except Exception as e:
             print(f"保存设备时出错: {e}")
+            QMessageBox.critical(self, "错误", f"保存设备时出错: {e}")
 
     def delete_device(self):
         """删除该设备"""

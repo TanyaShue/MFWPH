@@ -7,14 +7,14 @@ from enum import Enum
 from typing import Optional
 
 from PySide6.QtCore import QObject, Signal, Slot, QThreadPool, QRunnable, QMutexLocker, QRecursiveMutex, Qt
-from maa.controller import AdbController
+from maa.controller import AdbController, Win32Controller
 from maa.custom_action import CustomAction
 from maa.custom_recognition import CustomRecognition
 from maa.resource import Resource
 from maa.tasker import Tasker
 from maa.toolkit import Toolkit
 
-from app.models.config.app_config import DeviceConfig
+from app.models.config.app_config import DeviceConfig, DeviceType
 from app.models.config.global_config import RunTimeConfigs
 from app.models.logging.log_manager import log_manager
 
@@ -45,10 +45,12 @@ class Task:
 
 class DeviceStatus(Enum):
     """设备状态枚举"""
-    IDLE = "idle"  # 空闲状态
-    RUNNING = "running"  # 运行状态
-    ERROR = "error"  # 错误状态
-    STOPPING = "stopping"  # 正在停止
+    IDLE = "idle"                   # 空闲状态
+    RUNNING = "running"             # 运行状态
+    ERROR = "error"                 # 错误状态
+    STOPPING = "stopping"           # 正在停止
+    DISCONNECTED = "disconnected"   # 未连接状态
+    CONNECTING = "connecting"       # 连接中
 
 
 class DeviceState(QObject):
@@ -94,15 +96,28 @@ class TaskExecutor(QObject):
         self.resource_path: Optional[str] = None
 
         # Initialize ADB controller
-        adb_config = device_config.adb_config
-        self._controller = AdbController(
-            adb_config.adb_path,
-            adb_config.address,
-            adb_config.screencap_methods,
-            adb_config.input_methods,
-            adb_config.config
-        )
-
+        # 根据设备类型选择不同的控制器
+        if device_config.device_type == DeviceType.ADB:
+            # ADB控制器
+            adb_config = device_config.controller_config
+            self._controller = AdbController(
+                adb_config.adb_path,
+                adb_config.address,
+                adb_config.screencap_methods,
+                adb_config.input_methods,
+                adb_config.config,
+                agent_path=adb_config.agent_path,
+                notification_handler=adb_config.notification_handler
+            )
+        elif device_config.device_type == DeviceType.WIN32:
+            # Win32控制器
+            win32_config = device_config.controller_config
+            self._controller = Win32Controller(
+                win32_config.hWnd,
+                notification_handler=win32_config.notification_handler
+            )
+        else:
+            raise ValueError(f"不支持的设备类型: {device_config.device_type}")
         # Device state management
         self.state = DeviceState()
         self._tasker: Optional[Tasker] = Tasker()
@@ -118,8 +133,6 @@ class TaskExecutor(QObject):
         self._running_task = None
         self._task_queue = []
 
-        # Set up logging - replace standard logger with LogManager
-        # Get device-specific logger
         self.logger = log_manager.get_device_logger(device_config.device_name)
         # Get app logger for common operations
         self.app_logger = log_manager.get_app_logger()
@@ -393,6 +406,7 @@ class TaskRunner(QRunnable):
                 self.task.completed_at = datetime.now()
                 self.logger.error( f"任务 {self.task.id} 失败: {e}")
                 self.executor.task_failed.emit(self.task.id, str(e))
+
     def execute_task(self, task_data):
         """Method to execute specific task"""
         # Execute all tasks in the task list

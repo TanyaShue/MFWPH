@@ -2,9 +2,17 @@ import base64
 import hashlib
 import os
 from dataclasses import dataclass, field
-from typing import List, Dict, Any
-
+from datetime import datetime
+from typing import Any, Dict, List, Union, Optional
+from enum import Enum
+import json
 from cryptography.fernet import Fernet
+
+
+class DeviceType(Enum):
+    """Enum for device controller types."""
+    ADB = "adb"
+    WIN32 = "win32"
 
 
 @dataclass
@@ -15,7 +23,18 @@ class AdbDevice:
     address: str
     screencap_methods: int
     input_methods: int
+    agent_path: Optional[str] = None  # New field
+    notification_handler: Optional[Any] = None  # New field
     config: Dict[str, Any] = field(default_factory=dict)
+
+
+@dataclass
+class Win32Device:
+    """Win32 device configuration dataclass."""
+    hWnd: int
+    screencap_method: int
+    input_method: int
+    notification_handler: Optional[Any] = None
 
 
 @dataclass
@@ -38,20 +57,13 @@ class OptionConfig:
 class DeviceConfig:
     """Device configuration dataclass."""
     device_name: str
-    adb_config: AdbDevice
+    device_type: DeviceType  # New field to indicate controller type
+    controller_config: Union[AdbDevice, Win32Device]  # Changed from adb_config
     resources: List[Resource] = field(default_factory=list)
     schedule_enabled: bool = False
     schedule_time: List[str] = field(default_factory=list)
     start_command: str = ""
 
-
-from dataclasses import dataclass, field
-from datetime import datetime
-from typing import Any, Dict, List
-import json
-
-
-# 假设 DeviceConfig、AdbDevice、Resource 和 OptionConfig 均已定义
 
 @dataclass
 class AppConfig:
@@ -136,20 +148,39 @@ class AppConfig:
         device_configs = []
 
         for device_data in devices_data:
-            adb_config_data = device_data.get('adb_config', {})
-            adb_config = AdbDevice(**adb_config_data)  # 创建 AdbDevice 对象
+            # 确定设备类型
+            device_type_str = device_data.get('device_type', 'adb')  # 默认为adb类型以兼容旧配置
+            try:
+                device_type = DeviceType(device_type_str)  # 尝试将字符串转换为枚举
+            except ValueError:
+                # 如果转换失败(无效的设备类型字符串)，默认为ADB
+                device_type = DeviceType.ADB
+
+            # 根据设备类型创建对应的配置
+            if device_type == DeviceType.ADB:
+                controller_config_data = device_data.get('controller_config', device_data.get('adb_config', {}))
+                controller_config = AdbDevice(**controller_config_data)
+            else:  # WIN32
+                controller_config_data = device_data.get('controller_config', {})
+                controller_config = Win32Device(**controller_config_data)
 
             resources_data = device_data.get('resources', [])
             resources = []
             for resource_data in resources_data:
                 options_data = resource_data.get('options', [])
-                options = [OptionConfig(**option_data) for option_data in options_data]  # 创建 OptionConfig 对象列表
-                # 排除 options 字段后创建 Resource 对象，并传入 options 参数
+                options = [OptionConfig(**option_data) for option_data in options_data]
                 resource_kwargs = {k: v for k, v in resource_data.items() if k != 'options'}
                 resources.append(Resource(**resource_kwargs, options=options))
-            # 排除 adb_config 与 resources 字段后创建 DeviceConfig 对象，并传入相应参数
-            device_kwargs = {k: v for k, v in device_data.items() if k not in ('adb_config', 'resources')}
-            device_configs.append(DeviceConfig(**device_kwargs, adb_config=adb_config, resources=resources))
+
+            # 排除 controller_config/adb_config 与 resources 字段后创建 DeviceConfig 对象
+            device_kwargs = {k: v for k, v in device_data.items()
+                             if k not in ('controller_config', 'adb_config', 'resources', 'device_type')}
+            device_configs.append(DeviceConfig(
+                **device_kwargs,
+                device_type=device_type,
+                controller_config=controller_config,
+                resources=resources
+            ))
 
         # 创建 AppConfig
         config = AppConfig(devices=device_configs)
@@ -187,7 +218,7 @@ class AppConfig:
             result["update_method"] = self.update_method
         result["receive_beta_update"] = getattr(self, "receive_beta_update", False)
         result["auto_check_update"] = getattr(self, "auto_check_update", False)
-        result["devices"]=[device_config_to_dict(device) for device in self.devices]
+        result["devices"] = [device_config_to_dict(device) for device in self.devices]
         return result
 
     def update_version(self, version: str):
@@ -195,10 +226,20 @@ class AppConfig:
         self.version = version
         self.build_time = datetime.now().strftime("%Y%m%d_%H%M%S")
 
+
 def device_config_to_dict(device: DeviceConfig) -> Dict[str, Any]:
     """辅助函数，将 DeviceConfig 对象转换为字典。"""
     device_dict = device.__dict__.copy()
-    device_dict['adb_config'] = adb_device_to_dict(device.adb_config)
+
+    # 处理控制器配置
+    if device.device_type == DeviceType.ADB:
+        device_dict['controller_config'] = adb_device_to_dict(device.controller_config)
+    else:  # WIN32
+        device_dict['controller_config'] = win32_device_to_dict(device.controller_config)
+
+    # 将 device_type 转换为字符串
+    device_dict['device_type'] = device.device_type.value
+
     device_dict['resources'] = [resource_to_dict(resource) for resource in device.resources]
     return device_dict
 
@@ -206,6 +247,11 @@ def device_config_to_dict(device: DeviceConfig) -> Dict[str, Any]:
 def adb_device_to_dict(adb_device: AdbDevice) -> Dict[str, Any]:
     """辅助函数，将 AdbDevice 对象转换为字典。"""
     return adb_device.__dict__
+
+
+def win32_device_to_dict(win32_device: Win32Device) -> Dict[str, Any]:
+    """辅助函数，将 Win32Device 对象转换为字典。"""
+    return win32_device.__dict__
 
 
 def resource_to_dict(resource: Resource) -> Dict[str, Any]:
