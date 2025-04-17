@@ -59,7 +59,7 @@ class TaskSettingsWidget(QFrame):
         self.resource_header = QWidget()
         self.resource_header.setVisible(False)  # 初始隐藏，直到选择资源
         resource_header_layout = QHBoxLayout(self.resource_header)
-        resource_header_layout.setContentsMargins(0, 0, 0, 10)
+        resource_header_layout.setContentsMargins(0, 0, 0, 0)
 
         # 资源名称标签
         self.resource_name_label = QLabel()
@@ -89,7 +89,7 @@ class TaskSettingsWidget(QFrame):
 
         # 创建内容堆栈小部件来容纳基本设置和高级设置
         self.content_stack = QStackedWidget()
-        self.content_stack.setFixedHeight(500)
+        self.content_stack.setFixedHeight(400)
         self.content_stack.setObjectName("contentStack")
 
         # 创建基本设置页面
@@ -107,18 +107,17 @@ class TaskSettingsWidget(QFrame):
 
         # 在底部添加标签切换按钮
         self.tab_buttons_widget = QWidget()
-        self.tab_buttons_widget.setObjectName("tabButtonsWidget")
         tab_buttons_layout = QHBoxLayout(self.tab_buttons_widget)
-        tab_buttons_layout.setContentsMargins(0, 10, 0, 0)
+        tab_buttons_layout.setContentsMargins(0, 0, 0, 0)
 
         self.basic_tab_btn = QPushButton("基本设置")
-        self.basic_tab_btn.setObjectName("tabButton")
+        self.basic_tab_btn.setObjectName("primaryButton")
         self.basic_tab_btn.setCheckable(True)
         self.basic_tab_btn.setChecked(True)
         self.basic_tab_btn.clicked.connect(lambda: self.switch_tab("basic"))
 
         self.advanced_tab_btn = QPushButton("高级设置")
-        self.advanced_tab_btn.setObjectName("tabButton")
+        self.advanced_tab_btn.setObjectName("secondaryButton")
         self.advanced_tab_btn.setCheckable(True)
         self.advanced_tab_btn.clicked.connect(lambda: self.switch_tab("advanced"))
 

@@ -63,7 +63,7 @@ class ResourceWidget(QFrame):
         layout.addWidget(one_key_start_btn)
 
     def create_resource_table(self):
-        """Create a table for resource selection similar to ControlTab with enhanced styling"""
+        """Create a compact, optimized table for resource selection"""
         # Get all available resources
         all_resources = global_config.get_all_resource_configs()
 
@@ -76,12 +76,19 @@ class ResourceWidget(QFrame):
         table = QTableWidget(len(all_resources), 3)
         table.setObjectName("resourceTable")
         table.setHorizontalHeaderLabels(["启用", "资源名称", "操作"])
-        table.horizontalHeader().setSectionResizeMode(0, QHeaderView.Fixed)
-        table.horizontalHeader().setSectionResizeMode(1, QHeaderView.Stretch)
-        table.horizontalHeader().setSectionResizeMode(2, QHeaderView.Fixed)
-        table.horizontalHeader().setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
-        table.setColumnWidth(0, 60)
-        table.setColumnWidth(2, 150)
+
+        # Optimize header layout
+        header = table.horizontalHeader()
+        header.setSectionResizeMode(0, QHeaderView.Fixed)
+        header.setSectionResizeMode(1, QHeaderView.Stretch)
+        header.setSectionResizeMode(2, QHeaderView.Fixed)
+        header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
+
+        # Set compact column widths
+        table.setColumnWidth(0, 40)  # Checkbox column
+        table.setColumnWidth(2, 80)  # Action buttons column
+
+        # Streamline table appearance
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setAlternatingRowColors(True)
@@ -100,46 +107,66 @@ class ResourceWidget(QFrame):
                 lambda state, r_name=resource_name, cb=checkbox:
                 self.update_resource_enable_status(r_name, cb.isChecked())
             )
-            checkbox_widget = QWidget()
-            checkbox_layout = QHBoxLayout(checkbox_widget)
-            checkbox_layout.setContentsMargins(10, 2, 5, 2)
-            checkbox_layout.addWidget(checkbox)
-            checkbox_layout.setAlignment(Qt.AlignCenter)
-            table.setCellWidget(row, 0, checkbox_widget)
 
-            # Resource name
-            name_item = QTableWidgetItem(f"{resource_name}")
-            name_item.setFont(QFont("Segoe UI", 10, QFont.Medium))
+            # Create a layout-less container for the checkbox
+            checkbox_container = QLabel()
+            layout = QHBoxLayout(checkbox_container)
+            layout.setContentsMargins(4, 0, 0, 0)
+            layout.addWidget(checkbox)
+            table.setCellWidget(row, 0, checkbox_container)
+
+            # Resource name - smaller font size
+            name_item = QTableWidgetItem(resource_name)
+            name_item.setFont(QFont("Segoe UI", 10))  # Reduced font size
             table.setItem(row, 1, name_item)
 
-            # Action buttons
-            button_widget = QWidget()
-            button_layout = QHBoxLayout(button_widget)
-            button_layout.setContentsMargins(5, 2, 5, 2)
-            button_layout.setSpacing(8)
+            # Action buttons in a compact container
+            button_container = QLabel()
+            button_layout = QHBoxLayout(button_container)
+            button_layout.setContentsMargins(4, 0, 4, 0)
+            button_layout.setSpacing(4)  # Reduced spacing
 
-            # Modified button dimensions - rectangular with height similar to checkbox
+            # Create smaller buttons
             run_btn = QPushButton()
-            run_btn.setFixedSize(60, 26)  # Rectangular shape
+            run_btn.setFixedSize(24, 24)  # Smaller size
             run_btn.setIcon(QIcon("assets/icons/play.svg"))
-            run_btn.setIconSize(QSize(16, 16))
+            run_btn.setIconSize(QSize(14, 14))  # Smaller icon
             run_btn.setToolTip("运行此资源")
             run_btn.clicked.connect(lambda checked, r_name=resource_name:
                                     task_manager.run_resource_task(self.device_config, r_name))
 
             settings_btn = QPushButton()
-            settings_btn.setFixedSize(60, 26)  # Rectangular shape
+            settings_btn.setFixedSize(24, 24)  # Smaller size
             settings_btn.setIcon(QIcon("assets/icons/settings.svg"))
-            settings_btn.setIconSize(QSize(16, 16))
+            settings_btn.setIconSize(QSize(14, 14))  # Smaller icon
             settings_btn.setToolTip("配置此资源")
             settings_btn.clicked.connect(lambda checked, r_name=resource_name:
                                          self.show_resource_settings(r_name))
 
             button_layout.addWidget(run_btn)
             button_layout.addWidget(settings_btn)
-            button_layout.addStretch()
-            table.setCellWidget(row, 2, button_widget)
-            table.setRowHeight(row, 48)  # Increase row height for better spacing
+            table.setCellWidget(row, 2, button_container)
+
+            # Optimize row height
+            table.setRowHeight(row, 32)  # Reduced row height
+
+        # Apply stylesheet for more compact appearance
+        table.setStyleSheet("""
+            QTableWidget {
+                background-color: transparent;
+                border: none;
+            }
+            QTableWidget::item {
+                padding: 2px;
+            }
+            QHeaderView::section {
+                background-color: #f0f0f0;
+                padding: 4px;
+                font-size: 10pt;
+                border: none;
+                border-bottom: 1px solid #d0d0d0;
+            }
+        """)
 
         return table
 

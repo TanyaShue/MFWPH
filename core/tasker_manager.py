@@ -170,7 +170,6 @@ class TaskerManager(QObject):
         """
         with QMutexLocker(self._mutex):
             is_active = device_name in self._executors
-            self.logger.debug(f"设备 {device_name} 活跃状态: {is_active}")
             return is_active
 
     def get_device_queue_info(self) -> Dict[str, int]:

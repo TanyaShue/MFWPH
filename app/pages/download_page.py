@@ -1,7 +1,7 @@
 import os
 from pathlib import Path
 
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, Qt
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QFrame, QTableWidget,
                                QTableWidgetItem, QPushButton, QHeaderView, QHBoxLayout,
@@ -42,7 +42,7 @@ class DownloadPage(QWidget):
 
         # Add resource button
         self.add_resource_button = QPushButton("添加新资源")
-        self.add_resource_button.setObjectName("add_resource_button")
+        self.add_resource_button.setObjectName("primaryButton")
         self.add_resource_button.setIcon(QIcon("assets/icons/add.png"))
         self.add_resource_button.clicked.connect(self.show_add_resource_dialog)
         top_buttons_layout.addWidget(self.add_resource_button)
@@ -52,7 +52,7 @@ class DownloadPage(QWidget):
         # Update all button
         self.update_all_button = QPushButton("一键检查所有更新")
         self.update_all_button.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
-        self.update_all_button.setObjectName("update_all_button")
+        self.update_all_button.setObjectName("secondaryButton")
         self.update_all_button.clicked.connect(self.check_all_updates)
         top_buttons_layout.addWidget(self.update_all_button)
 

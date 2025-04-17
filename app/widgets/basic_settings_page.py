@@ -44,16 +44,26 @@ class BasicSettingsPage(QFrame):
         placeholder_layout.setAlignment(Qt.AlignCenter)
         placeholder_layout.setSpacing(15)
 
+        # 创建自动换行的主消息标签
         initial_message = QLabel("请从左侧资源列表中选择一个资源进行设置")
         initial_message.setAlignment(Qt.AlignCenter)
-        initial_message.setObjectName("placeholderText")
+        initial_message.setWordWrap(True)  # 启用文本自动换行
+        initial_message.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)  # 水平方向可扩展
 
+        # 创建自动换行的次要消息标签
         sub_message = QLabel("点击资源列表中的设置按钮来配置任务")
         sub_message.setAlignment(Qt.AlignCenter)
-        sub_message.setObjectName("subText")
+        sub_message.setWordWrap(True)  # 启用文本自动换行
+        sub_message.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)  # 水平方向可扩展
+
+        # 设置最小宽度以确保正确的换行行为（可选）
+        placeholder_widget.setMinimumWidth(10)
 
         placeholder_layout.addWidget(initial_message)
         placeholder_layout.addWidget(sub_message)
+
+        # 添加弹性空间，使标签在顶部居中（可选）
+        placeholder_layout.addStretch(1)
 
         self.settings_content_layout.addWidget(placeholder_widget)
         basic_layout.addWidget(self.settings_content)
@@ -131,11 +141,10 @@ class BasicSettingsPage(QFrame):
 
                 no_config_label = QLabel(f"设备未配置资源 {resource_name}")
                 no_config_label.setAlignment(Qt.AlignCenter)
-                no_config_label.setObjectName("warningText")
 
                 action_btn = QPushButton("添加资源配置")
                 action_btn.setObjectName("primaryButton")
-                action_btn.setFixedWidth(150)
+                action_btn.setFixedWidth(50)
                 action_btn.clicked.connect(lambda: self._create_resource_configuration(resource_name))
 
                 no_config_layout.addWidget(warning_icon)
@@ -170,7 +179,7 @@ class BasicSettingsPage(QFrame):
         # 创建任务的可拖动容器
         scroll_content = DraggableContainer()
         scroll_content.setObjectName('draggableContainer')
-        scroll_content.setMinimumWidth(200)
+        scroll_content.setMinimumWidth(10)
 
         scroll_content.layout.setContentsMargins(0, 0, 0, 0)
         scroll_content.drag.connect(lambda order: self.on_drag_tasks(order))
@@ -197,7 +206,6 @@ class BasicSettingsPage(QFrame):
         for task in sorted_tasks:
             # 创建可折叠小部件
             options_widget = CollapsibleWidget(task.task_name)
-            options_widget.setObjectName("taskItem")
             options_widget.setMinimumHeight(30)  # 设置最小高度
 
             is_task_selected = task.task_name in selected_order
@@ -299,16 +307,16 @@ class BasicSettingsPage(QFrame):
 
         option_layout = QHBoxLayout(option_widget)
         # 减小边距，使其在较窄的容器中也能显示良好
-        option_layout.setContentsMargins(5, 5, 5, 5)
+        option_layout.setContentsMargins(0,0,0,0)
         option_layout.setSpacing(8)  # 减小子元素间的间距
 
         # Option label with tooltip if description exists
         option_label = QLabel(option.name)
         option_label.setObjectName("optionLabel")
         # 禁止标签自动换行
-        option_label.setWordWrap(False)
+        option_label.setWordWrap(True)
         # 设置固定最小宽度，防止标签占用太多空间
-        option_label.setMinimumWidth(60)
+        option_label.setMinimumWidth(20)
 
         if hasattr(option, 'description') and option.description:
             option_label.setToolTip(option.description)
@@ -318,7 +326,7 @@ class BasicSettingsPage(QFrame):
             option_layout.addWidget(info_icon)
 
         option_layout.addWidget(option_label)
-        option_layout.addStretch()
+        # option_layout.addStretch()
 
         # Create control based on option type
         if isinstance(option, SelectOption):

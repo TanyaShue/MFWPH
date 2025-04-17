@@ -13,13 +13,13 @@ QWidget#content_widget, #titleContainer, #sidebar, #infoFrame, #resourceFrame, #
 #logFrame, #contentCard,  #summaryFrame, #taskItem, #logContainer, #logDisplay,
 QTabWidget::pane, QWidget#contentCard, QWidget#optionWidget, QListWidget#settingsCategories,
 QGroupBox#addDeviceGroupBox, QScrollArea#addDeviceScrollArea, #scroll_content,
-QFrame#featureItem, QComboBox, QLineEdit, QTextEdit, QSpinBox, QCheckBox::indicator, QTableWidget, QToolTip {
+#featureItem, QCheckBox::indicator, QTableWidget, QToolTip {
     background-color: #ffffff;
 }
 
 /* 透明背景元素 */
 #draggableContainer, #drag_handle, #navButton, #sidebarToolButton, #sidebarToggleButton,
-QToolButton, #helpButton, QPushButton#githubButton, #deviceButtonsContainer {
+QToolButton, #helpButton, QPushButton#githubButton {
     background-color: transparent;
 }
 
@@ -55,19 +55,42 @@ QListWidget#settingsCategories {
 }
 
 /* 圆角样式 */
-QFrame, #taskItem, #logDisplay, QComboBox, QLineEdit, QTextEdit, QSpinBox, QGroupBox { border-radius: 4px; }
-QFrame { border-radius: 6px; }
-#contentCard, #taskItem, #logContainer, QComboBox, QLineEdit, QTextEdit, QSpinBox,
-QGroupBox, QTabWidget::pane, QToolTip {
+#contentCard, #taskItem, #logContainer {
     border-radius: 4px;
 }
 #logContainer { border-radius: 8px; }
 #logDisplay { border-radius: 6px; }
 
 /* 边框与填充 */
+/* Original style with box-sizing fix */
 #infoFrame, #resourceFrame, #taskSettingsFrame, #logFrame, #contentCard, #taskItem, #logContainer {
-    border: 1px solid #e0e0e0;
+    border: 1px solid #d9d8d8;
     padding: 12px;
+    box-sizing: border-box; /* Add this property */
+    border-radius: 8px;
+}
+
+/* Optional: Add styles for the splitter itself */
+QSplitter::handle {
+    background-color: #e0e0e0;
+    width: 1px;  /* For vertical splitter */
+    height: 1px; /* For horizontal splitter */
+}
+
+QSplitter::handle:hover {
+    background-color: #1a73e8;  /* Highlight color when hovered */
+}
+
+/* Prevent child widgets from further expanding */
+QSplitter > #infoFrame,
+QSplitter > #resourceFrame,
+QSplitter > #taskSettingsFrame,
+QSplitter > #logFrame,
+QSplitter > #contentCard,
+QSplitter > #taskItem,
+QSplitter > #logContainer {
+    min-width: 0px;
+    min-height: 0px;
 }
 #deviceCard {
     border: 1px solid #e0e0e0;
@@ -89,22 +112,12 @@ QGroupBox, QTabWidget::pane, QToolTip {
 #pageTitle {
     font: bold 18px Arial;
 }
-#sectionTitle {
-    font: bold 14px Arial;
-}
+
 #pageTitle, #deviceCardName, #resourceSettingsTitle {
     color: #202124;
     font-size: 20px;
     font-weight: 500;
     margin-bottom: 15px;
-}
-#sectionTitle {
-    color: #1a73e8;
-    font-size: 14px;
-    font-weight: 500;
-    margin-bottom: 12px;
-    border-bottom: 1px solid #e8f0fe;
-    padding-bottom: 8px;
 }
 #resourceSettingsTitle {
     font-size: 14px;
@@ -116,7 +129,7 @@ QGroupBox, QTabWidget::pane, QToolTip {
     font-size: 12px;
     color: #5f6368;
 }
-#sidebarLabel, #navButtonLabel, #navButton:checked #navButtonLabel, #countLabel, #infoLabel,
+#sidebarLabel, #navButtonLabel, #navButton:checked #navButtonLabel, #countLabel,
 QGroupBox::title, QListWidget#settingsCategories::item {
     color: #5f6368;
 }
@@ -148,8 +161,8 @@ QGroupBox::title, QListWidget#settingsCategories::item {
     font-weight: 500;
 }
 #optionLabel { font-weight: 500; }
-#infoLabel, QLabel#infoLabel { min-width: 150px; max-width: 150px; }
-#infoValue, #deviceCardName, #resourceSettingsTitle {
+#infoLabel{ min-width: 150px; max-width: 150px; }
+#deviceCardName, #resourceSettingsTitle {
     font-weight: 500;
     color: #202124;
 }
@@ -160,10 +173,7 @@ QGroupBox::title, QListWidget#settingsCategories::item {
     margin-top: 2px;
 }
 QLabel#resourceDescription { margin-top: 4px; margin-left: 150px; }
-#placeholderText {
-    color: #5f6368;
-    font-size: 14px;
-}
+
 #noOptionsLabel {
     color: #80868b;
     font-style: italic;
@@ -176,18 +186,6 @@ QLabel#resourceDescription { margin-top: 4px; margin-left: 150px; }
 }
 
 /* 特殊状态文本 */
-#errorText, QLabel#warningText {
-    color: #ea4335;
-    font-size: 14px;
-}
-QLabel#warningText {
-    color: #f29900;
-    font-size: 12px;
-    margin-top: 4px;
-    margin-bottom: 12px;
-    padding-left: 28px;
-}
-#warningText { color: #f29900; }
 #instructionText, QLabel#instructionText {
     background-color: #e8f0fe;
     color: #1a73e8;
@@ -207,28 +205,6 @@ QLabel#instructionText { padding: 8px 12px; margin-bottom: 12px; }
     border-radius: 5px;
 }
 
-/* 徽章样式 */
-#countBadge {
-    background-color: #e8f0fe;
-    color: #1a73e8;
-    border-radius: 12px;
-    min-width: 24px;
-    min-height: 24px;
-    max-width: 24px;
-    max-height: 24px;
-    text-align: center;
-}
-#navButtonBadge {
-    background-color: #ea4335;
-    color: white;
-    border-radius: 8px;
-    padding: 2px 6px;
-    font-size: 10px;
-    font-weight: bold;
-    position: absolute;
-    top: 4px;
-    right: 4px;
-}
 
 /* 导航按钮样式 */
 #navButton, #sidebarToolButton, #sidebarToggleButton, #navButton:checked, #addDeviceButton {
@@ -272,87 +248,99 @@ QLabel#instructionText { padding: 8px 12px; margin-bottom: 12px; }
     padding-left: 5px;
 }
 
-/* 按钮样式 */
-QPushButton, #secondaryButton {
-    background-color: #f8f9fa;
-    color: #202124;
-    border: 1px solid #dadce0;
-    border-radius: 4px;
-    padding: 8px 16px;
-    font-weight: 500;
-    outline: none;
-}
-QPushButton:hover, #secondaryButton:hover, #iconButton:hover {
-    background-color: #f1f3f4;
-    border-color: #d2d5d9;
-}
-QPushButton:pressed, #secondaryButton:pressed, #iconButton:pressed { background-color: #e8eaed; }
-QPushButton:disabled {
-    background-color: #f1f3f4;
-    color: #9aa0a6;
-    border-color: #e0e0e0;
-}
+/* Blue Button Styles */
+/* 蓝色按钮样式 - 更明亮的颜色 */
 #primaryButton, #oneKeyButton {
-    background-color: #1a73e8;
+    background-color: #4285f4; /* 更明亮的蓝色 */
     color: white;
     border: none;
-    border-radius: 4px;
-    padding: 8px 16px;
-    font-weight: 500;
+    border-radius: 2px;
+    padding: 4px 8px;
+    font-weight: 100;
     outline: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
 }
-#primaryButton:disabled {
-    background-color: #a8c7fa;
+
+/* 蓝色按钮悬停状态 */
+#primaryButton:hover, #oneKeyButton:hover {
+    background-color: #5a95f5; /* 略微更亮的蓝色 */
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.1);
+}
+
+/* 蓝色按钮按压状态 */
+#primaryButton:active, #oneKeyButton:active {
+    background-color: #3b78e7; /* 按压时略微深一点 */
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.2);
+    transform: translateY(1px); /* 轻微下移效果 */
+}
+
+/* 蓝色按钮焦点状态 */
+#primaryButton:focus, #oneKeyButton:focus {
+    box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.4); /* 明亮蓝色轮廓 */
+}
+
+/* 蓝色按钮禁用状态 */
+#primaryButton:disabled, #oneKeyButton:disabled {
+    background-color: #a8c7fa; /* 浅蓝色 */
     color: #f8f9fa;
+    cursor: not-allowed;
 }
-#secondaryButton { color: #1a73e8; }
-#secondaryButton:disabled {
-    color: #a8c7fa;
-    border-color: #e0e0e0;
-}
-#iconButton {
+
+/* 白色按钮样式 */
+#secondaryButton, #cancelButton {
+    background-color: white;
+    color: #4285f4; /* 匹配主按钮的明亮蓝色 */
     border: 1px solid #dadce0;
-    border-radius: 16px;
-    min-width: 32px;
-    min-height: 32px;
-    max-width: 32px;
-    max-height: 32px;
-    padding: 0;
+    border-radius: 2px;
+    padding: 4px 8px;
+    font-weight: 100;
+    outline: none;
+    cursor: pointer;
+    transition: all 0.2s ease;
 }
-#oneKeyButton {
-    padding: 10px;
-    font-weight: bold;
-    min-height: 40px;
+
+/* 白色按钮悬停状态 */
+#secondaryButton:hover, #cancelButton:hover {
+    background-color: #f8f9fa; /* 非常浅的灰色 */
+    border-color: #d2d2d2;
+    box-shadow: 0 1px 2px rgba(0, 0, 0, 0.05);
 }
-QPushButton#add_resource_button {
-    min-height: 30px;
+
+/* 白色按钮按压状态 */
+#secondaryButton:active, #cancelButton:active {
+    background-color: #f1f3f4; /* 比悬停状态略深 */
+    border-color: #c6c6c6;
+    box-shadow: inset 0 1px 2px rgba(0, 0, 0, 0.1);
+    transform: translateY(1px); /* 轻微下移效果 */
 }
-QPushButton#update_all_button {
-    min-height: 30px;
-    min-width: 200px;
-    max-width: 200px;
+
+/* 白色按钮焦点状态 */
+#secondaryButton:focus, #cancelButton:focus {
+    box-shadow: 0 0 0 2px rgba(66, 133, 244, 0.4); /* 明亮蓝色轮廓 */
 }
-QPushButton#check_btn {
-    max-height: 12px;
-    min-height: 12px;
+
+/* 白色按钮禁用状态 */
+#secondaryButton:disabled, #cancelButton:disabled {
+    background-color: #f8f9fa;
+    color: #80868b;
+    border-color: #f1f3f4;
+    cursor: not-allowed;
 }
-QPushButton#update_btn {
-    min-height: 12px;
-    max-height: 12px;
-    background-color: #4CAF50;
-    color: white;
+#check_btn, #update_btn, #downloading_btn, #no_update_source_btn, #latest_version_btn, #check_failed_btn {
+    min-height: 24px;
+    max-height: 28px;
+    min-width: 28px;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 13px;
 }
-QPushButton#downloading_btn {
-    min-height: 12px;
-    max-height: 12px;
-    background-color: #FFD700;
-}
-QPushButton#no_update_source_btn, QPushButton#latest_version_btn, QPushButton#check_failed_btn {
-    min-height: 12px;
-    max-height: 12px;
-    background-color: #E0E0E0;
-}
-QPushButton#githubButton {
+#check_btn {background-color: #ffffff;border-radius: 4px;}
+#update_btn {background-color: #4CAF50;color: white;}
+#downloading_btn {background-color: #FFD700;}
+#no_update_source_btn, #latest_version_btn, #check_failed_btn {background-color: #d7d2d2;}
+
+#githubButton {
     border: 1px solid #e0e0e0;
     border-radius: 20px;
 }
@@ -369,7 +357,7 @@ QToolButton, #logControlButton {
 }
 
 /* 输入控件样式 */
-QComboBox, #optionComboBox, QLineEdit, #optionLineEdit, QTextEdit, QSpinBox {
+ #optionComboBox, QLineEdit, #optionLineEdit, QTextEdit, QSpinBox {
     border: 1px solid #dadce0;
     padding: 8px;
     min-width: 6em;
@@ -449,19 +437,6 @@ QSpinBox::down-arrow {
 }
 
 /* 表格样式 */
-QTableWidget {
-    alternate-background-color: #f8f9fa;
-    border: 1px solid #dadce0;
-    gridline-color: #e0e0e0;
-}
-QTableWidget::item, #resourceTable::item {
-    padding: 8px;
-    border-bottom: 1px solid #f0f0f0;
-}
-QTableWidget::item:selected {
-    background-color: #e8f0fe;
-    color: #1a73e8;
-}
 QHeaderView::section, #resourceTable QHeaderView::section {
     background-color: #f8f9fa;
     padding: 8px;
@@ -545,27 +520,27 @@ QGroupBox::title {
 }
 
 /* 滚动区域样式 */
-QScrollArea, QScrollArea#deviceScrollArea, QScrollArea#settingsScrollArea {
+QScrollArea,  QScrollArea#settingsScrollArea {
     border: none;
     background-color: transparent;
 }
-QScrollBar:vertical, QScrollBar:horizontal, QScrollArea#deviceScrollArea QScrollBar:vertical, QScrollArea#settingsScrollArea QScrollBar:vertical {
+QScrollBar:vertical, QScrollBar:horizontal, QScrollBar:vertical, QScrollArea#settingsScrollArea QScrollBar:vertical {
     border: none;
     background: #f1f3f4;
     border-radius: 4px;
     margin: 0px;
 }
 QScrollBar:vertical { width: 8px; }
-QScrollBar:horizontal, QScrollArea#deviceScrollArea QScrollBar:vertical, QScrollArea#settingsScrollArea QScrollBar:vertical { height: 8px; border-radius: 4px; }
-QScrollArea#deviceScrollArea QScrollBar:vertical, QScrollArea#settingsScrollArea QScrollBar:vertical { width: 6px; background: transparent; border-radius: 3px; }
+QScrollBar:horizontal,  QScrollBar:vertical, QScrollArea#settingsScrollArea QScrollBar:vertical { height: 8px; border-radius: 4px; }
+ QScrollBar:vertical, QScrollArea#settingsScrollArea QScrollBar:vertical { width: 6px; background: transparent; border-radius: 3px; }
 
-QScrollBar::handle:vertical, QScrollBar::handle:horizontal, QScrollArea#deviceScrollArea QScrollBar::handle:vertical, QScrollArea#settingsScrollArea QScrollBar::handle:vertical {
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal,  QScrollBar::handle:vertical, QScrollArea#settingsScrollArea QScrollBar::handle:vertical {
     background: #dadce0;
     min-height: 20px;
     border-radius: 4px;
 }
-QScrollBar::handle:horizontal, QScrollArea#deviceScrollArea QScrollBar::handle:vertical, QScrollArea#settingsScrollArea QScrollBar::handle:vertical { min-width: 20px; border-radius: 4px; }
-QScrollArea#deviceScrollArea QScrollBar::handle:vertical, QScrollArea#settingsScrollArea QScrollBar::handle:vertical { min-height: 30px; border-radius: 3px; }
+QScrollBar::handle:horizontal,  QScrollBar::handle:vertical, QScrollArea#settingsScrollArea QScrollBar::handle:vertical { min-width: 20px; border-radius: 4px; }
+ QScrollBar::handle:vertical, QScrollArea#settingsScrollArea QScrollBar::handle:vertical { min-height: 30px; border-radius: 3px; }
 
 QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical, QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal, QScrollArea#settingsScrollArea QScrollBar::add-line:vertical, QScrollArea#settingsScrollArea QScrollBar::sub-line:vertical { height: 0px; width: 0px;}
 
@@ -643,19 +618,16 @@ QTextEdit#log_text {
     background-color: #4285F4;
     border: none;
 }
-/* 主页面特定样式 */
-QScrollArea#deviceScrollArea {
-    border: none;
-    background-color: transparent;
-    margin-top: 5px;  /* 减少顶部边距，使卡片更靠近顶部 */
-}
 
 /* 设备卡片容器 */
 #deviceButtonsContainer {
-    background-color: transparent;
+    background-color: #f5f5f5;
     padding: 0;
 }
-
+#sidebarDeviceButtonsContainer {
+    background-color: #ffffff;
+    padding: 0;
+}
 /* 让日志分割器更加细微 */
 #leftSplitter::handle {
     height: 1px;
@@ -665,6 +637,6 @@ QScrollArea#deviceScrollArea {
 
 #homePage,#titleContainer,#content_widget {
     border-radius: 4px;
-    border: 1px solid transparent;
+    border: 1px solid #ffffff;
     background-color: #ffffff; /* 如果背景色与父控件相同，边框显示可能不明显 */
 }

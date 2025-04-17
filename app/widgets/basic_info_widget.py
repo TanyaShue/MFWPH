@@ -58,7 +58,7 @@ class BasicInfoWidget(QFrame):
             name_label = QLabel("设备名称:")
             name_label.setObjectName("infoLabel")
             name_value = QLabel(self.device_config.device_name)
-            name_value.setObjectName("infoValue")
+            name_value.setObjectName("infoLabel")
             name_value.setFont(QFont("Segoe UI", 13, QFont.Medium))
             name_layout.addWidget(name_label)
             name_layout.addWidget(name_value)
@@ -88,7 +88,7 @@ class BasicInfoWidget(QFrame):
                 display_text = device_type_text
 
             type_value = QLabel(display_text)
-            type_value.setObjectName("infoValue")
+            type_value.setObjectName("infoLabel")
             type_layout.addWidget(type_label)
             type_layout.addWidget(type_value)
             type_layout.addStretch()
@@ -100,7 +100,7 @@ class BasicInfoWidget(QFrame):
             status_label.setObjectName("infoLabel")
 
             self.status_value = QLabel()
-            self.status_value.setObjectName("statusText")
+            self.status_value.setObjectName("infoLabel")
             self.status_value.setWordWrap(True)  # 允许文本换行
 
             status_layout.addWidget(status_label)
@@ -115,7 +115,7 @@ class BasicInfoWidget(QFrame):
             schedule_label.setObjectName("infoLabel")
 
             self.schedule_value = QLabel()
-            self.schedule_value.setObjectName("infoValue")
+            self.schedule_value.setObjectName("infoLabel")
             self.schedule_value.setWordWrap(True)  # 允许文本换行
 
             schedule_layout.addWidget(schedule_label)
@@ -224,7 +224,7 @@ class BasicInfoWidget(QFrame):
                                   task.get('next_run')]
                 if next_run_times:
                     next_run_time = min(next_run_times)
-                    schedule_text = f"下次定时执行: {next_run_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                    schedule_text = f"{next_run_time.strftime('%H:%M:%S')}"
                 else:
                     schedule_text = "已启用，但未设置具体执行时间"
             else:

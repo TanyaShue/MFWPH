@@ -21,7 +21,7 @@ class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
         self.setWindowTitle("MFWPH")
-        self.setMinimumSize(1200, 800)
+        self.setMinimumSize(800, 600)
 
         # Track the currently active button and page
         self.current_page = "home"
@@ -62,7 +62,7 @@ class MainWindow(QMainWindow):
 
         # Device buttons container (scrollable)
         self.device_buttons_container = QWidget()
-        self.device_buttons_container.setObjectName("deviceButtonsContainer")
+        self.device_buttons_container.setObjectName("sidebarDeviceButtonsContainer")
         self.device_buttons_layout = QVBoxLayout(self.device_buttons_container)
         self.device_buttons_layout.setContentsMargins(0, 0, 0, 0)
         self.device_buttons_layout.setSpacing(0)
@@ -111,7 +111,8 @@ class MainWindow(QMainWindow):
         # Create content widget
         self.content_widget = QWidget()
         self.content_layout = QVBoxLayout(self.content_widget)
-        self.content_layout.setContentsMargins(15, 15, 15, 15)
+        self.content_layout.setContentsMargins(0,0,0,0)
+        self.content_layout.setSpacing(0)
 
         main_layout.addWidget(self.content_widget)
 

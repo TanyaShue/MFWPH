@@ -4,9 +4,9 @@ from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QSplitter, QLabel
 )
 
+from app.components.log_display import LogDisplay
 from app.models.config.global_config import global_config
 from app.widgets.basic_info_widget import BasicInfoWidget
-from app.widgets.device_log_widget import DeviceLogWidget
 from app.widgets.resource_widget import ResourceWidget
 from app.widgets.task_settings_widget import TaskSettingsWidget
 
@@ -39,7 +39,6 @@ class DeviceInfoPage(QWidget):
 
         # 1. Left Part (Basic Info & Resource Selection)
         left_widget = QWidget()
-        left_widget.setObjectName("leftPanel")
         left_layout = QVBoxLayout(left_widget)
         left_layout.setContentsMargins(0, 0, 0, 0)
         left_layout.setSpacing(10)
@@ -54,7 +53,8 @@ class DeviceInfoPage(QWidget):
         self.basic_info_widget = BasicInfoWidget(self.device_name, self.device_config, self)
         self.resource_widget = ResourceWidget(self.device_name, self.device_config, self)
         self.task_settings_widget = TaskSettingsWidget(self.device_config, self)
-        self.log_widget = DeviceLogWidget(self.device_name, self)
+        self.log_widget = LogDisplay(enable_log_level_filter=True,show_device_selector=False)
+        self.log_widget.show_device_logs(self.device_name)
 
         # Connect signals
         self.resource_widget.resource_selected.connect(self.task_settings_widget.show_resource_settings)
@@ -67,7 +67,7 @@ class DeviceInfoPage(QWidget):
         self.left_splitter.addWidget(self.resource_widget)
 
         # Set initial sizes for left splitter (1:2 ratio for basic info and resource selection)
-        self.left_splitter.setSizes([100, 300])
+        self.left_splitter.setSizes([200, 300])
 
         left_layout.addWidget(self.left_splitter)
 
@@ -77,7 +77,7 @@ class DeviceInfoPage(QWidget):
         self.horizontal_splitter.addWidget(self.log_widget)
 
         # Set initial sizes for horizontal splitter (1:1:1 ratio)
-        self.horizontal_splitter.setSizes([400, 400, 300])
+        self.horizontal_splitter.setSizes([200, 200, 200])
 
         main_layout.addWidget(self.horizontal_splitter)
 

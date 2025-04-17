@@ -175,8 +175,15 @@ class DeviceCard(QFrame):
             if device_tasks and any(task.get('next_run') for task in device_tasks):
                 next_times = sorted([task['next_run'] for task in device_tasks if task.get('next_run')])
                 if next_times:
-                    self.schedule_value.setText(next_times[0])
+                    time_str = next_times[0]
+                    if " " in time_str:
+                        time_part = time_str.split(" ")[1]  # 提取 "14:30:00"
+                    else:
+                        time_part = time_str  # 如果本来就是时间，就直接用
+
+                    self.schedule_value.setText(time_part)
                     self.schedule_value.setStyleSheet("color: #2196F3;")  # Blue
+
                 else:
                     self.schedule_value.setText("未设置时间")
                     self.schedule_value.setStyleSheet("")

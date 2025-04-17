@@ -54,18 +54,8 @@ class HomePage(QFrame):
     def init_ui(self):
         # 主布局
         main_layout = QVBoxLayout(self)
-        main_layout.setContentsMargins(5, 5, 5, 5)
-        main_layout.setSpacing(10)
-
-        # 创建标题框架 - 使用固定高度
-        title_frame = QFrame()
-        title_frame.setObjectName("titleFrame")
-        title_frame.setFrameShape(QFrame.StyledPanel)
-        title_frame.setFixedHeight(120)  # 设置固定高度，替代QSplitter分割方式
-        title_layout = QVBoxLayout(title_frame)
-        title_layout.setContentsMargins(0, 0, 0, 0)
-        title_layout.setSpacing(0)
-
+        main_layout.setContentsMargins(0,0,0,0)
+        main_layout.setSpacing(0)
         # 标题内容
         header_widget = QFrame()
         header_widget.setObjectName("titleContainer")
@@ -110,19 +100,17 @@ class HomePage(QFrame):
         self.toggle_logs_btn.clicked.connect(self.toggle_logs)
         header_layout.addWidget(self.toggle_logs_btn)
 
-        title_layout.addWidget(header_widget)
+        main_layout.addWidget(header_widget)
 
-        # 添加分隔线
         separator = QFrame()
         separator.setFrameShape(QFrame.HLine)
-        separator.setFrameShadow(QFrame.Sunken)
-        separator.setObjectName("separator")
-        separator.setStyleSheet("#separator { background-color: var(--border-color); height: 1px; }")
-        title_layout.addWidget(separator)
+        separator.setFrameShadow(QFrame.Plain)
+        separator.setFixedHeight(1)
+        separator.setStyleSheet("background-color: #d9d8d8; border: none;")
+        main_layout.addWidget(separator)
 
         # 创建内容框架 - 包含设备卡和日志
         content_frame = QFrame()
-        content_frame.setObjectName("contentFrame")
         content_frame.setFrameShape(QFrame.StyledPanel)
 
         # 内容分割器 - 将内容区域分为设备卡和日志两部分
@@ -135,13 +123,11 @@ class HomePage(QFrame):
 
         # 设备卡部分 - 使用Frame而非Widget
         cards_frame = QFrame()
-        cards_frame.setObjectName("cardsFrame")
         cards_frame_layout = QVBoxLayout(cards_frame)
         cards_frame_layout.setContentsMargins(0, 0, 0, 0)
 
         # 可滚动区域中的设备卡网格 - 确保靠近顶部
         scroll_area = QScrollArea()
-        scroll_area.setObjectName("deviceScrollArea")
         scroll_area.setWidgetResizable(True)
         scroll_area.setFrameShape(QFrame.NoFrame)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAsNeeded)
@@ -184,7 +170,6 @@ class HomePage(QFrame):
         content_layout.addWidget(content_splitter)
 
         # 将标题和内容直接添加到主布局，去除了main_splitter
-        main_layout.addWidget(title_frame)
         main_layout.addWidget(content_frame, 1)  # 内容区域占用剩余所有空间
 
         # 保存内容分割器的引用 (用于toggle_logs方法)
