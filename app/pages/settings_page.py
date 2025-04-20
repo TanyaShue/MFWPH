@@ -2,13 +2,13 @@ from PySide6.QtCore import Qt, QSize, QTimer
 from PySide6.QtGui import QFont, QPixmap, QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
-    QListWidget, QListWidgetItem, QScrollArea, QFrame, QComboBox, QCheckBox,
+    QListWidget, QListWidgetItem, QScrollArea, QFrame, QCheckBox,
     QLineEdit, QPushButton, QSpinBox, QTextBrowser, QSizePolicy, QStackedLayout
 )
 
 from app.models.config.global_config import global_config
 from app.utils.theme_manager import theme_manager
-
+from app.widgets.no_wheel_QComboBox import NoWheelComboBox
 
 class SettingsPage(QWidget):
     """Settings page with categories on the left and content on the right"""
@@ -135,7 +135,7 @@ class SettingsPage(QWidget):
         theme_row = QHBoxLayout()
         theme_label = QLabel("界面主题")
         theme_label.setObjectName("infoLabel")
-        theme_combo = QComboBox()
+        theme_combo = NoWheelComboBox()
         theme_combo.addItem("明亮主题")
         theme_combo.addItem("深色主题")
 
@@ -154,7 +154,7 @@ class SettingsPage(QWidget):
         lang_row = QHBoxLayout()
         lang_label = QLabel("界面语言")
         lang_label.setObjectName("infoLabel")
-        lang_combo = QComboBox()
+        lang_combo = NoWheelComboBox()
         lang_combo.addItem("简体中文")
         # lang_combo.addItem("English")
 
@@ -257,7 +257,7 @@ class SettingsPage(QWidget):
         update_source_label = QLabel("更新源:")
         update_source_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
-        self.update_source_combo = QComboBox()
+        self.update_source_combo = NoWheelComboBox()
         self.update_source_combo.addItem("github")
         self.update_source_combo.addItem("Mirror酱")
         self.update_source_combo.setObjectName("update_source_combo")

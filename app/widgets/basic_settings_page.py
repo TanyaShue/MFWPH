@@ -2,7 +2,7 @@ from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
-    QScrollArea, QCheckBox, QComboBox, QLineEdit, QPushButton, QSizePolicy
+    QScrollArea, QCheckBox, QLineEdit, QPushButton, QSizePolicy
 )
 
 from app.components.collapsible_widget import CollapsibleWidget, DraggableContainer
@@ -10,7 +10,7 @@ from app.models.config.app_config import Resource, OptionConfig
 from app.models.config.global_config import global_config
 from app.models.config.resource_config import SelectOption, BoolOption, InputOption
 from app.models.logging.log_manager import log_manager
-
+from app.widgets.no_wheel_ComboBox import NoWheelComboBox
 
 class BasicSettingsPage(QFrame):
     """基本设置页面，用于配置资源任务"""
@@ -330,7 +330,7 @@ class BasicSettingsPage(QFrame):
 
         # Create control based on option type
         if isinstance(option, SelectOption):
-            widget = QComboBox()
+            widget = NoWheelComboBox()
             widget.setObjectName("optionComboBox")
             # 设置下拉框适应可用空间的最小宽度
             widget.setMinimumWidth(40)

@@ -1,11 +1,11 @@
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QTextEdit,
-    QLabel, QComboBox, QFrame, QCheckBox
+    QLabel, QFrame, QCheckBox
 )
 
 from app.models.logging.log_manager import log_manager
-
+from app.widgets.no_wheel_QComboBox import NoWheelComboBox
 
 class LogDisplay(QFrame):
     """
@@ -66,7 +66,7 @@ class LogDisplay(QFrame):
         header_layout.addStretch()
 
         # Add log level selector
-        self.log_level_selector = QComboBox()
+        self.log_level_selector = NoWheelComboBox()
         # 注意：不再添加"全部级别"选项
         self.log_level_selector.addItem("INFO", "INFO")
         self.log_level_selector.addItem("DEBUG", "DEBUG")
@@ -90,13 +90,13 @@ class LogDisplay(QFrame):
             header_layout.addWidget(device_label)
 
             # Dropdown for device selection
-            self.device_selector = QComboBox()
+            self.device_selector = NoWheelComboBox()
             self.device_selector.addItem("全部日志", "all")
             self.device_selector.currentIndexChanged.connect(self.on_device_changed)
             header_layout.addWidget(self.device_selector)
         else:
             # Create a hidden device selector to maintain API compatibility
-            self.device_selector = QComboBox()
+            self.device_selector = NoWheelComboBox()
             self.device_selector.setVisible(False)
 
         main_layout.addLayout(header_layout)
