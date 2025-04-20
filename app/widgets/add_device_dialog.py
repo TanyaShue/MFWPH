@@ -1,7 +1,7 @@
 from PySide6.QtCore import Qt, QTime, QThread, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
-                               QLabel, QLineEdit, QPushButton, QComboBox,
+                               QLabel, QLineEdit, QPushButton,
                                QWidget, QCheckBox, QGroupBox, QScrollArea,
                                QTimeEdit, QMessageBox, QStackedWidget)
 from maa.toolkit import Toolkit
@@ -11,6 +11,7 @@ from maa.define import (MaaAdbScreencapMethodEnum, MaaAdbInputMethodEnum,
 
 from app.models.config.app_config import DeviceConfig, AdbDevice, Win32Device, DeviceType
 from app.models.logging.log_manager import log_manager
+from app.widgets.no_wheel_QComboBox import NoWheelComboBox
 
 logger = log_manager.get_app_logger()
 
@@ -81,7 +82,7 @@ class AddDeviceDialog(QDialog):
         device_type_group.setObjectName("addDeviceGroupBox")
         device_type_layout = QHBoxLayout()
         device_type_layout.addWidget(QLabel("控制器类型:"))
-        self.controller_type_combo = QComboBox()
+        self.controller_type_combo = NoWheelComboBox()
         self.controller_type_combo.addItem("ADB设备", DeviceType.ADB)
         self.controller_type_combo.addItem("Win32窗口", DeviceType.WIN32)
         self.controller_type_combo.currentIndexChanged.connect(self.controller_type_changed)
@@ -104,7 +105,7 @@ class AddDeviceDialog(QDialog):
         search_btn_layout.addStretch()
         device_select_layout = QHBoxLayout()
         device_select_layout.addWidget(QLabel("发现的设备:"))
-        self.device_combo = QComboBox()
+        self.device_combo = NoWheelComboBox()
         self.device_combo.setMinimumWidth(250)
         self.device_combo.currentIndexChanged.connect(self.device_selected)
         device_select_layout.addWidget(self.device_combo)
@@ -135,11 +136,11 @@ class AddDeviceDialog(QDialog):
         self.adb_address_edit = QLineEdit()
 
         # 替换文本框为下拉框: ADB设备截图方法
-        self.screenshot_method_combo = QComboBox()
+        self.screenshot_method_combo = NoWheelComboBox()
         self._populate_adb_screencap_combo()
 
         # 替换文本框为下拉框: ADB设备输入方法
-        self.input_method_combo = QComboBox()
+        self.input_method_combo = NoWheelComboBox()
         self._populate_adb_input_combo()
 
         self.config_edit = QLineEdit()
@@ -159,11 +160,11 @@ class AddDeviceDialog(QDialog):
         self.hwnd_edit = QLineEdit()
 
         # 替换文本框为下拉框: Win32设备截图方法
-        self.win32_screenshot_method_combo = QComboBox()
+        self.win32_screenshot_method_combo = NoWheelComboBox()
         self._populate_win32_screencap_combo()
 
         # 替换文本框为下拉框: Win32设备输入方法
-        self.win32_input_method_combo = QComboBox()
+        self.win32_input_method_combo = NoWheelComboBox()
         self._populate_win32_input_combo()
 
         win32_form.addRow("窗口句柄 (hWnd):", self.hwnd_edit)

@@ -9,6 +9,7 @@ class ThemeManager:
             "dark": "assets/themes/dark.qss",
             "light": "assets/themes/light.qss"
         }
+        self.common_theme = "assets/themes/common.qss"
         self.current_theme = None
 
     def apply_theme(self, theme_name):
@@ -22,9 +23,13 @@ class ThemeManager:
             return
 
         try:
+            with open(self.common_theme, "r", encoding="utf-8") as f:
+                comm_stype = f.read()
+
             with open(theme_path, "r", encoding="utf-8") as f:
                 stylesheet = f.read()
-                QApplication.instance().setStyleSheet(stylesheet)
+                QApplication.instance().setStyleSheet(comm_stype + "\n" + stylesheet)
+                # QApplication.instance().setStyleSheet(stylesheet)
 
             self.current_theme = theme_name
             print(f"Applied theme: {theme_name}")
