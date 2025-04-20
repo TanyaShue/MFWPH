@@ -1,0 +1,629 @@
+/*
+ * 通用样式，作用于控件的大小，填充，字体等非颜色性属性
+ */
+
+/* 全局字体样式 */
+* {
+    font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
+    font-size: 13px;
+}
+
+/* 选项区域背景 */
+#optionWidget, QWidget#optionWidget {
+    padding: 12px;
+    margin: 4px 0;
+}
+
+/* 边框样式 */
+#sidebar {
+    min-width: 60px;
+    max-width: 60px;
+}
+
+#sidebar.expanded {
+    min-width: 200px;
+    max-width: 200px;
+}
+
+QListWidget#settingsCategories {
+    min-width: 200px;
+    max-width: 200px;
+    outline: none;
+    padding: 10px 0;
+}
+
+/* 圆角样式 */
+QFrame, #taskItem, #logDisplay, QComboBox, QLineEdit,
+QTextEdit, QSpinBox, QGroupBox
+{
+    border-radius: 4px;
+}
+
+QFrame {
+    border-radius: 6px;
+}
+
+#contentCard, #deviceCard, #taskItem, #logContainer,
+QComboBox, QLineEdit, QTextEdit, QSpinBox,
+QGroupBox, QTabWidget::pane, QToolTip {
+    border-radius: 4px;
+}
+
+#logContainer {
+    border-radius: 8px;
+}
+
+#logDisplay {
+    border-radius: 6px;
+}
+
+/* 边框与填充 */
+/* Original style with box-sizing fix */
+#infoFrame, #resourceFrame, #taskSettingsFrame,
+#logFrame, #contentCard, #taskItem, #logContainer {
+    padding: 12px;
+    border-radius: 8px;
+}
+
+/* Optional: Add styles for the splitter itself */
+QSplitter::handle {
+    width: 1px;  /* For vertical splitter */
+    height: 1px; /* For horizontal splitter */
+}
+
+/* Prevent child widgets from further expanding */
+QSplitter > #infoFrame,
+QSplitter > #resourceFrame,
+QSplitter > #taskSettingsFrame,
+QSplitter > #logFrame,
+QSplitter > #contentCard,
+QSplitter > #taskItem,
+QSplitter > #logContainer {
+    min-width: 0px;
+    min-height: 0px;
+}
+
+#deviceCard {
+    border-radius: 10px;
+    padding: 16px;
+    margin: 8px;
+}
+
+#summaryFrame {
+    border-radius: 8px;
+    padding: 24px;
+    margin: 20px 50px;
+}
+
+#optionWidget {
+    border-radius: 4px; padding: 2px;
+}
+
+/* Optional: Add styles for the splitter itself */
+QSplitter::handle {
+    width: 1px;  /* For vertical splitter */
+    height: 1px; /* For horizontal splitter */
+}
+
+#logContainer {
+    padding: 12px;
+}
+
+#optionWidget {
+    border-radius: 4px; padding: 2px;
+}
+
+/* 标题样式 */
+#pageTitle {
+    font: bold 18px Arial;
+}
+
+#sectionTitle {
+    font: bold 14px Arial;
+}
+
+#pageTitle, #deviceCardName, #resourceSettingsTitle {
+    font-size: 20px;
+    font-weight: 500;
+    margin-bottom: 15px;
+}
+
+#resourceSettingsTitle {
+    font-size: 14px;
+    font-weight: bold;
+}
+
+#sectionTitle {
+    font-size: 14px;
+    font-weight: 500;
+    margin-bottom: 6px;
+    margin-top: 12px;
+    padding-bottom: 8px;
+    border-radius: 0px;
+}
+
+/* 文本样式 */
+#statusText, #deviceCardType, #subText, #optionsCount,
+QLabel#infoText, QLabel#resourceDescription {
+    font-size: 12px;
+}
+
+#navButtonLabel {
+    font-size: 12px;
+    font-weight: 500;
+}
+
+#sidebarLabel {
+    font-size: 11px;
+    font-weight: 500;
+    padding: 12px 10px 5px 16px;
+    margin: 0;
+    letter-spacing: 0.5px;
+}
+
+#deviceCardName {
+    font-weight: 500;
+    font-size: 16px;
+    margin-bottom: 4px;
+}
+
+#deviceCardType {
+    font-size: 13px;
+    margin-bottom: 8px;
+}
+
+#taskItem QLabel {
+    font-size: 13px;
+    font-weight: 500;
+}
+
+#optionLabel {
+    font-weight: 500;
+}
+
+#infoLabel, QLabel#infoLabel {
+    min-width: 150px;
+    max-width: 150px;
+}
+
+#deviceCardName, #resourceSettingsTitle {
+    font-weight: 500;
+}
+
+#optionsCount {
+    font-size: 11px;
+}
+
+#resourceDescription, QLabel#resourceDescription {
+    font-size: 12px;
+    margin-top: 2px;
+}
+
+QLabel#resourceDescription {
+    margin-top: 4px; margin-left: 150px;
+}
+
+#placeholderText {
+    font-size: 14px;
+}
+
+#noOptionsLabel {
+    font-style: italic;
+    padding: 10px;
+    qproperty-alignment: AlignCenter;
+    min-height: 40px;
+}
+
+#notImportOptionLabel{
+    font-style: italic;
+}
+
+/* 特殊状态文本 */
+#errorText {
+    font-size: 14px;
+}
+
+#warningText {
+    font-size: 12px;
+    margin-top: 4px;
+    margin-bottom: 12px;
+}
+
+#instructionText, QLabel#instructionText {
+    padding: 2px;
+    border-radius: 4px;
+    font-size: 12px;
+}
+
+QLabel#instructionText {
+    padding: 8px 12px; margin-bottom: 12px;
+}
+
+/* 状态指示器 */
+#statusIndicatorNormal {
+    border-radius: 5px;
+}
+
+#statusIndicatorError {
+    border-radius: 5px;
+}
+
+/* 徽章样式 */
+#countBadge {
+    border-radius: 12px;
+    min-width: 24px;
+    min-height: 24px;
+    max-width: 24px;
+    max-height: 24px;
+    text-align: center;
+}
+
+#navButtonBadge {
+    border-radius: 8px;
+    font-size: 10px;
+    font-weight: bold;
+    position: absolute;
+    top: 4px;
+    right: 4px;
+}
+
+/* 导航按钮样式 */
+#navButton, #sidebarToolButton, #sidebarToggleButton,
+#navButton:checked, #addDeviceButton {
+    border-radius: 8px;
+    padding: 8px;
+    margin: 4px 8px;
+    text-align: left;
+    outline: none;
+    border: none;
+}
+
+#sidebarToolButton, #sidebarToggleButton {
+    margin: 4px 8px;
+}
+
+#sidebarToolButton {
+    padding: 6px;
+}
+
+#sidebarToggleButton {
+    border-radius: 50%;
+    padding: 4px;
+    margin: 8px 4px;
+    min-width: 28px;
+    max-width: 28px;
+    min-height: 28px;
+    max-height: 28px;
+}
+
+#addDeviceButton {
+    margin: 8px 12px;
+}
+
+#drag_handle{
+    font-size:16px;
+    padding-left: 5px;
+}
+
+/* 按钮样式 */
+QPushButton, #secondaryButton {
+    border-radius: 4px;
+    font-weight: 500;
+    outline: none;
+}
+
+#iconButton {
+    border-radius: 16px;
+}
+
+#oneKeyButton {
+    font-weight: bold;
+    min-height: 40px;
+}
+
+QPushButton#downloading_btn {
+    min-height: 12px;
+    max-height: 12px;
+}
+
+QPushButton#no_update_source_btn, QPushButton#latest_version_btn,
+QPushButton#check_failed_btn {
+    min-height: 12px;
+    max-height: 12px;
+}
+
+QPushButton#githubButton {
+    border-radius: 20px;
+}
+
+/* 蓝色按钮样式 - 更明亮的颜色 */
+#primaryButton, #oneKeyButton {
+    border-radius: 2px;
+    padding: 4px 8px;
+    font-weight: 100;
+    outline: none;
+}
+
+/* 白色按钮样式 */
+#secondaryButton, #cancelButton {
+    border-radius: 2px;
+    padding: 4px 8px;
+    font-weight: 100;
+    outline: none;
+}
+
+#check_btn, #update_btn, #downloading_btn, #no_update_source_btn,
+#latest_version_btn, #check_failed_btn {
+    min-height: 24px;
+    max-height: 28px;
+    min-width: 28px;
+    padding: 4px 12px;
+    border-radius: 4px;
+    font-size: 13px;
+}
+
+#check_btn {border-radius: 4px;}
+
+#githubButton {
+    border-radius: 20px;
+}
+
+/* 工具按钮样式 */
+QToolButton, #logControlButton {
+    border-radius: 4px;
+    padding: 6px;
+}
+
+#logControlButton {
+    padding: 4px;
+}
+
+/* 输入控件样式 */
+ QComboBox, #optionComboBox, QLineEdit,
+ #optionLineEdit, QTextEdit, QSpinBox {
+    padding: 8px;
+}
+
+#optionComboBox, #optionLineEdit {
+    padding: 5px 10px;
+    min-width: 40px;
+    max-width: 100px;
+}
+
+QComboBox::drop-down, #optionComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: center right;
+    width: 20px;
+}
+
+QComboBox::down-arrow {
+    width: 12px;
+    height: 12px;
+}
+
+/* 复选框样式 */
+QCheckBox {
+    spacing: 10px;
+    outline: none;
+    min-height: 24px;
+}
+
+QCheckBox::indicator {
+    width: 18px;
+    height: 18px;
+    border-radius: 3px;
+}
+
+/* 数字输入框样式 */
+QSpinBox::up-button, QSpinBox::down-button {
+    width: 16px;
+}
+
+QSpinBox::up-arrow {
+    width: 12px;
+    height: 12px;
+}
+
+QSpinBox::down-arrow {
+    width: 12px;
+    height: 12px;
+}
+
+/* 表格样式 */
+QTableWidget {
+    border-top-right-radius: 0px;
+    border-top-left-radius: 0px;
+}
+
+QTableWidget::item, #resourceTable::item {
+    padding: 8px;
+}
+
+QHeaderView::section, #resourceTable QHeaderView::section {
+    padding: 8px;
+    font-weight: 500;
+}
+
+#resourceTable QHeaderView::section {
+    font-weight: bold;
+}
+
+/* 标签组件样式 */
+QTabWidget::pane {
+    border-bottom-left-radius: 2px;
+    border-bottom-right-radius: 2px;
+}
+
+QTabBar::tab {
+    padding: 8px 16px;
+    border-top-left-radius: 2px;
+    border-top-right-radius: 2px;
+    margin-right: 2px;
+}
+
+QTabWidget#infoTabs::pane {
+    border-radius: 5px;
+}
+
+QTabWidget#infoTabs::tab-bar {
+    alignment: center;
+}
+
+/* 分隔器样式 */
+QSplitter::handle:horizontal {
+    width: 1px;
+    margin: 0 6px;
+}
+
+QSplitter::handle:vertical {
+    height: 1px;
+    margin: 6px 0;
+}
+
+#horizontalSplitter::handle {
+    width: 1px;
+    margin: 0 5px;
+}
+
+#leftSplitter::handle {
+    height: 1px;
+    margin: 5px 0;
+}
+
+#sidebarSeparator {
+    height: 0.5px;
+    margin: 8px 16px;
+}
+
+/* 群组框样式 */
+QGroupBox {
+    margin-top: 1.5ex;
+    padding-top: 1ex;
+}
+
+QGroupBox::title {
+    subcontrol-origin: margin;
+    subcontrol-position: top left;
+    padding: 0 3px;
+}
+
+/* 滚动区域样式 */
+QScrollBar:vertical, QScrollBar:horizontal, QScrollBar:vertical,
+QScrollArea#settingsScrollArea QScrollBar:vertical {
+    border-radius: 4px;
+    margin: 0px;
+}
+
+QScrollBar:vertical {
+    width: 8px;
+}
+
+QScrollBar:horizontal, QScrollBar:vertical,
+QScrollArea#settingsScrollArea QScrollBar:vertical {
+    height: 8px;
+    border-radius: 4px;
+}
+
+QScrollBar:vertical, QScrollArea#settingsScrollArea QScrollBar:vertical {
+    width: 6px;
+    border-radius: 3px;
+}
+
+QScrollBar::handle:vertical, QScrollBar::handle:horizontal, QScrollBar::handle:vertical,
+QScrollArea#settingsScrollArea QScrollBar::handle:vertical {
+    min-height: 20px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:horizontal,  QScrollBar::handle:vertical,
+QScrollArea#settingsScrollArea QScrollBar::handle:vertical {
+    min-width: 20px;
+    border-radius: 4px;
+}
+
+QScrollBar::handle:vertical, QScrollArea#settingsScrollArea QScrollBar::handle:vertical {
+    min-height: 30px;
+    border-radius: 3px;
+}
+
+QScrollBar::add-line:vertical, QScrollBar::sub-line:vertical,
+QScrollBar::add-line:horizontal, QScrollBar::sub-line:horizontal,
+QScrollArea#settingsScrollArea QScrollBar::add-line:vertical,
+QScrollArea#settingsScrollArea QScrollBar::sub-line:vertical {
+    height: 0px;
+    width: 0px;
+}
+
+/* 设置列表样式 */
+QListWidget#settingsCategories::item {
+    padding: 12px 16px;
+    border-radius: 4px;
+    margin: 2px 8px;
+}
+
+QListWidget#settingsCategories::item:selected {
+    font-weight: 500;
+}
+
+/* 工具提示样式 */
+QToolTip#navButton {
+    border-radius: 4px;
+    padding: 6px 10px;
+    font-size: 12px;
+}
+
+/* 可折叠面板样式 */
+#collapsibleHeader {
+    border-radius: 4px;
+}
+
+#collapsibleContent {
+    margin-left: 15px;
+    margin-right: 15px;
+    border-bottom-left-radius: 4px;
+    border-bottom-right-radius: 4px;
+}
+
+/* 进度条样式 */
+QProgressBar {
+    text-visible: true;
+}
+
+/* 日志文本样式 */
+QTextEdit#log_text {
+    line-height: 150%;
+    padding: 5px;
+}
+
+#logDisplay {
+    border-radius: 6px;
+}
+
+#logDisplay QTextEdit {
+    font-family: "Consolas", "Source Code Pro", monospace;
+    font-size: 12px;
+    line-height: 1.5;
+    padding: 10px;
+}
+
+/* 拖放指示器 */
+
+
+/* 设备卡片容器 */
+#deviceButtonsContainer {
+    padding: 0;
+}
+
+#sidebarDeviceButtonsContainer {
+    padding: 0;
+}
+
+/* 让日志分割器更加细微 */
+#leftSplitter::handle {
+    height: 1px;
+    margin: 3px 0;
+}
+
+#homePage,#titleContainer,#content_widget {
+    border-radius: 4px;
+}

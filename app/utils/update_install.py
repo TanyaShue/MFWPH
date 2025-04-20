@@ -191,7 +191,7 @@ class ResourceDownloader:
                 params = {
                     "current_version": resource.resource_version,
                     "cdk": cdk,
-                    "user_agent": "ResourceDownloader",
+                    "user_agent": "MaaYYsGUI",
                     "channel": channel
                 }
 
