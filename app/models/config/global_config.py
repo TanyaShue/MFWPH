@@ -42,6 +42,11 @@ class GlobalConfig:
         从 JSON 文件中加载全局 AppConfig 配置。
         """
         self.app_config = AppConfig.from_json_file(file_path)
+        self.app_config.migrate_old_resources()
+        print(self.app_config.devices)
+        for device in self.app_config.devices:
+            for resource in device.resources:
+                print(resource.selected_tasks)
 
     def load_resource_config(self, file_path: str) -> None:
         """
