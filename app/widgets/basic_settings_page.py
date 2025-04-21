@@ -6,11 +6,12 @@ from PySide6.QtWidgets import (
 )
 
 from app.components.collapsible_widget import CollapsibleWidget, DraggableContainer
-from app.models.config.app_config import Resource, OptionConfig
+from app.models.config.app_config import Resource, OptionConfig, ResourceSettings
 from app.models.config.global_config import global_config
 from app.models.config.resource_config import SelectOption, BoolOption, InputOption
 from app.models.logging.log_manager import log_manager
 from app.widgets.no_wheel_ComboBox import NoWheelComboBox
+
 
 class BasicSettingsPage(QFrame):
     """基本设置页面，用于配置资源任务"""
@@ -18,7 +19,7 @@ class BasicSettingsPage(QFrame):
     def __init__(self, device_config, parent=None):
         super().__init__(parent)
         self.device_config = device_config
-        self.logger=log_manager.get_device_logger(device_config.device_name)
+        self.logger = log_manager.get_device_logger(device_config.device_name)
         self.selected_resource_name = None
         self.task_option_widgets = {}
 
@@ -105,11 +106,34 @@ class BasicSettingsPage(QFrame):
         # 如果设备没有此资源配置，创建一个新的
         if not device_resource and self.device_config:
             try:
+                # 获取app配置来创建ResourceSettings
+                app_config = global_config.get_app_config()
+
+                # 创建默认设置名称
+                settings_name = f"{resource_name}_settings"
+
+                # 检查是否已存在设置配置，如果不存在则创建
+                existing_settings = next((s for s in app_config.resource_settings
+                                          if s.resource_name == resource_name), None)
+
+                if not existing_settings:
+                    # 创建新的ResourceSettings
+                    new_settings = ResourceSettings(
+                        name=settings_name,
+                        resource_name=resource_name,
+                        selected_tasks=[],
+                        options=[]
+                    )
+                    app_config.resource_settings.append(new_settings)
+                else:
+                    # 使用已有的第一个设置
+                    settings_name = existing_settings.name
+
+                # 创建引用到ResourceSettings的Resource
                 device_resource = Resource(
                     resource_name=resource_name,
-                    enable=True,
-                    selected_tasks=[],
-                    options=[]
+                    settings_name=settings_name,
+                    enable=True
                 )
 
                 # 将新资源添加到设备的资源列表中
@@ -122,7 +146,7 @@ class BasicSettingsPage(QFrame):
 
                 # 记录创建新资源的日志
                 device_name = self.device_config.device_name if hasattr(self.device_config, 'device_name') else "未知设备"
-                self.logger.info( f"为设备自动创建了资源 {resource_name} 的配置")
+                self.logger.info(f"为设备自动创建了资源 {resource_name} 的配置")
             except Exception as e:
                 # 如果创建资源时出错，记录并显示警告
                 log_manager.log_device_error(
@@ -144,7 +168,7 @@ class BasicSettingsPage(QFrame):
 
                 action_btn = QPushButton("添加资源配置")
                 action_btn.setObjectName("primaryButton")
-                action_btn.setFixedWidth(50)
+                action_btn.setFixedWidth(150)
                 action_btn.clicked.connect(lambda: self._create_resource_configuration(resource_name))
 
                 no_config_layout.addWidget(warning_icon)
@@ -189,7 +213,10 @@ class BasicSettingsPage(QFrame):
 
         # 获取任务顺序信息
         task_order_map = {task.task_name: idx for idx, task in enumerate(full_resource_config.resource_tasks)}
-        selected_order = {task_name: idx for idx, task_name in enumerate(device_resource.selected_tasks or [])}
+
+        # 从当前设备资源的设置中获取选定的任务列表
+        selected_tasks = device_resource.selected_tasks or []
+        selected_order = {task_name: idx for idx, task_name in enumerate(selected_tasks)}
 
         # 按选择状态和顺序排序任务
         sorted_tasks = sorted(
@@ -221,9 +248,12 @@ class BasicSettingsPage(QFrame):
                 for option_name in task.option:
                     for option in full_resource_config.options:
                         if option.name == option_name:
+                            # 从设备资源获取当前选项的值
+                            current_options = {opt.option_name: opt for opt in device_resource.options}
+
                             option_widget = self._create_option_widget(
                                 option, option_name,
-                                {opt.option_name: opt for opt in device_resource.options},
+                                current_options,
                                 task.task_name,
                                 self.task_option_widgets,
                                 device_resource
@@ -269,12 +299,34 @@ class BasicSettingsPage(QFrame):
     def _create_resource_configuration(self, resource_name):
         """从按钮点击创建新的资源配置的辅助方法"""
         try:
-            # 创建新的资源配置
+            # 获取app配置
+            app_config = global_config.get_app_config()
+
+            # 创建默认设置名称
+            settings_name = f"{resource_name}_settings"
+
+            # 检查是否已存在设置配置，如果不存在则创建
+            existing_settings = next((s for s in app_config.resource_settings
+                                      if s.resource_name == resource_name), None)
+
+            if not existing_settings:
+                # 创建新的ResourceSettings
+                new_settings = ResourceSettings(
+                    name=settings_name,
+                    resource_name=resource_name,
+                    selected_tasks=[],
+                    options=[]
+                )
+                app_config.resource_settings.append(new_settings)
+            else:
+                # 使用已有的第一个设置
+                settings_name = existing_settings.name
+
+            # 创建引用到ResourceSettings的Resource
             device_resource = Resource(
                 resource_name=resource_name,
-                enable=True,
-                selected_tasks=[],
-                options=[]
+                settings_name=settings_name,
+                enable=True
             )
 
             # 将新资源添加到设备的资源列表中
@@ -287,7 +339,7 @@ class BasicSettingsPage(QFrame):
 
             # 记录创建新资源的日志
             device_name = self.device_config.device_name if hasattr(self.device_config, 'device_name') else "未知设备"
-            self.logger.info( f"已创建资源 {resource_name} 的配置")
+            self.logger.info(f"已创建资源 {resource_name} 的配置")
 
             # 使用新资源刷新设置显示
             self.show_resource_settings(resource_name)
@@ -307,7 +359,7 @@ class BasicSettingsPage(QFrame):
 
         option_layout = QHBoxLayout(option_widget)
         # 减小边距，使其在较窄的容器中也能显示良好
-        option_layout.setContentsMargins(0,0,0,0)
+        option_layout.setContentsMargins(0, 0, 0, 0)
         option_layout.setSpacing(8)  # 减小子元素间的间距
 
         # Option label with tooltip if description exists
@@ -394,39 +446,66 @@ class BasicSettingsPage(QFrame):
         if not resource_config:
             return
 
-        if not hasattr(resource_config, 'selected_tasks') or resource_config.selected_tasks is None:
-            resource_config.selected_tasks = []
+        # 获取app_config对象
+        app_config = global_config.get_app_config()
+        if not app_config:
+            return
 
-        if is_selected and task_name not in resource_config.selected_tasks:
-            resource_config.selected_tasks.append(task_name)
-        elif not is_selected and task_name in resource_config.selected_tasks:
-            resource_config.selected_tasks.remove(task_name)
+        # 获取当前资源使用的ResourceSettings
+        settings = next((s for s in app_config.resource_settings
+                         if s.name == resource_config.settings_name and
+                         s.resource_name == resource_config.resource_name), None)
+        if not settings:
+            return
 
-        # Save the updated configuration
+        # 确保selected_tasks已初始化
+        if not hasattr(settings, 'selected_tasks') or settings.selected_tasks is None:
+            settings.selected_tasks = []
+
+        # 更新任务选择状态
+        if is_selected and task_name not in settings.selected_tasks:
+            settings.selected_tasks.append(task_name)
+        elif not is_selected and task_name in settings.selected_tasks:
+            settings.selected_tasks.remove(task_name)
+
+        # 保存更新后的配置
         global_config.save_all_configs()
 
-        # Update task count label if present
+        # 更新任务计数标签（如果存在）
         for i in range(self.settings_content_layout.count()):
             widget = self.settings_content_layout.itemAt(i).widget()
             if isinstance(widget, QWidget):
                 count_label = widget.findChild(QLabel, "countLabel")
-                if count_label and resource_config:
-                    count_label.setText(f"{len(resource_config.selected_tasks or [])} 个已选择")
+                if count_label:
+                    count_label.setText(f"{len(settings.selected_tasks or [])} 个已选择")
                     break
 
-        # Log the change with more details
+        # 记录变更
         status_text = "已选择" if is_selected else "已取消选择"
         device_name = self.device_config.device_name if hasattr(self.device_config, 'device_name') else "未知设备"
         resource_name = resource_config.resource_name if hasattr(resource_config, 'resource_name') else "未知资源"
-        self.logger.info( f"资源 [{resource_name}] 的任务 [{task_name}] {status_text}")
+        self.logger.info(f"资源 [{resource_name}] 的任务 [{task_name}] {status_text}")
 
     def update_option_value(self, resource_config, option_name, value):
         """Update option value for a resource with improved feedback"""
         if not resource_config:
             return
 
-        if not hasattr(resource_config, 'options') or resource_config.options is None:
-            resource_config.options = []
+        # 获取app_config对象
+        app_config = global_config.get_app_config()
+        if not app_config:
+            return
+
+        # 获取当前资源使用的ResourceSettings
+        settings = next((s for s in app_config.resource_settings
+                         if s.name == resource_config.settings_name and
+                         s.resource_name == resource_config.resource_name), None)
+        if not settings:
+            return
+
+        # 确保options已初始化
+        if not hasattr(settings, 'options') or settings.options is None:
+            settings.options = []
 
         # 获取实际资源名称
         resource_name = resource_config.resource_name
@@ -437,10 +516,7 @@ class BasicSettingsPage(QFrame):
         if full_resource_config and hasattr(full_resource_config, 'options'):
             original_option = next((opt for opt in full_resource_config.options if opt.name == option_name), None)
 
-        # Find existing option or create a new one
-        option = next((opt for opt in resource_config.options if opt.option_name == option_name), None)
-
-        # 根据原始选项类型处理值
+        # 处理值的类型转换
         if original_option:
             if isinstance(original_option, BoolOption):
                 # 转换为布尔值
@@ -457,24 +533,27 @@ class BasicSettingsPage(QFrame):
                         # 转换失败时记录错误并返回
                         device_name = self.device_config.device_name if hasattr(self.device_config,
                                                                                 'device_name') else "未知设备"
-                        self.logger.error( f"选项 {option_name} 的值 '{value}' 无法转换为数字")
+                        self.logger.error(f"选项 {option_name} 的值 '{value}' 无法转换为数字")
                         return
 
+        # 查找选项配置或创建新的
+        option = next((opt for opt in settings.options if opt.option_name == option_name), None)
+
         if option:
-            # Save the previous value for comparison
+            # 保存旧值以用于日志记录
             prev_value = option.value
             option.value = value
 
-            # Save the updated configuration
+            # 保存配置
             global_config.save_all_configs()
 
-            # Create a readable string representation for logging
+            # 创建可读的值表示
             if isinstance(value, bool):
                 value_str = "启用" if value else "禁用"
             else:
                 value_str = str(value)
 
-            # Log the change with more details
+            # 记录变更
             device_name = self.device_config.device_name if hasattr(self.device_config, 'device_name') else "未知设备"
             self.logger.info(f"资源 [{resource_name}] 的选项 [{option_name}] 已更新: {prev_value} → {value_str}")
         else:
@@ -484,19 +563,19 @@ class BasicSettingsPage(QFrame):
             # 创建新的选项配置
             new_option = OptionConfig(option_name=option_name, value=value)
 
-            # 添加到资源配置中
-            resource_config.options.append(new_option)
+            # 添加到资源设置中
+            settings.options.append(new_option)
 
             # 保存配置
             global_config.save_all_configs()
 
-            # 创建一个可读的字符串表示用于日志记录
+            # 创建可读的值表示
             if isinstance(value, bool):
                 value_str = "启用" if value else "禁用"
             else:
                 value_str = str(value)
 
-            # 记录日志 - 修复资源名称获取
+            # 记录日志
             device_name = self.device_config.device_name if hasattr(self.device_config, 'device_name') else "未知设备"
             self.logger.info(f"资源 [{resource_name}] 添加了新选项 [{option_name}]，值为: {value_str}")
 
@@ -505,14 +584,30 @@ class BasicSettingsPage(QFrame):
         if not self.selected_resource_name or not self.device_config:
             return
 
+        # 获取当前资源
         resource_config = next(
             (r for r in self.device_config.resources if r.resource_name == self.selected_resource_name), None)
         if not resource_config:
             return
 
-        # 更新任务顺序
-        resource_config.selected_tasks = [
-            task for task in current_order if task in resource_config.selected_tasks
+        # 获取app_config对象
+        app_config = global_config.get_app_config()
+        if not app_config:
+            return
+
+        # 获取当前资源使用的ResourceSettings
+        settings = next((s for s in app_config.resource_settings
+                         if s.name == resource_config.settings_name and
+                         s.resource_name == resource_config.resource_name), None)
+        if not settings:
+            return
+
+        # 获取当前已选择的任务列表
+        current_selected_tasks = settings.selected_tasks.copy() if settings.selected_tasks else []
+
+        # 更新任务顺序 - 保留只有当前已选择的任务
+        settings.selected_tasks = [
+            task for task in current_order if task in current_selected_tasks
         ]
 
         # 保存更新后的配置
@@ -520,7 +615,7 @@ class BasicSettingsPage(QFrame):
 
         # 记录更改
         device_name = self.device_config.device_name if hasattr(self.device_config, 'device_name') else "未知设备"
-        self.logger.info( f"资源 {self.selected_resource_name} 的任务顺序已更新")
+        self.logger.info(f"资源 {self.selected_resource_name} 的任务顺序已更新")
 
     def _clear_layout(self, layout):
         """清除布局中的所有小部件"""
