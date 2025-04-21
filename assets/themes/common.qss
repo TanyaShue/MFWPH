@@ -33,7 +33,7 @@ QListWidget#settingsCategories {
 }
 
 /* 圆角样式 */
-QFrame, #taskItem, #logDisplay, QComboBox, QLineEdit,
+QFrame, #taskItem, #logDisplay,  QLineEdit,
 QTextEdit, QSpinBox, QGroupBox
 {
     border-radius: 4px;
@@ -44,7 +44,7 @@ QFrame {
 }
 
 #contentCard, #deviceCard, #taskItem, #logContainer,
-QComboBox, QLineEdit, QTextEdit, QSpinBox,
+QLineEdit, QTextEdit, QSpinBox,
 QGroupBox, QTabWidget::pane, QToolTip {
     border-radius: 4px;
 }
@@ -379,26 +379,15 @@ QToolButton, #logControlButton {
 }
 
 /* 输入控件样式 */
- QComboBox, #optionComboBox, QLineEdit,
+ QLineEdit,
  #optionLineEdit, QTextEdit, QSpinBox {
     padding: 8px;
 }
 
-#optionComboBox, #optionLineEdit {
+ #optionLineEdit {
     padding: 5px 10px;
     min-width: 40px;
     max-width: 100px;
-}
-
-QComboBox::drop-down, #optionComboBox::drop-down {
-    subcontrol-origin: padding;
-    subcontrol-position: center right;
-    width: 20px;
-}
-
-QComboBox::down-arrow {
-    width: 12px;
-    height: 12px;
 }
 
 /* 复选框样式 */

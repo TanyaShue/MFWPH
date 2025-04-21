@@ -5,7 +5,8 @@ from PySide6.QtWidgets import (
 )
 
 from app.models.logging.log_manager import log_manager
-from app.widgets.no_wheel_QComboBox import NoWheelComboBox
+from app.widgets.no_wheel_ComboBox import NoWheelComboBox
+
 
 class LogDisplay(QFrame):
     """
@@ -61,6 +62,7 @@ class LogDisplay(QFrame):
         title_label = QLabel("设备日志")
         title_label.setFont(QFont("Arial", 12, QFont.Bold))
         header_layout.addWidget(title_label)
+        title_label.setObjectName("sectionTitle")
 
         # Add stretch to push device selector to the right
         header_layout.addStretch()

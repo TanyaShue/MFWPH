@@ -5,13 +5,12 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
                                QWidget, QCheckBox, QGroupBox, QScrollArea,
                                QTimeEdit, QMessageBox, QStackedWidget)
 from maa.toolkit import Toolkit
-# Import the necessary enums from maa.define
 from maa.define import (MaaAdbScreencapMethodEnum, MaaAdbInputMethodEnum,
                         MaaWin32ScreencapMethodEnum, MaaWin32InputMethodEnum)
 
 from app.models.config.app_config import DeviceConfig, AdbDevice, Win32Device, DeviceType
 from app.models.logging.log_manager import log_manager
-from app.widgets.no_wheel_QComboBox import NoWheelComboBox
+from app.widgets.no_wheel_ComboBox import NoWheelComboBox
 
 logger = log_manager.get_app_logger()
 

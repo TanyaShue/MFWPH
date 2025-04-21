@@ -27,7 +27,7 @@ QWidget#content_widget, #titleContainer, #sidebar,
 #taskItem, #logContainer, #logDisplay, QTabWidget::pane,
 QWidget#contentCard, QWidget#optionWidget, QListWidget#settingsCategories,
 QGroupBox#addDeviceGroupBox, QScrollArea#addDeviceScrollArea, #scroll_content,
-QFrame#featureItem, QComboBox, QLineEdit, QTextEdit, QSpinBox,
+QFrame#featureItem, QLineEdit, QTextEdit, QSpinBox,
 QCheckBox::indicator, QTableWidget, QToolTip {
     background-color: #2d2e30;
 }
@@ -260,7 +260,7 @@ QToolButton, #logControlButton {
 }
 
 /* 输入控件样式 */
-QComboBox, #optionComboBox, QLineEdit,
+#optionComboBox, QLineEdit,
 #optionLineEdit, QTextEdit, QSpinBox {
     border: 1px solid #5f6368;
     background-color: #35363a;
@@ -271,26 +271,24 @@ QComboBox, #optionComboBox, QLineEdit,
     background-color: #35363a;
 }
 
-QComboBox:focus, QLineEdit:focus, QTextEdit:focus,
+ QLineEdit:focus, QTextEdit:focus,
 QSpinBox:focus, #optionLineEdit:focus {
     border-color: #8ab4f8;
 }
 
-QComboBox::drop-down, #optionComboBox::drop-down {
+#optionComboBox::drop-down {
     border-left: none;
 }
 
-QComboBox::down-arrow {
-    image: url(assets/icons/dropdown.svg);
-}
 
-QComboBox QAbstractItemView, #optionComboBox QAbstractItemView {
+
+ #optionComboBox QAbstractItemView {
     border: 1px solid #5f6368;
     selection-background-color: #1a3966;
     background-color: #35363a;
 }
 
-QComboBox QAbstractItemView, QLineEdit, QTextEdit {
+QLineEdit, QTextEdit {
     selection-color: #8ab4f8;
 }
 
