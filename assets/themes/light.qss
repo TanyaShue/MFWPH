@@ -265,35 +265,19 @@ QToolButton, #logControlButton {
     border: 1px solid #dadce0;
 }
 
-/* 输入控件样式 */
-QComboBox, #optionComboBox, QLineEdit,
+/* 输入控件样式 */ QLineEdit,
 #optionLineEdit, QTextEdit, QSpinBox {
     border: 1px solid #dadce0;
 }
 
-#optionComboBox {
-    background-color: white;
-}
 
-QComboBox:focus, QLineEdit:focus, QTextEdit:focus,
+QLineEdit:focus, QTextEdit:focus,
 QSpinBox:focus, #optionLineEdit:focus {
     border-color: #1a73e8;
 }
 
-QComboBox::drop-down, #optionComboBox::drop-down {
-    border-left: none;
-}
 
-QComboBox::down-arrow {
-    image: url(assets/icons/dropdown.svg);
-}
-
-QComboBox QAbstractItemView, #optionComboBox QAbstractItemView {
-    border: 1px solid #dadce0;
-    selection-background-color: #e8f0fe;
-}
-
-QComboBox QAbstractItemView, QLineEdit, QTextEdit {
+ QLineEdit, QTextEdit {
     selection-color: #1a73e8;
 }
 

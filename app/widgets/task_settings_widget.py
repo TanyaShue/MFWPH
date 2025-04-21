@@ -34,27 +34,6 @@ class TaskSettingsWidget(QFrame):
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(12)
 
-        # Header with title and help button
-        header_layout = QHBoxLayout()
-
-        # Section title
-        section_title = QLabel("任务设置")
-        section_title.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        section_title.setObjectName("sectionTitle")
-
-        # Help button
-        help_btn = QToolButton()
-        help_btn.setIcon(QIcon("assets/icons/help.svg"))
-        help_btn.setIconSize(QSize(16, 16))
-        help_btn.setToolTip("任务设置帮助")
-        help_btn.setObjectName("helpButton")
-
-        header_layout.addWidget(section_title)
-        header_layout.addStretch()
-        header_layout.addWidget(help_btn)
-
-        self.layout.addLayout(header_layout)
-
         # 添加资源标题和状态指示器区域
         self.resource_header = QWidget()
         self.resource_header.setVisible(False)  # 初始隐藏，直到选择资源
@@ -64,7 +43,7 @@ class TaskSettingsWidget(QFrame):
         # 资源名称标签
         self.resource_name_label = QLabel()
         self.resource_name_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        self.resource_name_label.setObjectName("resourceSettingsTitle")
+        self.resource_name_label.setObjectName("sectionTitle")
 
         # 资源状态指示器
         self.status_indicator = QWidget()

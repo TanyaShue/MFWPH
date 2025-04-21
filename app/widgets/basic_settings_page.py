@@ -326,12 +326,10 @@ class BasicSettingsPage(QFrame):
             option_layout.addWidget(info_icon)
 
         option_layout.addWidget(option_label)
-        # option_layout.addStretch()
 
         # Create control based on option type
         if isinstance(option, SelectOption):
             widget = NoWheelComboBox()
-            widget.setObjectName("optionComboBox")
             # 设置下拉框适应可用空间的最小宽度
             widget.setMinimumWidth(40)
 

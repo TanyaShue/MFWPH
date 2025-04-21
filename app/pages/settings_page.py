@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 
 from app.models.config.global_config import global_config
 from app.utils.theme_manager import theme_manager
-from app.widgets.no_wheel_QComboBox import NoWheelComboBox
+from app.widgets.no_wheel_ComboBox import NoWheelComboBox
 
 class SettingsPage(QWidget):
     """Settings page with categories on the left and content on the right"""
