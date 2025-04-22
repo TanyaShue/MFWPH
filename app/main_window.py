@@ -29,6 +29,20 @@ class MainWindow(QMainWindow):
         self.current_button_id = None  # Track the unique button ID
 
         self.load_config()
+
+        # 从配置中获取并设置窗口大小
+        app_config = global_config.get_app_config()
+        if hasattr(app_config, 'window_size') and app_config.window_size:
+            try:
+                width, height = map(int, app_config.window_size.split('x'))
+                self.resize(width, height)
+            except (ValueError, AttributeError):
+                # 如果解析出错，使用默认大小
+                self.resize(800, 600)
+        else:
+            # 没有配置时使用默认大小
+            self.resize(800, 600)
+
         # Initialize theme manager
         self.theme_manager = theme_manager
         self.theme_manager.apply_theme("light")  # Default theme
@@ -111,7 +125,7 @@ class MainWindow(QMainWindow):
         # Create content widget
         self.content_widget = QWidget()
         self.content_layout = QVBoxLayout(self.content_widget)
-        self.content_layout.setContentsMargins(0,0,0,0)
+        self.content_layout.setContentsMargins(0, 0, 0, 0)
         self.content_layout.setSpacing(0)
 
         main_layout.addWidget(self.content_widget)
@@ -143,6 +157,22 @@ class MainWindow(QMainWindow):
 
         # Update scroll area visibility
         self.update_scroll_area_visibility()
+
+    def closeEvent(self, event):
+        """窗口关闭时保存当前窗口大小到配置"""
+        # 获取当前窗口大小
+        size = self.size()
+        window_size = f"{size.width()}x{size.height()}"
+
+        # 保存窗口大小到配置
+        app_config = global_config.get_app_config()
+        app_config.window_size = window_size
+
+        # 保存所有配置
+        global_config.save_all_configs()
+
+        # 调用父类的closeEvent
+        super().closeEvent(event)
 
     def load_devices(self):
         """Load devices from config and create navigation buttons"""
@@ -359,6 +389,11 @@ class MainWindow(QMainWindow):
                 f.write("{}")
 
         global_config.load_app_config(devices_config_path)
+
+        # 设置默认窗口大小，如果配置中不存在
+        app_config = global_config.get_app_config()
+        if not hasattr(app_config, 'window_size') or not app_config.window_size:
+            app_config.window_size = "800x600"
 
         resource_dir = "assets/resource/"
         # 如果目录不存在，则创建

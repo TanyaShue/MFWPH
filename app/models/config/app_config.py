@@ -120,6 +120,7 @@ class AppConfig:
     update_method: str = field(default="github")
     receive_beta_update: bool = False
     auto_check_update: bool = False
+    window_size:"str"=field(default="800x600")
 
     def link_resources_to_config(self):
         """将所有资源链接到此 AppConfig 实例。"""
@@ -297,6 +298,7 @@ class AppConfig:
         config.update_method = data.get('update_method', 'github')
         config.receive_beta_update = data.get('receive_beta_update', False)
         config.auto_check_update = data.get('auto_check_update', False)
+        config.window_size = data.get('window_size', "800x600")
 
         # 将资源链接到AppConfig
         config.link_resources_to_config()
@@ -320,6 +322,7 @@ class AppConfig:
         result["auto_check_update"] = getattr(self, "auto_check_update", False)
         result["devices"] = [device_config_to_dict(device) for device in self.devices]
         result["resource_settings"] = [resource_settings_to_dict(settings) for settings in self.resource_settings]
+        result["window_size"]= self.window_size
         return result
 
     def update_version(self, version: str):
