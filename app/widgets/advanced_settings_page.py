@@ -86,6 +86,7 @@ class AdvancedSettingsPage(QFrame):
 
         # 创建滚动内容容器
         scroll_content = QWidget()
+        scroll_content.setObjectName("draggableContainer")
         content_layout = QVBoxLayout(scroll_content)
         content_layout.setContentsMargins(5, 5, 5, 5)
         content_layout.setSpacing(5)
