@@ -1,10 +1,8 @@
 from datetime import datetime
-
 from PySide6.QtCore import QMutexLocker
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton,
-    QFrame
+    QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame
 )
 from qasync import asyncSlot
 
@@ -27,11 +25,7 @@ class BasicInfoWidget(QFrame):
         # 设置基本属性
         self.setObjectName("infoFrame")
         self.setFrameShape(QFrame.StyledPanel)
-
-        # 初始化UI
         self.init_ui()
-
-        # 连接信号到状态更新函数
         self.connect_signals()
 
     def init_ui(self):
@@ -51,7 +45,6 @@ class BasicInfoWidget(QFrame):
         content_layout.setContentsMargins(0, 5, 0, 5)
         content_layout.setSpacing(15)
 
-        # Device details
         if self.device_config:
             # Device Name
             name_layout = QHBoxLayout()
@@ -70,22 +63,14 @@ class BasicInfoWidget(QFrame):
             type_label = QLabel("设备类型:")
             type_label.setObjectName("infoLabel")
 
-            # 更安全的方式获取设备类型文本
-            device_type_text = ""
-            if hasattr(self.device_config.device_type, "value"):
-                # 如果是枚举类型
-                device_type_text = self.device_config.device_type.value
-            else:
-                # 如果是字符串类型
-                device_type_text = str(self.device_config.device_type)
+            # 获取设备类型文本
+            device_type_text = getattr(self.device_config.device_type, "value", str(self.device_config.device_type))
 
-            # 将设备类型转换为用户友好的显示文本
-            if device_type_text == "adb":
-                display_text = "ADB设备"
-            elif device_type_text == "win32":
-                display_text = "Win32窗口"
-            else:
-                display_text = device_type_text
+            # 转换为用户友好的显示文本
+            display_text = {
+                "adb": "ADB设备",
+                "win32": "Win32窗口"
+            }.get(device_type_text, device_type_text)
 
             type_value = QLabel(display_text)
             type_value.setObjectName("infoLabel")
@@ -98,47 +83,41 @@ class BasicInfoWidget(QFrame):
             status_layout = QHBoxLayout()
             status_label = QLabel("状态:")
             status_label.setObjectName("infoLabel")
-
             self.status_value = QLabel()
             self.status_value.setObjectName("infoLabel")
-            self.status_value.setWordWrap(True)  # 允许文本换行
-
+            self.status_value.setWordWrap(True)
             status_layout.addWidget(status_label)
             status_layout.addWidget(self.status_value)
             status_layout.addStretch()
-
             content_layout.addLayout(status_layout)
 
             # 定时任务信息
             schedule_layout = QHBoxLayout()
             schedule_label = QLabel("定时任务:")
             schedule_label.setObjectName("infoLabel")
-
             self.schedule_value = QLabel()
             self.schedule_value.setObjectName("infoLabel")
-            self.schedule_value.setWordWrap(True)  # 允许文本换行
-
+            self.schedule_value.setWordWrap(True)
             schedule_layout.addWidget(schedule_label)
             schedule_layout.addWidget(self.schedule_value)
             schedule_layout.addStretch()
-
             content_layout.addLayout(schedule_layout)
 
             # 立即更新状态显示
             self.update_status_display()
-
         else:
             error_label = QLabel("未找到设备配置信息")
             error_label.setObjectName("errorText")
             content_layout.addWidget(error_label)
 
         layout.addWidget(content_widget)
-
         layout.addStretch()
+
         # Action buttons
         button_layout = QHBoxLayout()
         button_layout.setContentsMargins(0, 10, 0, 0)
         button_layout.setSpacing(10)
+        button_layout.addStretch()
 
         run_btn = QPushButton("运行任务")
         run_btn.setObjectName("primaryButton")
@@ -149,12 +128,10 @@ class BasicInfoWidget(QFrame):
         settings_btn.setObjectName("secondaryButton")
         settings_btn.setIcon(QIcon("assets/icons/settings.svg"))
         settings_btn.clicked.connect(self.open_settings_dialog)
-        button_layout.addStretch()
 
         button_layout.addWidget(run_btn)
         button_layout.addWidget(settings_btn)
         button_layout.addStretch()
-
         layout.addLayout(button_layout)
 
     def connect_signals(self):
@@ -170,7 +147,6 @@ class BasicInfoWidget(QFrame):
 
     def connect_executor_signals(self):
         """连接设备执行器的信号"""
-        # 获取执行器
         with QMutexLocker(task_manager._mutex):
             executor = task_manager._executors.get(self.device_name)
             if not executor:
@@ -194,14 +170,11 @@ class BasicInfoWidget(QFrame):
 
     def on_device_changed(self, device_name):
         """设备添加/移除时的处理函数"""
-        # 仅处理当前设备的变化
         if device_name != self.device_name:
             return
 
-        # 更新显示
         self.update_status_display()
 
-        # 如果设备现在处于活跃状态，连接其信号
         if task_manager.is_device_active(self.device_name):
             self.connect_executor_signals()
 
@@ -210,33 +183,22 @@ class BasicInfoWidget(QFrame):
         if not self.device_config:
             return
 
-        # 1. 更新定时任务显示栏：仅显示下次定时执行时间
-        schedule_text = ""
-        next_run_time = None
-
-        # Update schedule information
-        # 检查设备资源中是否有启用的定时任务，而不是检查不存在的schedule_enabled属性
-        has_enabled_schedules = False
-        for resource in self.device_config.resources:
-            if resource.schedules_enable and resource.schedules and any(
-                    schedule.enabled for schedule in resource.schedules):
-                has_enabled_schedules = True
-                break
+        # 更新定时任务信息
+        has_enabled_schedules = any(
+            r.schedules_enable and r.schedules and any(s.enabled for s in r.schedules)
+            for r in self.device_config.resources
+        )
 
         if has_enabled_schedules:
             # 获取设备的定时任务信息
-            tasks_info = task_manager.get_scheduled_tasks_info()
-            device_tasks = [task for task in tasks_info if task['device_name'] == self.device_name]
+            device_tasks = [task for task in task_manager.get_scheduled_tasks_info()
+                            if task['device_name'] == self.device_name]
 
             if device_tasks:
                 # 找出最近的下次执行时间
-                next_run_times = [datetime.strptime(task['next_run'], '%Y-%m-%d %H:%M:%S') for task in device_tasks if
-                                  task.get('next_run')]
-                if next_run_times:
-                    next_run_time = min(next_run_times)
-                    schedule_text = f"{next_run_time.strftime('%H:%M:%S')}"
-                else:
-                    schedule_text = "已启用，但未设置具体执行时间"
+                next_run_times = [datetime.strptime(task['next_run'], '%Y-%m-%d %H:%M:%S')
+                                  for task in device_tasks if task.get('next_run') != 'Unknown']
+                schedule_text = next_run_times and f"{min(next_run_times).strftime('%H:%M:%S')}" or "已启用，但未设置具体执行时间"
             else:
                 schedule_text = "已启用，但未设置具体执行时间"
         else:
@@ -244,29 +206,26 @@ class BasicInfoWidget(QFrame):
 
         self.schedule_value.setText(schedule_text)
 
-        # 2. 更新任务运行状态（移除定时任务信息）
-        status_text = ""
-        is_active = task_manager.is_device_active(self.device_name)
-
-        if is_active:
-            # 获取设备当前状态
+        # 更新任务运行状态
+        if task_manager.is_device_active(self.device_name):
             device_state = task_manager.get_executor_state(self.device_name)
             if device_state:
-                status = device_state.status.value
-
-                if status == "idle":
-                    status_text = "空闲"
-                elif status == "running":
-                    status_text = "正在执行任务"
-                elif status == "error":
-                    status_text = f"错误: {device_state.error or '未知错误'}"
-                elif status == "stopping":
-                    status_text = "正在停止"
+                # 获取状态文本
+                status_map = {
+                    "idle": "空闲",
+                    "running": "正在执行任务",
+                    "error": f"错误: {device_state.error or '未知错误'}",
+                    "stopping": "正在停止",
+                    "scheduled": "已设置定时任务",
+                    "waiting": "等待执行",
+                    "disconnected": "未连接",
+                    "connecting": "连接中"
+                }
+                status_text = status_map.get(device_state.status.value, device_state.status.value)
 
                 # 添加当前任务信息
                 if device_state.current_task:
-                    task_id = device_state.current_task.id
-                    status_text += f"，任务ID: {task_id}"
+                    status_text += f"，任务ID: {device_state.current_task.id}"
 
                 # 添加队列信息
                 queue_length = task_manager.get_device_queue_info().get(self.device_name, 0)
@@ -277,84 +236,56 @@ class BasicInfoWidget(QFrame):
 
         self.status_value.setText(status_text)
 
-
     @asyncSlot()
     async def run_device_tasks(self):
         """Run device tasks and log the action"""
         try:
             if self.device_config:
-                # Log the start of task execution
-                self.logger.info( f"开始执行设备任务")
-                # Execute tasks
+                self.logger.info("开始执行设备任务")
                 success = await task_manager.run_device_all_resource_task(self.device_config)
-                # Log completion
                 if success:
-                    self.logger.info( f"设备任务执行完成")
-                # Update status display
+                    self.logger.info("设备任务执行完成")
                 self.update_status_display()
 
-                # 如果新创建了执行器，需要连接信号
                 if task_manager.is_device_active(self.device_name):
                     self.connect_executor_signals()
         except Exception as e:
-            # Log error
-            self.logger.error( f"运行任务时出错: {str(e)}")
+            self.logger.error(f"运行任务时出错: {str(e)}")
 
     def open_settings_dialog(self):
         """Open device settings dialog"""
         if self.device_config:
-            # Store the device name before potentially deleting it
             original_device_name = self.device_name
-
             dialog = AddDeviceDialog(global_config, self, edit_mode=True, device_config=self.device_config)
-            result = dialog.exec_()
+            dialog.exec_()
 
-            # After dialog closes, check if the device still exists in global config
             updated_device_config = global_config.get_device_config(original_device_name)
 
             if updated_device_config:
-                # Device was updated, not deleted
-                self.logger.info( "设备配置已更新")
-
-                # 更新定时任务设置
+                self.logger.info("设备配置已更新")
                 task_manager.update_device_scheduled_tasks(updated_device_config)
-                self.logger.info( "设备定时任务已更新")
-
-                # 更新本地设备配置引用
+                self.logger.info("设备定时任务已更新")
                 self.device_config = updated_device_config
-
-                # 更新状态显示
                 self.update_status_display()
 
-                # Refresh UI
                 if hasattr(self.parent_widget, 'refresh_ui'):
                     self.parent_widget.refresh_ui()
             else:
-                # Device was deleted - we'll skip logging here to avoid filename issues
-                # Find the main window to navigate to another page
                 main_window = self.window()
-                if main_window:
-                    # Check if it has the navigation method
-                    if hasattr(main_window, 'on_device_deleted'):
-                        main_window.on_device_deleted()
-                if main_window:
-                    # Check if it has the navigation method
-                    if hasattr(main_window, 'show_previous_device_or_home'):
-                        main_window.show_previous_device_or_home(original_device_name)
+                if hasattr(main_window, 'on_device_deleted'):
+                    main_window.on_device_deleted()
+                if hasattr(main_window, 'show_previous_device_or_home'):
+                    main_window.show_previous_device_or_home(original_device_name)
 
     def refresh_ui(self, device_config=None):
         """Refresh widget with updated device config"""
         if device_config:
             self.device_config = device_config
 
-        # 移除当前布局
         if self.layout():
             QWidget().setLayout(self.layout())
 
-        # 重新初始化UI
         self.init_ui()
-
-        # 重新连接信号
         self.connect_signals()
 
     def showEvent(self, event):

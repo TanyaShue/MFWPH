@@ -56,7 +56,7 @@ class AddDeviceDialog(QDialog):
         self.setMinimumSize(500, 500)
 
         self.init_ui()
-
+        self.fill_device_data()
 
     def init_ui(self):
         main_layout = QVBoxLayout(self)
