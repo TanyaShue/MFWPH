@@ -1,48 +1,104 @@
-from PySide6.QtCore import Qt, QTime, QDateTime
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtCore import Qt, QTime
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QScrollArea
+    QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QScrollArea,
+    QPushButton, QComboBox, QCheckBox, QTimeEdit
 )
 
-from app.components.collapsible_widget import CollapsibleWidget, DraggableContainer
+from app.components.collapsible_widget import CollapsibleWidget
 from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager
+from app.widgets.no_wheel_ComboBox import NoWheelComboBox
+
+
+class SimpleCollapsiblePanel(QWidget):
+    """简化版的折叠面板，没有动画效果"""
+
+    def __init__(self, title="折叠面板", parent=None):
+        super().__init__(parent)
+        self.is_expanded = False
+        self.title = title
+
+        # 创建主布局
+        self.main_layout = QVBoxLayout(self)
+        self.main_layout.setContentsMargins(0, 0, 0, 0)
+        self.main_layout.setSpacing(0)
+
+        # 创建标题栏
+        self.header = QWidget()
+        self.header.setFixedHeight(30)
+        self.header.setObjectName("collapsibleHeader")
+
+        header_layout = QHBoxLayout(self.header)
+        header_layout.setContentsMargins(5, 0, 5, 0)
+
+        # 添加复选框
+        self.checkbox = QCheckBox()
+        header_layout.addWidget(self.checkbox)
+
+        # 添加标题
+        self.title_label = QLabel(self.title)
+        header_layout.addWidget(self.title_label)
+
+        # 添加伸缩项，使折叠按钮靠右
+        header_layout.addStretch(1)
+
+        # 添加折叠按钮
+        self.toggle_btn = QPushButton("▼")
+        self.toggle_btn.setFixedSize(20, 20)
+        self.toggle_btn.clicked.connect(self.toggle)
+        header_layout.addWidget(self.toggle_btn)
+
+        # 添加标题栏到主布局
+        self.main_layout.addWidget(self.header)
+
+        # 创建内容区域
+        self.content = QWidget()
+        self.content.setVisible(False)  # 初始隐藏
+        self.content_layout = QVBoxLayout(self.content)
+        self.content_layout.setContentsMargins(10, 5, 10, 5)
+
+        # 添加内容区域到主布局
+        self.main_layout.addWidget(self.content)
+
+    def toggle(self):
+        """切换折叠/展开状态"""
+        self.is_expanded = not self.is_expanded
+        self.content.setVisible(self.is_expanded)
+
+        # 更新按钮文字
+        self.toggle_btn.setText("▲" if self.is_expanded else "▼")
+
+        # 通知布局更新
+        self.updateGeometry()
+
+        # 如果有父级滚动区域，确保内容可见
+        parent = self.parent()
+        while parent:
+            if isinstance(parent, QScrollArea):
+                parent.ensureWidgetVisible(self.content)
+                break
+            parent = parent.parent()
 
 
 class AdvancedSettingsPage(QFrame):
-    """高级设置页面，用于配置资源任务的高级选项"""
+    """简化版的高级设置页面，使用基础滚动区域和折叠面板"""
 
     def __init__(self, device_config, parent=None):
         super().__init__(parent)
         self.device_config = device_config
-        self.logger=log_manager.get_device_logger(device_config.device_name)
+        self.logger = log_manager.get_device_logger(device_config.device_name)
         self.selected_resource_name = None
 
         self.setObjectName("contentCard")
         self.setFrameShape(QFrame.StyledPanel)
 
-        # 初始化高级设置控件变量（原有控件已取消，不再使用）
-        self.enable_timing_checkbox = None
-        self.timing_type_group = None
-        self.daily_radio = None
-        self.interval_radio = None
-        self.once_radio = None
-        self.time_edit = None
-        self.interval_label = None
-        self.interval_input = None
-        self.date_label = None
-        self.date_time_edit = None
-        self.enable_notification_checkbox = None
-        self.notification_type_combo = None
-        self.notification_address_input = None
-        self.save_advanced_btn = None
-
-        # 创建页面布局，修改布局空隙为0，取消折叠面板之间的空白
+        # 创建主布局
         self.main_layout = QVBoxLayout(self)
         self.main_layout.setContentsMargins(0, 0, 0, 0)
         self.main_layout.setSpacing(0)
 
-        # 创建占位符
+        # 初始化占位符
         self.init_placeholder()
 
     def init_placeholder(self):
@@ -81,66 +137,247 @@ class AdvancedSettingsPage(QFrame):
             description_label = QLabel(resource_config.description)
             description_label.setObjectName("resourceDescription")
             description_label.setWordWrap(True)
-            description_label.setContentsMargins(0, 0, 0, 10)
+            description_label.setContentsMargins(10, 10, 10, 10)
             self.main_layout.addWidget(description_label)
 
-        # 拖放任务的说明
+        # 添加页面标题
         instructions = QLabel("高级设置可配置定时和通知")
         instructions.setObjectName("instructionText")
         instructions.setAlignment(Qt.AlignCenter)
         self.main_layout.addWidget(instructions)
 
-        # 创建任务的滚动区域
+        # 创建滚动区域
         scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
+        scroll_area.setWidgetResizable(True)  # 关键：使内容可以调整大小
         scroll_area.setFrameShape(QFrame.NoFrame)
-        # 禁用水平滚动条
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
 
-        # 创建任务的可拖动容器
-        scroll_content = DraggableContainer()
-        scroll_content.setObjectName('draggableContainer')
-        scroll_content.setMinimumWidth(200)
+        # 创建滚动内容容器
+        scroll_content = QWidget()
+        content_layout = QVBoxLayout(scroll_content)
+        content_layout.setContentsMargins(5, 5, 5, 5)
+        content_layout.setSpacing(5)
 
-        scroll_content.layout.setContentsMargins(0, 0, 0, 0)
-
-        # 创建定时设置折叠面板（展开后只显示一个标签）
+        # 创建定时设置面板
         timing_panel = CollapsibleWidget("定时设置")
-        timing_panel.setMinimumHeight(30)
         timing_panel.setObjectName("advancedCollapsiblePanel")
         self._setup_timing_settings(timing_panel)
-        scroll_content.addWidget(timing_panel)
+        content_layout.addWidget(timing_panel)
 
-        # 创建通知设置折叠面板（展开后只显示一个标签）
+        # 创建通知设置面板
         notification_panel = CollapsibleWidget("外部通知")
-        notification_panel.setMinimumHeight(30)
         notification_panel.setObjectName("advancedCollapsiblePanel")
         self._setup_notification_settings(notification_panel)
-        scroll_content.addWidget(notification_panel)
+        content_layout.addWidget(notification_panel)
 
+        # 添加底部空间
+        content_layout.addStretch(1)
+
+        # 设置滚动区域内容
         scroll_area.setWidget(scroll_content)
+
+        # 添加滚动区域到主布局
         self.main_layout.addWidget(scroll_area)
 
         # 加载资源的高级设置数据
-        self.load_advanced_settings()
+        self.load_advanced_settings(timing_panel)
 
-    def _setup_timing_settings(self, parent_widget):
-        """设置定时设置面板内容，改为仅显示一个标签"""
-        # 取消所有原有控件，使用一个标签来代替
-        label = QLabel("定时设置内容--这个人很懒,还没写")
-        label.setObjectName("advancedLabel")
-        label.setAlignment(Qt.AlignCenter)
-        parent_widget.content_layout.addWidget(label)
+    def _setup_timing_settings(self, panel):
+        """设置定时设置面板内容"""
+        resource_config = None
+        for resource in self.device_config.resources:
+            if resource.resource_name == self.selected_resource_name:
+                resource_config = resource
+                break
 
-    def _setup_notification_settings(self, parent_widget):
-        """设置通知设置面板内容，改为仅显示一个标签"""
-        # 取消所有原有控件，使用一个标签来代替
+        if not resource_config:
+            label = QLabel("未找到资源配置")
+            label.setAlignment(Qt.AlignCenter)
+            panel.content_layout.addWidget(label)
+            return
+
+        # 初始化schedules_enable属性
+        if not hasattr(resource_config, 'schedules_enable'):
+            resource_config.schedules_enable = False
+
+        # 设置标题栏复选框状态并绑定事件
+        panel.checkbox.setChecked(resource_config.schedules_enable)
+
+        def on_checkbox_changed(state):
+            resource_config.schedules_enable = state
+            global_config.save_all_configs()
+            self.logger.info(f"资源 {self.selected_resource_name} 的定时任务已{'启用' if state else '禁用'}")
+
+        panel.checkbox.stateChanged.connect(on_checkbox_changed)
+
+        # 如果没有定时设置，添加一个空的定时设置列表
+        if not hasattr(resource_config, 'schedules') or not resource_config.schedules:
+            resource_config.schedules = []
+
+        # 获取可用的设置配置
+        available_settings = []
+        for setting in global_config.get_app_config().resource_settings:
+            if setting.resource_name == self.selected_resource_name:
+                available_settings.append(setting)
+
+        # 存储所有行的引用
+        schedule_rows = []
+
+        # 创建定时配置容器
+        schedules_container = QWidget()
+        schedules_layout = QVBoxLayout(schedules_container)
+        schedules_layout.setContentsMargins(0, 5, 0, 5)
+        schedules_layout.setSpacing(5)
+
+        # 添加一个函数用于创建新的定时行
+        def create_schedule_row(schedule=None):
+            row_widget = QWidget()
+            row_layout = QHBoxLayout(row_widget)
+            row_layout.setContentsMargins(0, 0, 0, 0)
+            row_layout.setSpacing(0)
+
+            # 启用复选框
+            enable_checkbox = QCheckBox()
+            enable_checkbox.setChecked(schedule.enabled if schedule else False)
+            row_layout.addWidget(enable_checkbox)
+
+            # 单个时间选择器
+            time_edit = QTimeEdit()
+            time_edit.setDisplayFormat("HH:mm")
+            if schedule and schedule.schedule_time:
+                time = QTime.fromString(schedule.schedule_time, "HH:mm")
+                time_edit.setTime(time)
+            else:
+                # 默认设置为12:00
+                time_edit.setTime(QTime(12, 0))
+
+            row_layout.addWidget(time_edit, 2)
+
+            # 设置选择下拉框
+            settings_combo = NoWheelComboBox()
+            settings_combo.setMinimumWidth(2)
+            for setting in available_settings:
+                settings_combo.addItem(setting.name)
+
+            # 设置当前值
+            if schedule and schedule.settings_name:
+                index = settings_combo.findText(schedule.settings_name)
+                if index >= 0:
+                    settings_combo.setCurrentIndex(index)
+            elif available_settings:
+                # 默认选第一个
+                settings_combo.setCurrentIndex(0)
+
+            row_layout.addWidget(settings_combo, 2)
+
+            # 删除按钮
+            delete_btn = QPushButton()
+            delete_btn.setIcon(QIcon("assets/icons/delete.svg"))
+            delete_btn.setMaximumWidth(30)
+            delete_btn.setObjectName("secondaryButton")
+
+            def delete_schedule_row():
+                # 从界面和数据中删除该行
+                row_index = schedule_rows.index(row_widget)
+                if schedule and schedule in resource_config.schedules:
+                    resource_config.schedules.remove(schedule)
+
+                # 从界面移除
+                row_widget.deleteLater()
+                if row_widget in schedule_rows:
+                    schedule_rows.remove(row_widget)
+
+                # 自动保存更改
+                global_config.save_all_configs()
+                self.logger.debug(f"已删除定时配置行 {row_index}")
+
+            delete_btn.clicked.connect(delete_schedule_row)
+            row_layout.addWidget(delete_btn)
+
+            # 添加自动保存功能
+            def auto_save():
+                # 先声明nonlocal，必须在函数开头
+                nonlocal schedule
+
+                # 如果调度不在列表中，创建一个新的
+                if not schedule or schedule not in resource_config.schedules:
+                    from app.models.config.app_config import ResourceSchedule
+                    new_schedule = ResourceSchedule()
+                    resource_config.schedules.append(new_schedule)
+
+                    # 更新引用
+                    schedule = new_schedule
+
+                # 更新设置
+                schedule.enabled = enable_checkbox.isChecked()
+                schedule.settings_name = settings_combo.currentText()
+                schedule.schedule_time = time_edit.time().toString("HH:mm")
+
+                # 保存配置
+                global_config.save_all_configs()
+                self.logger.debug(f"已自动保存定时配置")
+
+            # 连接控件事件到自动保存函数
+            enable_checkbox.stateChanged.connect(auto_save)
+            time_edit.timeChanged.connect(auto_save)
+            settings_combo.currentTextChanged.connect(auto_save)
+
+            # 将行添加到布局中
+            schedules_layout.addWidget(row_widget)
+            schedule_rows.append(row_widget)
+
+            # 返回行和相关控件
+            return {
+                'widget': row_widget,
+                'enable': enable_checkbox,
+                'time': time_edit,
+                'settings': settings_combo,
+                'schedule': schedule
+            }
+
+        # 创建现有定时设置行
+        row_data = []
+        if resource_config.schedules:
+            for schedule in resource_config.schedules:
+                row_data.append(create_schedule_row(schedule))
+        else:
+            # 如果没有定时设置，创建一个空行
+            row_data.append(create_schedule_row())
+
+        # 添加定时配置容器到内容布局
+        panel.content_layout.addWidget(schedules_container)
+
+        # 添加新定时设置按钮
+        add_schedule_btn = QPushButton("添加定时配置")
+        add_schedule_btn.setObjectName("addScheduleBtn")
+
+        def add_new_schedule():
+            from app.models.config.app_config import ResourceSchedule
+            new_schedule = ResourceSchedule()
+            if available_settings:
+                new_schedule.settings_name = available_settings[0].name
+            new_schedule.enabled = False
+            new_schedule.schedule_time = "12:00"
+            resource_config.schedules.append(new_schedule)
+
+            # 添加新行
+            row_data.append(create_schedule_row(new_schedule))
+
+            # 自动保存
+            global_config.save_all_configs()
+
+        add_schedule_btn.clicked.connect(add_new_schedule)
+        panel.content_layout.addWidget(add_schedule_btn)
+
+    def _setup_notification_settings(self, panel):
+        """设置通知设置面板内容，仅显示一个标签"""
         label = QLabel("外部通知设置内容--这个人很懒,还没写")
         label.setObjectName("advancedLabel")
         label.setAlignment(Qt.AlignCenter)
-        parent_widget.content_layout.addWidget(label)
+        panel.content_layout.addWidget(label)
 
-    def load_advanced_settings(self):
+    def load_advanced_settings(self, timing_panel):
         """加载资源的高级设置"""
         if not self.selected_resource_name or not self.device_config:
             return
@@ -151,23 +388,12 @@ class AdvancedSettingsPage(QFrame):
         if not resource_config:
             return
 
-        # 如果需要从资源中加载数据设置标签文本，可以在此添加相关逻辑，目前仅作为占位示例
-        # 例如：label.setText(resource_config.some_property)
+        # 记录加载的资源配置
+        self.logger.debug(f"已加载资源 {self.selected_resource_name} 的高级设置")
 
-    def save_advanced_settings(self):
-        """保存高级设置到资源配置"""
-        if not self.selected_resource_name or not self.device_config:
-            return
-
-        # 此处保存逻辑按实际需要修改，示例中未涉及具体输入控件
-        resource_config = next(
-            (r for r in self.device_config.resources if r.resource_name == self.selected_resource_name), None)
-        if not resource_config:
-            return
-
-        # 示例中没有收集新的设置值，只做日志记录
-        global_config.save_all_configs()
-        self.logger.info( f"资源 {self.selected_resource_name} 的高级设置已更新")
+        # 设置是否启用定时任务
+        if hasattr(resource_config, 'schedules_enable'):
+            timing_panel.checkbox.setChecked(resource_config.schedules_enable)
 
     def clear_settings(self):
         """清除设置并显示占位符"""

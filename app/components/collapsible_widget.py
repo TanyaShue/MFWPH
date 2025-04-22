@@ -20,6 +20,7 @@ class CollapsibleWidget(QWidget):
         self._rotation_angle = 0
         self._init_ui()
         self._setup_animations()  # Call setup animations
+
     def _init_ui(self):
         # 主布局：标题栏 + 内容区
         self.main_layout = QVBoxLayout(self)
@@ -72,7 +73,7 @@ class CollapsibleWidget(QWidget):
         self.content_widget.setGraphicsEffect(self.opacity_effect)
 
         self.content_layout = QVBoxLayout(self.content_widget)
-        self.content_layout.setContentsMargins(25, 5, 10, 5)
+        self.content_layout.setContentsMargins(25, 5, 0, 5)
         self.content_layout.setSpacing(5)
 
         # 初始时内容区"收起"
@@ -87,26 +88,30 @@ class CollapsibleWidget(QWidget):
         self.title_label.mousePressEvent = lambda event: self.toggle_content()
 
     def _setup_animations(self):
-        # Prepare all animations, setting initial start/end values
+        # 减少动画持续时间，特别是当有大量组件时
+        animation_duration = 200  # 从300ms降至200ms
+        opacity_duration = 180  # 从250ms降至180ms
+
+        # 设置高度动画
         self.height_animation = QPropertyAnimation(self.content_widget, b"maximumHeight")
-        self.height_animation.setEasingCurve(QEasingCurve.OutCubic)
-        self.height_animation.setDuration(300)
+        self.height_animation.setEasingCurve(QEasingCurve.OutQuad)  # 使用更高性能的曲线
+        self.height_animation.setDuration(animation_duration)
 
-        self.height_animation.setStartValue(0)
-        self.height_animation.setEndValue(100) # Placeholder, will be updated
-
+        # 设置透明度动画
         self.opacity_animation = QPropertyAnimation(self.opacity_effect, b"opacity")
-        self.opacity_animation.setEasingCurve(QEasingCurve.InOutQuad)
-        self.opacity_animation.setDuration(250)
+        self.opacity_animation.setEasingCurve(QEasingCurve.Linear)  # 更简单的曲线
+        self.opacity_animation.setDuration(opacity_duration)
         self.opacity_animation.setStartValue(0.0)
         self.opacity_animation.setEndValue(1.0)
 
+        # 设置旋转动画
         self.rotate_animation = QPropertyAnimation(self, b"rotation_angle")
-        self.rotate_animation.setEasingCurve(QEasingCurve.OutBack)
-        self.rotate_animation.setDuration(300)
+        self.rotate_animation.setEasingCurve(QEasingCurve.OutQuad)  # 替换OutBack以获得更好的性能
+        self.rotate_animation.setDuration(animation_duration)
         self.rotate_animation.setStartValue(0)
         self.rotate_animation.setEndValue(180)
 
+        # 动画组
         self.animation_group = QParallelAnimationGroup()
         self.animation_group.addAnimation(self.height_animation)
         self.animation_group.addAnimation(self.opacity_animation)
@@ -121,35 +126,53 @@ class CollapsibleWidget(QWidget):
     def _set_rotation_angle(self, angle):
         self._rotation_angle = angle
 
-
     rotation_angle = Property(float, _get_rotation_angle, _set_rotation_angle)
 
     def toggle_content(self):
-        content_margins = self.content_layout.contentsMargins()
-        content_height = self.content_layout.sizeHint().height() + content_margins.top() + content_margins.bottom()
-        if content_height < content_margins.top() + content_margins.bottom() + self.content_layout.spacing():
-             content_height = content_margins.top() + content_margins.bottom() + self.content_layout.spacing()
+        # 缓存内容高度计算，避免重复计算
+        if not hasattr(self, '_cached_content_height') or self._cached_content_height is None:
+            content_margins = self.content_layout.contentsMargins()
+            content_height = self.content_layout.sizeHint().height() + content_margins.top() + content_margins.bottom()
 
+            # 设置最小高度以确保短内容也能正常显示
+            min_height = content_margins.top() + content_margins.bottom() + max(self.content_layout.spacing() * 2, 30)
+            content_height = max(content_height, min_height)
+
+            # 缓存计算结果
+            self._cached_content_height = content_height
+        else:
+            content_height = self._cached_content_height
+
+        # 当内容变化时重置缓存
+        if hasattr(self, 'resizeEvent'):
+            old_resize_event = self.resizeEvent
+
+            def new_resize_event(event):
+                self._cached_content_height = None
+                old_resize_event(event)
+
+            self.resizeEvent = new_resize_event
 
         if self.is_expanded:
             self.animation_group.setDirection(QPropertyAnimation.Backward)
         else:
-            self.content_widget.setVisible(True) # Make visible BEFORE animating height
+            self.content_widget.setVisible(True)
             self.height_animation.setEndValue(content_height)
             self.animation_group.setDirection(QPropertyAnimation.Forward)
 
-        # Toggle state
+        # 切换状态
         self.is_expanded = not self.is_expanded
 
         if self.animation_group.state() == QPropertyAnimation.Running:
             self.animation_group.stop()
         self.animation_group.start()
+        self.updateGeometry()
 
-    @Slot() # Explicitly mark as a slot
+    @Slot()  # Explicitly mark as a slot
     def _on_animation_finish(self):
         # This slot is called when the animation (either forward or backward) finishes
-        if not self.is_expanded: # If state is collapsed
-            self.content_widget.setVisible(False) # Hide AFTER collapse animation
+        if not self.is_expanded:  # If state is collapsed
+            self.content_widget.setVisible(False)  # Hide AFTER collapse animation
 
     def drag_handle_mouse_press(self, event: QMouseEvent):
         if event.button() == Qt.LeftButton:
@@ -176,37 +199,38 @@ class CollapsibleWidget(QWidget):
         pixmap = QPixmap(self.size())
         self.render(pixmap)
         drag.setPixmap(pixmap)
-        drag.setHotSpot(QPoint(pixmap.width() // 2, self.header_widget.height() // 2)) # Center hotspot on header
+        drag.setHotSpot(QPoint(pixmap.width() // 2, self.header_widget.height() // 2))  # Center hotspot on header
 
         drag.exec(Qt.MoveAction)
         self.drag_handle.setCursor(QCursor(Qt.OpenHandCursor))
 
 
 class DraggableContainer(QWidget):
-    drag=Signal(list)
+    drag = Signal(list)
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.layout = QVBoxLayout(self)
-        self.layout.setSpacing(5) # Reduce spacing slightly if needed
+        self.layout.setSpacing(5)  # Reduce spacing slightly if needed
         self.layout.addStretch(1)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.setAcceptDrops(True)
 
         self.drop_indicator = QFrame(self)
         self.drop_indicator.setObjectName("drop_indicator")
-        self.drop_indicator.setFixedHeight(3) # Make slightly thicker
+        self.drop_indicator.setFixedHeight(3)  # Make slightly thicker
         self.drop_indicator.hide()
+
     def dragMoveEvent(self, event):
         event.acceptProposedAction()
         pos = event.pos()
-        insert_index = -1 # Use -1 to indicate insertion before the stretch
+        insert_index = -1  # Use -1 to indicate insertion before the stretch
 
-        widget_count = self.layout.count() -1 # Exclude stretch
+        widget_count = self.layout.count() - 1  # Exclude stretch
         for i in range(widget_count):
             item = self.layout.itemAt(i)
             widget = item.widget()
-            if not widget: # Should not happen with current setup, but good practice
+            if not widget:  # Should not happen with current setup, but good practice
                 continue
 
             geo = widget.geometry()
@@ -216,24 +240,23 @@ class DraggableContainer(QWidget):
                 insert_index = i
                 break
             else:
-                 insert_index = i + 1 # Tentatively set to insert after current widget
+                insert_index = i + 1  # Tentatively set to insert after current widget
         indicator_y = 0
         if insert_index == 0:
             # Insert at the very beginning
-             indicator_y = self.layout.contentsMargins().top() # Position at the top margin
+            indicator_y = self.layout.contentsMargins().top()  # Position at the top margin
         elif insert_index > 0 and insert_index < widget_count:
             # Insert between two widgets
             target_widget = self.layout.itemAt(insert_index).widget()
             if target_widget:
-                 indicator_y = target_widget.geometry().top() - (self.layout.spacing() // 2)
-        else: # insert_index is widget_count or -1 (meaning insert at the end, before stretch)
-             if widget_count > 0:
-                 last_widget = self.layout.itemAt(widget_count - 1).widget()
-                 if last_widget:
-                     indicator_y = last_widget.geometry().bottom() + (self.layout.spacing() // 2)
-             else: # No widgets exist yet
-                 indicator_y = self.layout.contentsMargins().top()
-
+                indicator_y = target_widget.geometry().top() - (self.layout.spacing() // 2)
+        else:  # insert_index is widget_count or -1 (meaning insert at the end, before stretch)
+            if widget_count > 0:
+                last_widget = self.layout.itemAt(widget_count - 1).widget()
+                if last_widget:
+                    indicator_y = last_widget.geometry().bottom() + (self.layout.spacing() // 2)
+            else:  # No widgets exist yet
+                indicator_y = self.layout.contentsMargins().top()
 
         # Adjust indicator geometry, ensuring it's within bounds
         indicator_height = self.drop_indicator.height()
@@ -242,7 +265,6 @@ class DraggableContainer(QWidget):
         self.drop_indicator.setGeometry(0, indicator_y, self.width(), indicator_height)
         self.drop_indicator.raise_()
         self.drop_indicator.show()
-
 
     def dropEvent(self, event):
         self.drop_indicator.hide()
@@ -255,19 +277,19 @@ class DraggableContainer(QWidget):
             event.ignore()
             return
 
-        dragged_widget = self.findChild(QWidget, f"taskItem_{widget_id}", Qt.FindDirectChildrenOnly) # More robust find
+        dragged_widget = self.findChild(QWidget, f"taskItem_{widget_id}", Qt.FindDirectChildrenOnly)  # More robust find
         if not dragged_widget:
-             for i in range(self.layout.count() - 1): # Exclude stretch
-                 widget = self.layout.itemAt(i).widget()
-                 if widget and id(widget) == widget_id:
-                     dragged_widget = widget
-                     break
+            for i in range(self.layout.count() - 1):  # Exclude stretch
+                widget = self.layout.itemAt(i).widget()
+                if widget and id(widget) == widget_id:
+                    dragged_widget = widget
+                    break
 
         if dragged_widget:
             pos = event.pos()
-            insert_index = -1 # Default to end (before stretch)
+            insert_index = -1  # Default to end (before stretch)
 
-            widget_count = self.layout.count() - 1 # Exclude stretch
+            widget_count = self.layout.count() - 1  # Exclude stretch
             for i in range(widget_count):
                 widget = self.layout.itemAt(i).widget()
                 if not widget: continue
@@ -275,27 +297,26 @@ class DraggableContainer(QWidget):
                 if pos.y() < geo.y() + geo.height() / 2:
                     insert_index = i
                     break
-            else: # If loop completes without break, insert at the end (before stretch)
-                 insert_index = widget_count
+            else:  # If loop completes without break, insert at the end (before stretch)
+                insert_index = widget_count
 
             current_index = self.layout.indexOf(dragged_widget)
-            if current_index != insert_index and not (current_index == insert_index - 1 and insert_index == widget_count):
+            if current_index != insert_index and not (
+                    current_index == insert_index - 1 and insert_index == widget_count):
                 item = self.layout.takeAt(current_index)
                 if current_index < insert_index:
-                     insert_index -= 1
+                    insert_index -= 1
                 self.layout.insertItem(insert_index, item)
-
 
             event.acceptProposedAction()
             current_order = self.get_widget_order()
-            self.drag.emit([widget.title_text for widget in current_order]) # Emit signal AFTER drop
+            self.drag.emit([widget.title_text for widget in current_order])  # Emit signal AFTER drop
         else:
             event.ignore()
 
-
     def get_widget_order(self):
         widget_list = []
-        for i in range(self.layout.count() - 1): # Exclude stretch item
+        for i in range(self.layout.count() - 1):  # Exclude stretch item
             item = self.layout.itemAt(i)
             widget = item.widget()
             if isinstance(widget, CollapsibleWidget):
@@ -304,15 +325,15 @@ class DraggableContainer(QWidget):
 
     def addWidget(self, widget):
         if isinstance(widget, CollapsibleWidget):
-             widget.setObjectName(f"taskItem_{id(widget)}") # Set object name for lookup
+            widget.setObjectName(f"taskItem_{id(widget)}")  # Set object name for lookup
         self.layout.insertWidget(self.layout.count() - 1, widget)
+
     def dragEnterEvent(self, event):
         if event.mimeData().hasText():
             event.acceptProposedAction()
             self.drop_indicator.show()
         else:
             event.ignore()
-
 
     def dragLeaveEvent(self, event):
         self.drop_indicator.hide()

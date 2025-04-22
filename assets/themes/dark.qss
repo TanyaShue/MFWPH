@@ -497,17 +497,6 @@ QToolTip#navButton {
     background: transparent;
 }
 
-/* 进度条样式 */
-QProgressBar {
-    border: 1px solid #5f6368;
-    border-radius: 3px;
-    background-color: #2a2b2d;
-}
-
-QProgressBar::chunk {
-    background-color: #1a73e8;
-    border-radius: 2px;
-}
 
 /* 日志文本样式 */
 #logDisplay {

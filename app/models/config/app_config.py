@@ -52,13 +52,23 @@ class ResourceSettings:
     selected_tasks: List[str] = field(default_factory=list)
     options: List[OptionConfig] = field(default_factory=list)
 
+# 首先，创建一个新的数据类来表示资源的定时任务配置
+@dataclass
+class ResourceSchedule:
+    """资源的定时任务配置。"""
+    enabled: bool = False
+    schedule_time: str = ""  # Changed from List[str] to a single string
+    settings_name: str = ""  # 该定时任务启用的配置文件
 
+# 修改 Resource 类，添加schedules字段
 @dataclass
 class Resource:
     """Resource configuration within a device."""
     resource_name: str
     settings_name: str  # 引用 ResourceSettings 的名称
     enable: bool = False
+    schedules_enable: bool = False  # New attribute to enable/disable resource schedules
+    schedules: List[ResourceSchedule] = field(default_factory=list)  # 资源的定时任务列表
     # 内部引用，不会被序列化
     _app_config: Optional['AppConfig'] = field(default=None, repr=False, compare=False)
 
@@ -85,7 +95,6 @@ class Resource:
     def set_app_config(self, app_config: 'AppConfig'):
         """设置对 AppConfig 的引用。"""
         self._app_config = app_config
-
 
 @dataclass
 class DeviceConfig:
@@ -218,14 +227,24 @@ class AppConfig:
             resources_data = device_data.get('resources', [])
             resources = []
             for resource_data in resources_data:
+                # 处理资源的定时任务
+                schedules = []
+                resource_data_copy = resource_data.copy()
+                if 'schedules' in resource_data_copy:
+                    for schedule_data in resource_data_copy['schedules']:
+                        schedules.append(ResourceSchedule(**schedule_data))
+
+                    # 从resource_data中移除schedules，避免传递给Resource构造函数
+                    del resource_data_copy['schedules']
+
                 # 检查是否为旧式资源（直接包含selected_tasks和options）
-                is_old_style = 'selected_tasks' in resource_data or 'options' in resource_data
+                is_old_style = 'selected_tasks' in resource_data_copy or 'options' in resource_data_copy
 
                 if is_old_style:
                     # 为向后兼容，创建新的设置
-                    settings_name = f"{resource_data['resource_name']}_settings"
-                    options_data = resource_data.get('options', [])
-                    selected_tasks = resource_data.get('selected_tasks', [])
+                    settings_name = f"{resource_data_copy['resource_name']}_settings"
+                    options_data = resource_data_copy.get('options', [])
+                    selected_tasks = resource_data_copy.get('selected_tasks', [])
 
                     # 检查设置是否已存在
                     existing_settings = next((s for s in resource_settings if s.name == settings_name), None)
@@ -234,18 +253,18 @@ class AppConfig:
                         options = [OptionConfig(**option_data) for option_data in options_data]
                         resource_settings.append(ResourceSettings(
                             name=settings_name,
-                            resource_name=resource_data['resource_name'],
+                            resource_name=resource_data_copy['resource_name'],
                             selected_tasks=selected_tasks,
                             options=options
                         ))
 
                     # 创建引用设置的资源
-                    resource_kwargs = {k: v for k, v in resource_data.items()
+                    resource_kwargs = {k: v for k, v in resource_data_copy.items()
                                        if k not in ('options', 'selected_tasks')}
-                    resources.append(Resource(**resource_kwargs, settings_name=settings_name))
+                    resources.append(Resource(**resource_kwargs, settings_name=settings_name, schedules=schedules))
                 else:
                     # 新式资源与settings_name引用
-                    resources.append(Resource(**resource_data))
+                    resources.append(Resource(**resource_data_copy, schedules=schedules))
 
             # 排除 controller_config/adb_config 与 resources 字段后创建 DeviceConfig 对象
             device_kwargs = {k: v for k, v in device_data.items()
@@ -336,15 +355,26 @@ def win32_device_to_dict(win32_device: Win32Device) -> Dict[str, Any]:
     return win32_device.__dict__
 
 
+# 修改 resource_to_dict 函数，处理资源级定时任务
 def resource_to_dict(resource: Resource) -> Dict[str, Any]:
     """辅助函数，将 Resource 对象转换为字典。"""
     # 从序列化中排除 _app_config
-    return {
+    result = {
         'resource_name': resource.resource_name,
         'settings_name': resource.settings_name,
-        'enable': resource.enable
+        'enable': resource.enable,
+        'schedules_enable': resource.schedules_enable  # Add the new field
     }
 
+    # 如果有定时任务，则添加到结果中
+    if resource.schedules:
+        result['schedules'] = [resource_schedule_to_dict(schedule) for schedule in resource.schedules]
+
+    return result
+# 添加新的辅助函数，将 ResourceSchedule 对象转换为字典
+def resource_schedule_to_dict(schedule: ResourceSchedule) -> Dict[str, Any]:
+    """辅助函数，将 ResourceSchedule 对象转换为字典。"""
+    return schedule.__dict__
 
 def resource_settings_to_dict(settings: ResourceSettings) -> Dict[str, Any]:
     """辅助函数，将 ResourceSettings 对象转换为字典。"""

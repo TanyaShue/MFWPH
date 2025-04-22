@@ -135,7 +135,7 @@ class UpdateCheckThread(QThread):
             params = {
                 "current_version": resource.resource_version,
                 "cdk": cdk,
-                "user_agent": "ResourceDownloader",
+                "user_agent": "MaaYYsGUI",
                 "channel": channel  # 根据配置动态选择通道
             }
 

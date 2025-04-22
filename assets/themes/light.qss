@@ -444,9 +444,6 @@ QToolTip#navButton {
     background: transparent;
 }
 
-/* 进度条样式 */
-
-
 /* 日志文本样式 */
 #logDisplay {
     border: 1px solid #dadce0;
