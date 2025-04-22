@@ -103,8 +103,6 @@ class DeviceConfig:
     device_type: DeviceType  # New field to indicate controller type
     controller_config: Union[AdbDevice, Win32Device]  # Changed from adb_config
     resources: List[Resource] = field(default_factory=list)
-    schedule_enabled: bool = False
-    schedule_time: List[str] = field(default_factory=list)
     start_command: str = ""
 
 

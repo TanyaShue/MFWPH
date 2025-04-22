@@ -9,7 +9,7 @@ from qasync import asyncSlot  # 使用 qasync 提供的 asyncSlot 装饰器
 from app.models.config.app_config import DeviceConfig, Resource
 from app.models.config.global_config import RunTimeConfigs, global_config
 from app.models.logging.log_manager import log_manager
-from core.task_executor import TaskExecutor, DeviceState
+from core.task_executor import TaskExecutor, DeviceState, DeviceStatus
 
 
 class TaskerManager(QObject):
@@ -18,6 +18,10 @@ class TaskerManager(QObject):
     """
     device_added = Signal(str)  # 设备添加信号
     device_removed = Signal(str)  # 设备移除信号
+    device_status_changed = Signal(str, str)  # 设备状态变化信号（设备名称，新状态）
+    scheduled_task_added = Signal(str, str)  # 设备定时任务添加信号（设备名称，任务ID）
+    scheduled_task_removed = Signal(str, str)  # 设备定时任务删除信号（设备名称，任务ID）
+    scheduled_task_modified = Signal(str, str)  # 设备定时任务修改信号（设备名称，任务ID）
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -27,6 +31,32 @@ class TaskerManager(QObject):
         self.logger.info("TaskerManager 初始化完成")
         # 定时器存储字典
         self._timers = {}
+
+        # 连接信号处理器
+        self.device_added.connect(self._handle_device_added)
+        self.device_removed.connect(self._handle_device_removed)
+
+    def _handle_device_added(self, device_name: str):
+        """处理设备添加事件"""
+        executor = self._get_executor(device_name)
+        if executor:
+            # 连接设备状态变化信号
+            executor.state.status_changed.connect(
+                lambda status: self.device_status_changed.emit(device_name, status))
+            executor.state.scheduled_task_added.connect(
+                lambda task_id: self.scheduled_task_added.emit(device_name, task_id))
+            executor.state.scheduled_task_removed.connect(
+                lambda task_id: self.scheduled_task_removed.emit(device_name, task_id))
+            # 新增：连接定时任务修改信号
+            executor.state.scheduled_task_modified.connect(
+                lambda task_id: self.scheduled_task_modified.emit(device_name, task_id))
+
+            self.logger.info(f"已连接设备 {device_name} 的状态变化信号")
+
+    def _handle_device_removed(self, device_name: str):
+        """处理设备移除事件"""
+        self.logger.info(f"设备 {device_name} 已被移除")
+        # 可以在这里添加其他资源清理代码
 
     @asyncSlot()  # 如果槽函数需要参数可以加参数类型提示
     async def create_executor(self, device_config: DeviceConfig) -> bool:
@@ -55,7 +85,8 @@ class TaskerManager(QObject):
                 return False
 
     @asyncSlot(object, object, object)
-    async def submit_task(self, device_name: str,task_data: Union[RunTimeConfigs, List[RunTimeConfigs]]) -> Optional[Union[str, List[str]]]:
+    async def submit_task(self, device_name: str, task_data: Union[RunTimeConfigs, List[RunTimeConfigs]]) -> Optional[
+        Union[str, List[str]]]:
         """
         异步向特定设备的执行器提交任务。
         """
@@ -102,6 +133,10 @@ class TaskerManager(QObject):
 
             try:
                 self.logger.info(f"正在停止设备 {device_name} 的执行器")
+
+                # 先取消所有定时任务
+                self.cancel_device_scheduled_tasks(device_name)
+
                 executor.stop()
                 del self._executors[device_name]
                 self.device_removed.emit(device_name)
@@ -146,6 +181,10 @@ class TaskerManager(QObject):
         异步停止所有执行器。
         """
         self.logger.info("正在停止所有任务执行器")
+
+        # 先停止所有定时任务
+        self.stop_all_scheduled_tasks()
+
         with QMutexLocker(self._mutex):
             device_names = list(self._executors.keys())
 
@@ -179,6 +218,59 @@ class TaskerManager(QObject):
             queue_info = {name: executor.get_queue_length() for name, executor in self._executors.items()}
             return queue_info
 
+    def get_device_status_summary(self) -> Dict[str, Dict]:
+        """获取所有设备的状态摘要"""
+        with QMutexLocker(self._mutex):
+            summary = {}
+            for device_name, executor in self._executors.items():
+                state_info = executor.state.get_info()
+                queue_length = executor.get_queue_length()
+
+                summary[device_name] = {
+                    'status': state_info['status'],
+                    'queue_length': queue_length,
+                    'last_active': state_info['last_active'],
+                    'has_error': bool(state_info['error']),
+                    'error': state_info['error'],
+                    'has_scheduled_tasks': state_info['has_scheduled_tasks'],
+                    'next_scheduled_run': state_info['next_scheduled_run'],
+                    'current_task': state_info['current_task']
+                }
+            return summary
+
+    def get_system_state(self) -> Dict:
+        """获取整个系统的状态"""
+        with QMutexLocker(self._mutex):
+            active_devices = self.get_active_devices()
+            device_statuses = {}
+
+            for device in active_devices:
+                device_state = self.get_executor_state(device)
+                if device_state:
+                    device_statuses[device] = device_state.status.value
+
+            total_scheduled_tasks = 0
+            next_runs = []
+
+            for device in active_devices:
+                executor = self._get_executor(device)
+                if executor:
+                    total_scheduled_tasks += len(executor.state.scheduled_tasks)
+                    if executor.state.next_scheduled_run:
+                        next_runs.append(executor.state.next_scheduled_run)
+
+            next_scheduled_run = min(next_runs) if next_runs else None
+
+            return {
+                'active_devices_count': len(active_devices),
+                'active_devices': active_devices,
+                'device_statuses': device_statuses,
+                'total_scheduled_tasks': total_scheduled_tasks,
+                'next_scheduled_run': next_scheduled_run.strftime('%Y-%m-%d %H:%M:%S') if next_scheduled_run else None,
+                'timers_count': len(self._timers),
+                'timestamp': datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+            }
+
     @asyncSlot(DeviceConfig)
     async def run_device_all_resource_task(self, device_config: DeviceConfig) -> None:
         """
@@ -198,19 +290,27 @@ class TaskerManager(QObject):
             self.logger.info(f"设备 {device_config.device_name} 准备提交 {len(runtime_configs)} 个资源任务")
             # 异步调用创建执行器并等待完成
             await self.create_executor(device_config)
+
+            # 获取执行器，更新状态为等待执行
+            executor = self._get_executor(device_config.device_name)
+            if executor:
+                executor.state.update_status(DeviceStatus.WAITING)
+
             result = await self.submit_task(device_config.device_name, runtime_configs)
             if result:
                 self.logger.info(f"设备 {device_config.device_name} 的资源任务批次已成功提交")
             else:
                 self.logger.error(f"设备 {device_config.device_name} 的资源任务批次提交失败")
+                # 更新状态为错误
+                if executor:
+                    executor.state.update_status(DeviceStatus.ERROR, "提交任务批次失败")
         else:
             self.logger.warning(f"设备 {device_config.device_name} 没有找到可用的运行时配置")
 
-    @asyncSlot(DeviceConfig,str)
+    @asyncSlot(DeviceConfig, str)
     async def run_resource_task(self, device_config: DeviceConfig, resource_name: str) -> None:
         """
         提交指定资源的任务。
-        此处依然为同步方法，但内部调用异步函数时可以用 asyncio.create_task 调度执行。
         """
         self.logger.info(f"为设备 {device_config.device_name} 提交资源 {resource_name} 的任务")
         runtime_config = global_config.get_runtime_configs_for_resource(resource_name, device_config.device_name)
@@ -226,23 +326,22 @@ class TaskerManager(QObject):
         if not success:
             self.logger.error(f"为设备 {device_config.device_name} 创建执行器失败，无法运行资源 {resource_name}")
             return
+
+        # 获取执行器，更新状态为等待执行
+        executor = self._get_executor(device_config.device_name)
+        if executor and (executor.state.status == DeviceStatus.IDLE or executor.state.status == DeviceStatus.SCHEDULED):
+            executor.state.update_status(DeviceStatus.WAITING)
+
         result = await self.submit_task(device_config.device_name, runtime_config)
         if result:
             self.logger.info(f"设备 {device_config.device_name} 的资源 {resource_name} 任务已成功提交，任务ID: {result}")
         else:
             self.logger.error(f"设备 {device_config.device_name} 的资源 {resource_name} 任务提交失败")
+            # 更新状态为错误
+            if executor:
+                executor.state.update_status(DeviceStatus.ERROR, f"提交资源 {resource_name} 任务失败")
 
-    # ===== 以下是定时任务相关方法，因 QTimer 触发的回调一般为同步槽函数，
-
-    def _scheduled_task_first_run(self, timer: QTimer, device_config: DeviceConfig) -> None:
-        """
-        首次运行定时任务的处理函数：
-        在首次触发后执行任务，并启动后续每日定时器。
-        """
-        self.logger.info(f"首次运行设备 {device_config.device_name} 的定时任务")
-        # 调度异步任务
-        asyncio.create_task(self.run_device_all_resource_task(device_config))
-        timer.start()
+    # ===== 定时任务相关方法 =====
 
     def _calculate_next_run_time(self, hours: int, minutes: int) -> datetime:
         """
@@ -256,15 +355,12 @@ class TaskerManager(QObject):
 
     def setup_all_device_scheduled_tasks(self) -> None:
         """
-        从全局配置初始化所有设备的定时任务。
+        从全局配置初始化所有设备的资源级定时任务。
         """
-        scheduled_devices = [d for d in global_config.get_app_config().devices if d.schedule_enabled]
-        if not scheduled_devices:
-            self.logger.info("没有启用定时功能的设备")
-            return
+        all_devices = global_config.get_app_config().devices
+        self.logger.info(f"开始检查 {len(all_devices)} 个设备的资源级定时任务")
 
-        self.logger.info(f"开始配置 {len(scheduled_devices)} 个设备的定时任务")
-        for device in scheduled_devices:
+        for device in all_devices:
             self.setup_device_scheduled_tasks(device)
 
     def stop_all_scheduled_tasks(self) -> None:
@@ -274,6 +370,15 @@ class TaskerManager(QObject):
         for timer_info in self._timers.values():
             if 'timer' in timer_info:
                 timer_info['timer'].stop()
+
+                # 更新设备状态
+                device_name = timer_info.get('device_name')
+                timer_id = timer_info.get('id')
+                if device_name and timer_id:
+                    executor = self._get_executor(device_name)
+                    if executor:
+                        executor.remove_scheduled_task(timer_id)
+
         timer_count = len(self._timers)
         self._timers.clear()
         self.logger.info(f"已停止所有 {timer_count} 个定时任务")
@@ -281,13 +386,133 @@ class TaskerManager(QObject):
     def update_device_scheduled_tasks(self, device_config: DeviceConfig) -> None:
         """
         更新设备定时任务 - 先取消原有任务，再重新设置。
+        发出定时任务修改信号。
         """
-        self.logger.info(f"更新设备 {device_config.device_name} 的定时任务")
+        self.logger.info(f"更新设备 {device_config.device_name} 的资源级定时任务")
+
+        # 保存旧定时任务列表，用于发送修改信号
+        old_task_ids = [tid for tid, info in self._timers.items()
+                        if info['device_name'] == device_config.device_name]
+
+        # 取消旧定时任务
         self.cancel_device_scheduled_tasks(device_config.device_name)
-        if device_config.schedule_enabled:
-            self.setup_device_scheduled_tasks(device_config)
-        else:
-            self.logger.info(f"设备 {device_config.device_name} 定时功能已禁用，不再重新设置定时任务")
+
+        # 设置新定时任务
+        new_task_ids = self.setup_device_scheduled_tasks(device_config)
+
+        # 如果有变化，发出修改信号
+        if old_task_ids or new_task_ids:
+            # 对于每个新任务发出修改信号
+            for task_id in new_task_ids:
+                self.scheduled_task_modified.emit(device_config.device_name, task_id)
+
+            self.logger.info(
+                f"设备 {device_config.device_name} 的定时任务已更新，移除 {len(old_task_ids)} 个，添加 {len(new_task_ids)} 个")
+
+    def update_resource_scheduled_task(self, device_config: DeviceConfig, resource_name: str,
+                                       old_schedule_id: str, new_schedule_time: str,
+                                       settings_name: str = None) -> bool:
+        """
+        更新资源的定时任务。
+
+        Args:
+            device_config: 设备配置
+            resource_name: 资源名称
+            old_schedule_id: 要更新的定时任务ID
+            new_schedule_time: 新的定时任务时间 (HH:MM格式)
+            settings_name: 可选参数，如果需要修改设置名称
+
+        Returns:
+            bool: 更新是否成功
+        """
+        self.logger.info(f"更新设备 {device_config.device_name} 资源 {resource_name} 的定时任务 {old_schedule_id}")
+
+        # 查找现有定时任务
+        if old_schedule_id not in self._timers:
+            self.logger.error(f"找不到定时任务 {old_schedule_id}")
+            return False
+
+        timer_info = self._timers[old_schedule_id]
+
+        # 验证设备和资源匹配
+        if timer_info['device_name'] != device_config.device_name or timer_info['resource_name'] != resource_name:
+            self.logger.error(f"定时任务 {old_schedule_id} 与指定的设备或资源不匹配")
+            return False
+
+        try:
+            # 停止旧定时器
+            old_timer = timer_info['timer']
+            old_timer.stop()
+
+            # 解析新时间
+            hours, minutes = map(int, new_schedule_time.split(':'))
+            next_run = self._calculate_next_run_time(hours, minutes)
+
+            # 使用新设置或保留旧设置
+            actual_settings_name = settings_name if settings_name else timer_info['settings_name']
+
+            # 生成新的定时器ID
+            new_timer_id = f"{device_config.device_name}_{resource_name}_{actual_settings_name}_{new_schedule_time}_{id(next_run)}"
+
+            # 创建新定时器
+            timer = QTimer(self)
+            timer.setSingleShot(False)  # 重复执行
+            timer.setInterval(24 * 60 * 60 * 1000)  # 每日重复
+
+            # 捕获当前设备和资源信息
+            device_config_copy = device_config
+
+            # 使用lambda捕获变量值
+            timer.timeout.connect(
+                lambda dc=device_config_copy, rn=resource_name, sn=actual_settings_name:
+                self.run_resource_task_with_settings(dc, rn, sn)
+            )
+
+            # 更新定时器信息字典
+            self._timers.pop(old_schedule_id)  # 移除旧条目
+            self._timers[new_timer_id] = {
+                'id': new_timer_id,
+                'timer': timer,
+                'device_name': device_config.device_name,
+                'resource_name': resource_name,
+                'settings_name': actual_settings_name,
+                'time': new_schedule_time,
+                'next_run': next_run,
+                'type': 'resource'  # 标记为资源级定时任务
+            }
+
+            # 设置首次运行的单次定时器
+            now = datetime.now()
+            delay_ms = int((next_run - now).total_seconds() * 1000)
+
+            QTimer.singleShot(
+                delay_ms,
+                lambda t=timer, dc=device_config_copy, rn=resource_name, sn=actual_settings_name, tid=new_timer_id:
+                self._scheduled_resource_task_first_run(t, dc, rn, sn, tid)
+            )
+
+            self.logger.info(
+                f"设备 {device_config.device_name} 中资源 {resource_name} 的定时任务已更新，"
+                f"新时间: {new_schedule_time}，设置: {actual_settings_name}，"
+                f"将在 {next_run.strftime('%Y-%m-%d %H:%M:%S')} 首次运行"
+            )
+
+            # 更新设备状态中的定时任务信息
+            executor = self._get_executor(device_config.device_name)
+            if executor:
+                # 先移除旧任务
+                executor.remove_scheduled_task(old_schedule_id)
+                # 添加新任务
+                executor.add_scheduled_task(new_timer_id, self._timers[new_timer_id])
+                # 发出任务修改信号
+                executor.state.scheduled_task_modified.emit(new_timer_id)
+                self.scheduled_task_modified.emit(device_config.device_name, new_timer_id)
+
+            return True
+
+        except Exception as e:
+            self.logger.error(f"更新定时任务时出错: {e}", exc_info=True)
+            return False
 
     def setup_resource_scheduled_tasks(self, device_config: DeviceConfig, resource: Resource) -> List[str]:
         """
@@ -348,6 +573,7 @@ class TaskerManager(QObject):
                 )
 
                 self._timers[timer_id] = {
+                    'id': timer_id,
                     'timer': timer,
                     'device_name': device_config.device_name,
                     'resource_name': resource.resource_name,
@@ -361,8 +587,8 @@ class TaskerManager(QObject):
                 # 设置首次运行的单次定时器
                 QTimer.singleShot(
                     delay_ms,
-                    lambda t=timer, dc=device_config_copy, rn=resource_name, sn=settings_name:
-                    self._scheduled_resource_task_first_run(t, dc, rn, sn)
+                    lambda t=timer, dc=device_config_copy, rn=resource_name, sn=settings_name, tid=timer_id:
+                    self._scheduled_resource_task_first_run(t, dc, rn, sn, tid)
                 )
 
                 time_display = f"{hours}:{minutes:02d}" if isinstance(schedule.schedule_time,
@@ -372,6 +598,13 @@ class TaskerManager(QObject):
                     f"(使用设置 {schedule.settings_name}) 已设置，将在 "
                     f"{next_run.strftime('%Y-%m-%d %H:%M:%S')} 首次运行，之后每天 {time_display} 运行"
                 )
+
+                # 更新设备状态
+                executor = self._get_executor(device_config.device_name)
+                if executor:
+                    executor.add_scheduled_task(timer_id, self._timers[timer_id])
+                    self.logger.debug(f"设备 {device_config.device_name} 添加定时任务 {timer_id}")
+
             except Exception as e:
                 self.logger.error(
                     f"设置设备 {device_config.device_name} 中资源 {resource.resource_name} 的定时任务时出错: {e}",
@@ -380,7 +613,7 @@ class TaskerManager(QObject):
         return resource_timers
 
     def _scheduled_resource_task_first_run(self, timer: QTimer, device_config: DeviceConfig, resource_name: str,
-                                           settings_name: str) -> None:
+                                           settings_name: str, timer_id: str) -> None:
         """
         首次运行资源级定时任务的处理函数:
         运行任务并启动定时器进行后续运行。
@@ -388,10 +621,42 @@ class TaskerManager(QObject):
         self.logger.info(
             f"首次运行设备 {device_config.device_name} 中资源 {resource_name} 的定时任务 (使用设置 {settings_name})")
 
-        # 直接调用asyncSlot装饰的方法而不是使用asyncio.create_task()
-        self.run_resource_task_with_settings(device_config, resource_name, settings_name)
+        # 更新设备状态为运行中
+        executor = self._get_executor(device_config.device_name)
+        if executor:
+            executor.state.update_status(DeviceStatus.RUNNING)
 
-        timer.start()
+        try:
+            # 直接调用asyncSlot装饰的方法
+            self.run_resource_task_with_settings(device_config, resource_name, settings_name)
+
+            # 启动定时器以进行后续运行
+            timer.start()
+
+            # 在定时任务信息中更新下一次运行时间
+            if timer_id in self._timers:
+                timer_info = self._timers[timer_id]
+
+                # 计算下一次运行时间
+                if isinstance(timer_info['time'], str):
+                    time_parts = timer_info['time'].split(':')
+                    hours = int(time_parts[0])
+                    minutes = int(time_parts[1])
+
+                    next_run = datetime.now() + timedelta(days=1)
+                    next_run = next_run.replace(hour=hours, minute=minutes, second=0, microsecond=0)
+
+                    timer_info['next_run'] = next_run
+
+                    # 更新执行器的定时任务信息
+                    if executor:
+                        executor.state.scheduled_tasks[timer_id] = timer_info
+                        executor.state._update_next_scheduled_run()
+        except Exception as e:
+            self.logger.error(f"定时任务首次运行失败: {e}", exc_info=True)
+            # 更新设备状态为错误
+            if executor:
+                executor.state.update_status(DeviceStatus.ERROR, f"定时任务首次运行失败: {e}")
 
     @asyncSlot(DeviceConfig, str, str)
     async def run_resource_task_with_settings(self, device_config: DeviceConfig, resource_name: str,
@@ -407,68 +672,72 @@ class TaskerManager(QObject):
         self.logger.info(
             f"运行设备 {device_config.device_name} 中资源 {resource_name} 的任务 (使用设置 {settings_name})")
 
-        # 查找资源
-        resource = next((r for r in device_config.resources if r.resource_name == resource_name), None)
-        if not resource:
-            self.logger.error(f"在设备 {device_config.device_name} 中找不到资源 {resource_name}")
-            return
+        # 更新设备状态为运行中或等待
+        executor = self._get_executor(device_config.device_name)
+        if executor:
+            if executor.state.status != DeviceStatus.RUNNING:
+                executor.state.update_status(DeviceStatus.WAITING)
 
-        # 临时修改资源的settings_name
-        original_settings_name = resource.settings_name
         try:
-            resource.settings_name = settings_name
-
-            # 获取运行时配置
-            runtime_config = global_config.get_runtime_configs_for_resource(resource_name, device_config.device_name)
-
-            self.logger.debug(f"定时任务使用配置:{runtime_config}")
-
-            if not runtime_config:
-                self.logger.error(
-                    f"无法获取设备 {device_config.device_name} 中资源 {resource_name} 的运行时配置 (使用设置 {settings_name})")
+            # 查找资源
+            resource = next((r for r in device_config.resources if r.resource_name == resource_name), None)
+            if not resource:
+                self.logger.error(f"在设备 {device_config.device_name} 中找不到资源 {resource_name}")
+                if executor:
+                    executor.state.update_status(DeviceStatus.ERROR, f"找不到资源 {resource_name}")
                 return
 
-            # 创建执行器（如果需要）
-            success = await self.create_executor(device_config)
-            if not success:
-                self.logger.error(f"为设备 {device_config.device_name} 创建执行器失败")
-                return
+            # 临时修改资源的settings_name
+            original_settings_name = resource.settings_name
+            try:
+                resource.settings_name = settings_name
 
-            # 提交任务
-            result = await self.submit_task(device_config.device_name, runtime_config)
-            if result:
-                self.logger.info(
-                    f"成功提交设备 {device_config.device_name} 中资源 {resource_name} 的任务 (使用设置 {settings_name})，任务ID: {result}")
-            else:
-                self.logger.error(
-                    f"提交设备 {device_config.device_name} 中资源 {resource_name} 的任务失败 (使用设置 {settings_name})")
-        finally:
-            # 恢复原始settings_name
-            resource.settings_name = original_settings_name
+                # 获取运行时配置
+                runtime_config = global_config.get_runtime_configs_for_resource(resource_name,
+                                                                                device_config.device_name)
+
+                self.logger.debug(f"定时任务使用配置:{runtime_config}")
+
+                if not runtime_config:
+                    self.logger.error(
+                        f"无法获取设备 {device_config.device_name} 中资源 {resource_name} 的运行时配置 (使用设置 {settings_name})")
+                    if executor:
+                        executor.state.update_status(DeviceStatus.ERROR, "无法获取运行时配置")
+                    return
+
+                # 创建执行器（如果需要）
+                success = await self.create_executor(device_config)
+                if not success:
+                    self.logger.error(f"为设备 {device_config.device_name} 创建执行器失败")
+                    if executor:
+                        executor.state.update_status(DeviceStatus.ERROR, "创建执行器失败")
+                    return
+
+                # 提交任务
+                result = await self.submit_task(device_config.device_name, runtime_config)
+                if result:
+                    self.logger.info(
+                        f"成功提交设备 {device_config.device_name} 中资源 {resource_name} 的任务 (使用设置 {settings_name})，任务ID: {result}")
+                else:
+                    self.logger.error(
+                        f"提交设备 {device_config.device_name} 中资源 {resource_name} 的任务失败 (使用设置 {settings_name})")
+                    if executor:
+                        executor.state.update_status(DeviceStatus.ERROR, "提交任务失败")
+            finally:
+                # 恢复原始settings_name
+                resource.settings_name = original_settings_name
+        except Exception as e:
+            self.logger.error(f"运行资源任务时出错: {e}", exc_info=True)
+            if executor:
+                executor.state.update_status(DeviceStatus.ERROR, str(e))
 
     def setup_device_scheduled_tasks(self, device_config: DeviceConfig) -> List[str]:
         """
-        根据设备配置设置定时任务，包括设备级和资源级定时任务。
+        为设备配置所有资源级定时任务。
         """
         timer_ids = []
 
-        # 设置设备级定时任务
-        if device_config.schedule_enabled and device_config.schedule_time:
-            self.logger.info(
-                f"为设备 {device_config.device_name} 配置 {len(device_config.schedule_time)} 个设备级定时任务")
-
-            for time_str in device_config.schedule_time:
-                try:
-                    # 设备级定时任务配置代码保持不变
-                    # ...省略原有代码...
-                    pass
-                except Exception as e:
-                    self.logger.error(f"设置设备 {device_config.device_name} 的设备级定时任务时出错: {e}",
-                                      exc_info=True)
-        else:
-            self.logger.info(f"设备 {device_config.device_name} 未启用设备级定时功能")
-
-        # 设置资源级定时任务
+        # 只设置资源级定时任务
         for resource in device_config.resources:
             # Check schedules_enable flag before setting up resource schedules
             if resource.schedules_enable:
@@ -477,35 +746,44 @@ class TaskerManager(QObject):
             else:
                 self.logger.debug(f"资源 {resource.resource_name} 定时任务未启用")
 
+        # 如果添加了定时任务，更新设备状态
+        if timer_ids:
+            executor = self._get_executor(device_config.device_name)
+            if executor and executor.state.status == DeviceStatus.IDLE:
+                executor.state.update_status(DeviceStatus.SCHEDULED)
+                self.logger.info(
+                    f"设备 {device_config.device_name} 已设置 {len(timer_ids)} 个定时任务，状态更新为已调度")
+
         return timer_ids
 
-    # 更新取消定时任务的方法，确保同时处理设备级和资源级定时任务
     def cancel_device_scheduled_tasks(self, device_name: str) -> None:
         """
-        取消指定设备的所有定时任务，包括设备级和资源级定时任务。
+        取消指定设备的所有定时任务。
         """
         device_timer_ids = [tid for tid, info in self._timers.items()
                             if info['device_name'] == device_name]
-        device_count = 0
-        resource_count = 0
+
+        executor = self._get_executor(device_name)
 
         for timer_id in device_timer_ids:
             timer_info = self._timers.pop(timer_id, None)
             if timer_info and 'timer' in timer_info:
                 timer_info['timer'].stop()
-                # 计数不同类型的定时任务
-                if timer_info.get('type') == 'resource':
-                    resource_count += 1
-                else:
-                    device_count += 1
 
-        self.logger.info(
-            f"已取消设备 {device_name} 的 {device_count} 个设备级定时任务和 {resource_count} 个资源级定时任务")
+                # 更新设备状态
+                if executor:
+                    executor.remove_scheduled_task(timer_id)
 
-    # 更新获取定时任务信息的方法，包含资源级定时任务信息
+        self.logger.info(f"已取消设备 {device_name} 的 {len(device_timer_ids)} 个资源级定时任务")
+
+        # 如果设备没有运行中任务且没有定时任务，状态改为IDLE
+        if executor and executor.state.status == DeviceStatus.SCHEDULED and not executor.state.scheduled_tasks:
+            executor.state.update_status(DeviceStatus.IDLE)
+            self.logger.info(f"设备 {device_name} 没有定时任务，状态更新为空闲")
+
     def get_scheduled_tasks_info(self) -> List[Dict]:
         """
-        获取所有定时任务的信息，包括设备级和资源级定时任务。
+        获取所有定时任务的信息。
         """
         tasks_info = []
         for timer_id, info in self._timers.items():
@@ -514,16 +792,22 @@ class TaskerManager(QObject):
                 'device_name': info['device_name'],
                 'time': info['time'],
                 'next_run': info['next_run'].strftime('%Y-%m-%d %H:%M:%S') if 'next_run' in info else 'Unknown',
-                'type': info.get('type', 'device')  # 默认为设备级
+                'resource_name': info.get('resource_name'),
+                'settings_name': info.get('settings_name'),
+                'type': info.get('type', 'unknown')
             }
-
-            # 对于资源级定时任务，添加资源和设置信息
-            if info.get('type') == 'resource':
-                task_info['resource_name'] = info.get('resource_name')
-                task_info['settings_name'] = info.get('settings_name')
-
             tasks_info.append(task_info)
         return tasks_info
+
+    def get_device_scheduled_tasks(self, device_name: str) -> List[Dict]:
+        """
+        获取特定设备的所有定时任务信息。
+        """
+        executor = self._get_executor(device_name)
+        if executor:
+            return executor.state.get_scheduled_tasks_info()
+        return []
+
 
 # 单例模式
 task_manager = TaskerManager()

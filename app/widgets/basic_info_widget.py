@@ -162,6 +162,7 @@ class BasicInfoWidget(QFrame):
         # 连接TaskerManager的全局信号
         task_manager.device_added.connect(self.on_device_changed)
         task_manager.device_removed.connect(self.on_device_changed)
+        task_manager.scheduled_task_modified.connect(self.update_status_display)
 
         # 如果设备执行器已存在，连接其信号
         if task_manager.is_device_active(self.device_name):
@@ -213,7 +214,16 @@ class BasicInfoWidget(QFrame):
         schedule_text = ""
         next_run_time = None
 
-        if self.device_config.schedule_enabled:
+        # Update schedule information
+        # 检查设备资源中是否有启用的定时任务，而不是检查不存在的schedule_enabled属性
+        has_enabled_schedules = False
+        for resource in self.device_config.resources:
+            if resource.schedules_enable and resource.schedules and any(
+                    schedule.enabled for schedule in resource.schedules):
+                has_enabled_schedules = True
+                break
+
+        if has_enabled_schedules:
             # 获取设备的定时任务信息
             tasks_info = task_manager.get_scheduled_tasks_info()
             device_tasks = [task for task in tasks_info if task['device_name'] == self.device_name]

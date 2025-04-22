@@ -9,76 +9,7 @@ from app.components.collapsible_widget import CollapsibleWidget
 from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager
 from app.widgets.no_wheel_ComboBox import NoWheelComboBox
-
-
-class SimpleCollapsiblePanel(QWidget):
-    """简化版的折叠面板，没有动画效果"""
-
-    def __init__(self, title="折叠面板", parent=None):
-        super().__init__(parent)
-        self.is_expanded = False
-        self.title = title
-
-        # 创建主布局
-        self.main_layout = QVBoxLayout(self)
-        self.main_layout.setContentsMargins(0, 0, 0, 0)
-        self.main_layout.setSpacing(0)
-
-        # 创建标题栏
-        self.header = QWidget()
-        self.header.setFixedHeight(30)
-        self.header.setObjectName("collapsibleHeader")
-
-        header_layout = QHBoxLayout(self.header)
-        header_layout.setContentsMargins(5, 0, 5, 0)
-
-        # 添加复选框
-        self.checkbox = QCheckBox()
-        header_layout.addWidget(self.checkbox)
-
-        # 添加标题
-        self.title_label = QLabel(self.title)
-        header_layout.addWidget(self.title_label)
-
-        # 添加伸缩项，使折叠按钮靠右
-        header_layout.addStretch(1)
-
-        # 添加折叠按钮
-        self.toggle_btn = QPushButton("▼")
-        self.toggle_btn.setFixedSize(20, 20)
-        self.toggle_btn.clicked.connect(self.toggle)
-        header_layout.addWidget(self.toggle_btn)
-
-        # 添加标题栏到主布局
-        self.main_layout.addWidget(self.header)
-
-        # 创建内容区域
-        self.content = QWidget()
-        self.content.setVisible(False)  # 初始隐藏
-        self.content_layout = QVBoxLayout(self.content)
-        self.content_layout.setContentsMargins(10, 5, 10, 5)
-
-        # 添加内容区域到主布局
-        self.main_layout.addWidget(self.content)
-
-    def toggle(self):
-        """切换折叠/展开状态"""
-        self.is_expanded = not self.is_expanded
-        self.content.setVisible(self.is_expanded)
-
-        # 更新按钮文字
-        self.toggle_btn.setText("▲" if self.is_expanded else "▼")
-
-        # 通知布局更新
-        self.updateGeometry()
-
-        # 如果有父级滚动区域，确保内容可见
-        parent = self.parent()
-        while parent:
-            if isinstance(parent, QScrollArea):
-                parent.ensureWidgetVisible(self.content)
-                break
-            parent = parent.parent()
+from core.tasker_manager import task_manager
 
 
 class AdvancedSettingsPage(QFrame):
@@ -316,6 +247,7 @@ class AdvancedSettingsPage(QFrame):
 
                 # 保存配置
                 global_config.save_all_configs()
+                task_manager.update_device_scheduled_tasks(self.device_config)
                 self.logger.debug(f"已自动保存定时配置")
 
             # 连接控件事件到自动保存函数
@@ -366,6 +298,7 @@ class AdvancedSettingsPage(QFrame):
 
             # 自动保存
             global_config.save_all_configs()
+            task_manager.update_device_scheduled_tasks(self.device_config)
 
         add_schedule_btn.clicked.connect(add_new_schedule)
         panel.content_layout.addWidget(add_schedule_btn)

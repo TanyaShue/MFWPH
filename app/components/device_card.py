@@ -29,6 +29,7 @@ class DeviceCard(QFrame):
         # Connect to task manager signals
         task_manager.device_added.connect(self.on_device_changed)
         task_manager.device_removed.connect(self.on_device_changed)
+        task_manager.scheduled_task_modified.connect(self.update_status)
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -168,7 +169,14 @@ class DeviceCard(QFrame):
             self.status_value.setStyleSheet("color: #9E9E9E;")  # Gray
 
         # Update schedule information
-        if self.device_config.schedule_enabled:
+        has_enabled_schedules = False
+        for resource in self.device_config.resources:
+            if resource.schedules_enable and resource.schedules and any(
+                    schedule.enabled for schedule in resource.schedules):
+                has_enabled_schedules = True
+                break
+
+        if has_enabled_schedules:
             tasks_info = task_manager.get_scheduled_tasks_info()
             device_tasks = [task for task in tasks_info if task['device_name'] == self.device_config.device_name]
 
