@@ -111,8 +111,6 @@ class AppConfig:
     """主设备配置数据类，包含顶层版本信息和设备列表。"""
     devices: List[DeviceConfig] = field(default_factory=list)
     resource_settings: List[ResourceSettings] = field(default_factory=list)  # 新字段
-    version: str = ""
-    build_time: str = ""
     source_file: str = ""  # 用于记录加载的文件路径，但不保存到输出 JSON 中
     CDK: str = ""
     update_method: str = field(default="github")
@@ -281,9 +279,6 @@ class AppConfig:
             resource_settings=resource_settings
         )
 
-        # 添加版本信息
-        config.version = data.get('version', '')
-        config.build_time = data.get('build_time', '')
 
         # 处理加密的CDK
         encrypted_cdk = data.get('encrypted_cdk', '')
@@ -306,11 +301,6 @@ class AppConfig:
     def to_dict(self) -> Dict[str, Any]:
         """将 AppConfig 对象转换为字典，不包含 source_file 属性。"""
         result = {}
-        # 添加版本信息（如果存在）
-        if self.version:
-            result["version"] = self.version
-        if self.build_time:
-            result["build_time"] = self.build_time
         if self.CDK:
             # 加密CDK而不是直接保存
             result["encrypted_cdk"] = self._encrypt_cdk()
@@ -323,10 +313,6 @@ class AppConfig:
         result["window_size"]= self.window_size
         return result
 
-    def update_version(self, version: str):
-        """更新顶层版本信息。"""
-        self.version = version
-        self.build_time = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 
 def device_config_to_dict(device: DeviceConfig) -> Dict[str, Any]:

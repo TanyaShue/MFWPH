@@ -91,13 +91,6 @@ jobs:
           }
           Write-Host "Zip file successfully created"
 
-      - name: List files in dist directory
-        run: |
-          Write-Host "Contents of dist directory:"
-          Get-ChildItem -Path ./dist -Recurse | Select-Object FullName
-          Write-Host "Zip file details:"
-          Get-Item -Path ./dist/MFWPH_RELEASE.zip | Select-Object FullName, Length, LastWriteTime
-
       - name: Create GitHub Release
         id: create_release
         if: startsWith(github.ref, 'refs/tags/')

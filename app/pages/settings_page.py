@@ -352,7 +352,7 @@ class SettingsPage(QWidget):
         self.update_source_combo.currentTextChanged.connect(update_source_changed)
 
     def create_about_section(self):
-        """创建“关于我们”页面，展示应用、项目信息及鸣谢内容"""
+        """创建"关于我们"页面，展示应用、项目信息及鸣谢内容"""
         from PySide6.QtCore import Qt, QUrl
         from PySide6.QtGui import QDesktopServices, QFont, QPixmap
         from PySide6.QtWidgets import QHBoxLayout, QLabel
@@ -373,8 +373,11 @@ class SettingsPage(QWidget):
         logo_label.setFixedSize(50, 50)
         app_info_row.addWidget(logo_label)
 
+        # 获取版本信息
+        version_info = self.get_version_info()
+
         # 应用名称及版本
-        app_info = QLabel("<b>MFWPH</b> - MaaFramework Project Helper<br>版本 1.0.0")
+        app_info = QLabel(f"<b>MFWPH</b> - MaaFramework Project Helper<br>版本 {version_info}")
         app_info.setObjectName("infoLabel")
         app_info_row.addWidget(app_info)
         app_info_row.addStretch()
@@ -387,7 +390,6 @@ class SettingsPage(QWidget):
 
         layout.addLayout(app_info_row)
         layout.addSpacing(10)
-
 
         proj_info_label = QLabel("<b>项目信息</b>")
         proj_info_label.setObjectName("infoLabel")
@@ -427,6 +429,35 @@ class SettingsPage(QWidget):
         layout.addWidget(copyright_label)
 
         return layout
+
+    def get_version_info(self):
+        """从versioninfo.txt文件中获取版本信息"""
+        import os
+        import sys
+
+        # 检查是否是打包后的可执行文件
+        if getattr(sys, 'frozen', False):
+            # 如果是打包环境，versioninfo.txt应该在执行文件所在目录
+            base_path = sys._MEIPASS if hasattr(sys, '_MEIPASS') else os.path.dirname(sys.executable)
+        else:
+            # 如果是开发环境，尝试从当前目录查找
+            base_path = os.getcwd()
+
+        version_file_path = os.path.join(base_path, 'versioninfo.txt')
+
+        try:
+            if os.path.exists(version_file_path):
+                with open(version_file_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith('version='):
+                            version = line.split('=', 1)[1]
+                            return version
+        except Exception as e:
+            print(f"读取版本信息失败: {e}")
+
+        # 如果无法获取版本信息，返回未知版本
+        return "未知版本"
 
     def scroll_to_section(self, index):
         """Scroll to the selected section"""
