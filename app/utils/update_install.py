@@ -6,329 +6,416 @@ import zipfile
 from datetime import datetime
 from pathlib import Path
 
-import requests
+from PySide6.QtCore import QObject, Signal
 
 from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager
-from app.utils.update_check import install_update, schedule_pending_update
+
+logger = log_manager.get_app_logger()
 
 
-class ResourceDownloader:
-    """Resource downloader class with batch operations capability"""
+class UpdateInstaller(QObject):
+    """更新安装器"""
+    # 信号定义
+    install_started = Signal(str)  # resource_name
+    install_completed = Signal(str, str, list)  # resource_name, version, locked_files
+    install_failed = Signal(str, str)  # resource_name, error_message
 
-    @staticmethod
-    def get_pending_operations():
-        """Get all pending operations that need to be applied after restart"""
-        operations_file = Path("assets/pending_updates/operations.json")
-        if not operations_file.exists():
-            return []
+    def __init__(self):
+        """初始化安装器"""
+        super().__init__()
+
+    def install_new_resource(self, resource_name, file_path, data):
+        """
+        安装新资源
+
+        Args:
+            resource_name: 资源名称
+            file_path: 下载的文件路径
+            data: 资源数据
+        """
+        self.install_started.emit(resource_name)
 
         try:
-            with open(operations_file, 'r', encoding='utf-8') as f:
-                return json.load(f)
+            with tempfile.TemporaryDirectory() as extract_dir:
+                # 解压 ZIP
+                with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                    zip_ref.extractall(extract_dir)
+
+                # 查找或创建资源配置
+                resource_dir, resource_config_path = self._find_or_create_config(extract_dir, data, resource_name)
+
+                # 创建目标目录
+                target_dir = Path(f"assets/resource/{resource_name.lower().replace(' ', '_')}")
+                if target_dir.exists():
+                    shutil.rmtree(target_dir)
+
+                # 复制文件到目标目录
+                shutil.copytree(resource_dir, target_dir)
+
+                # 加载新资源配置
+                global_config.load_resource_config(str(target_dir / "resource_config.json"))
+
+                # 完成安装
+                self.install_completed.emit(resource_name, data.get("version", "1.0.0"), [])
+
         except Exception as e:
-            logger = log_manager.get_app_logger()
-            logger.error(f"Failed to load pending operations: {str(e)}")
-            return []
+            logger.error(f"安装新资源 {resource_name} 失败: {str(e)}")
+            self.install_failed.emit(resource_name, str(e))
 
-    @staticmethod
-    def apply_pending_operations():
-        """Apply all pending operations on application startup"""
-        operations = ResourceDownloader.get_pending_operations()
-        if not operations:
-            return
+    def install_update(self, resource, file_path):
+        """
+        安装资源更新
 
-        # Get app root directory
-        app_root_dir = Path.cwd()
-        pending_dir = Path("assets/pending_updates/files")
-
-        # Create a list to store operations that failed
-        failed_operations = []
-
-        # Sort operations by type to ensure proper order (executable last)
-        operations.sort(key=lambda op: 0 if op["type"] != "executable" else 1)
-
-        # Process each operation
-        for operation in operations:
-            op_type = operation.get("type")
-            file_path = operation.get("path")
-
-            if not op_type or not file_path:
-                continue
-
-            try:
-                if op_type == "copy":
-                    # Copy file from pending to target
-                    source = pending_dir / file_path
-                    target = app_root_dir / file_path
-
-                    # Ensure target directory exists
-                    target.parent.mkdir(parents=True, exist_ok=True)
-
-                    # Copy the file
-                    if source.exists():
-                        shutil.copy2(source, target)
-
-                elif op_type == "delete":
-                    # Delete the file
-                    target = app_root_dir / file_path
-                    if target.exists():
-                        target.unlink()
-
-                elif op_type == "executable":
-                    # Special handling for executable
-                    source = pending_dir / file_path
-                    target = app_root_dir / file_path
-
-                    # For now, just try to copy it directly
-                    # In a real application, this might require a more complex approach
-                    if source.exists():
-                        # Try to rename the original executable first
-                        if target.exists():
-                            backup = app_root_dir / f"{file_path}.bak"
-                            if backup.exists():
-                                backup.unlink()
-                            target.rename(backup)
-
-                        # Copy the new executable
-                        shutil.copy2(source, target)
-            except Exception as e:
-                # Log the error and add to failed operations
-                logger = log_manager.get_app_logger()
-                logger.error(f"Failed to apply operation {op_type} for {file_path}: {str(e)}")
-                failed_operations.append(operation)
-
-        # If there were failures, write them back to the file
-        if failed_operations:
-            with open(operations_file, 'w', encoding='utf-8') as f:
-                json.dump(failed_operations, f, ensure_ascii=False, indent=4)
-        else:
-            # Clear the operations file and clean up
-            operations_file = Path("assets/pending_updates/operations.json")
-            if operations_file.exists():
-                operations_file.unlink()
-
-            # Clean up the pending directory
-            if pending_dir.exists():
-                try:
-                    shutil.rmtree(pending_dir)
-                except:
-                    pass
-
-    @staticmethod
-    def check_and_apply_updates_for_all_resources():
-        """Check for updates for all resources and apply them if available"""
-        resources = global_config.get_all_resource_configs()
-        resources_with_update = [r for r in resources if r.resource_update_service_id]
-
-        if not resources_with_update:
-            return "没有找到配置了更新源的资源"
-
-        # Create temp directory
-        temp_dir = Path("assets/temp")
-        temp_dir.mkdir(parents=True, exist_ok=True)
-
-        # Track update stats
-        updates_found = 0
-        updates_applied = 0
-        update_errors = []
-
-        # Check each resource
-        for resource in resources_with_update:
-            try:
-                # Check for update (simplified version)
-                update_found, latest_version, download_url, update_type = ResourceDownloader.check_for_update(resource)
-
-                if update_found:
-                    updates_found += 1
-                    # Download and apply update
-                    success = ResourceDownloader.download_and_apply_update(
-                        resource, download_url, latest_version, update_type, temp_dir
-                    )
-                    if success:
-                        updates_applied += 1
-                    else:
-                        update_errors.append(f"资源 {resource.resource_name} 更新失败")
-            except Exception as e:
-                update_errors.append(f"资源 {resource.resource_name} 检查或更新时出错: {str(e)}")
-
-        # Build result message
-        if updates_found == 0:
-            return "所有资源均为最新版本"
-        else:
-            message = f"找到 {updates_found} 个更新，成功应用 {updates_applied} 个"
-            if update_errors:
-                message += f"\n错误:\n" + "\n".join(update_errors)
-            return message
-
-    @staticmethod
-    def check_for_update(resource):
-        """Check if an update is available for a resource"""
-        # Determine update method
-        update_method = global_config.get_app_config().update_method
-
-        # Default return values
-        update_found = False
-        latest_version = ""
-        download_url = ""
-        update_type = "full"
+        Args:
+            resource: 资源对象
+            file_path: 下载的文件路径
+        """
+        self.install_started.emit(resource.resource_name)
 
         try:
-            if update_method == "MirrorChyan":
-                # Get resource update service ID
-                rid = resource.resource_update_service_id
-                if not rid:
-                    return update_found, latest_version, download_url, update_type
+            # 获取新版本号和更新类型
+            new_version = getattr(resource, 'temp_version', None)
+            update_type = getattr(resource, 'temp_update_type', "full")
 
-                # Get CDK from global config
-                cdk = global_config.get_app_config().CDK if hasattr(global_config.get_app_config(), 'CDK') else ""
+            with tempfile.TemporaryDirectory() as extract_dir:
+                # 解压 ZIP
+                with zipfile.ZipFile(file_path, 'r') as zip_ref:
+                    zip_ref.extractall(extract_dir)
 
-                # Determine update channel
-                channel = "beta" if global_config.get_app_config().receive_beta_update else "stable"
+                # 获取原始资源目录
+                original_resource_dir = Path(resource.source_file).parent
 
-                # Construct API URL and parameters
-                api_url = f"https://mirrorchyan.com/api/resources/{rid}/latest"
-                params = {
-                    "current_version": resource.resource_version,
-                    "cdk": cdk,
-                    "user_agent": "MaaYYsGUI",
-                    "channel": channel
-                }
+                # 创建备份
+                self._create_backup(resource, original_resource_dir)
 
-                # Make API request
-                response = requests.get(api_url, params=params)
-                response.raise_for_status()
+                # 处理更新
+                locked_files = []
+                if update_type == "incremental":
+                    changes_path = os.path.join(extract_dir, "changes.json")
 
-                # Parse response
-                result = response.json()
-
-                # Check error code
-                error_code = result.get("code")
-                if error_code is not None and error_code != 0:
-                    return update_found, latest_version, download_url, update_type
-
-                # Extract data
-                data = result.get("data", {})
-                latest_version = data.get("version_name", "")
-                download_url = data.get("url", "")
-                update_type = data.get("update_type", "full")
-
-                # Determine if update is available
-                if latest_version and latest_version != resource.resource_version:
-                    update_found = True
-            else:
-                # GitHub update check
-                repo_url = resource.resource_rep_url
-                if not repo_url or "github.com" not in repo_url:
-                    return update_found, latest_version, download_url, update_type
-
-                # Parse GitHub repository URL
-                repo_parts = repo_url.rstrip("/").split("github.com/")
-                if len(repo_parts) != 2:
-                    return update_found, latest_version, download_url, update_type
-
-                owner_repo = repo_parts[1]
-
-                # Get latest release info
-                api_url = f"https://api.github.com/repos/{owner_repo}/releases/latest"
-                headers = {"Accept": "application/vnd.github.v3+json"}
-
-                response = requests.get(api_url, headers=headers)
-
-                if response.status_code == 404:
-                    # Try tags instead
-                    api_url = f"https://api.github.com/repos/{owner_repo}/tags"
-                    response = requests.get(api_url, headers=headers)
-
-                response.raise_for_status()
-                result = response.json()
-
-                # Parse result
-                if "/releases/latest" in api_url:
-                    # Handle releases
-                    latest_version = result.get("tag_name", "")
-                    download_assets = result.get("assets", [])
-                    if download_assets:
-                        download_url = download_assets[0].get("browser_download_url", "")
+                    if os.path.exists(changes_path):
+                        locked_files = self._apply_incremental_update(resource, extract_dir, original_resource_dir,
+                                                                      changes_path)
                     else:
-                        download_url = result.get("zipball_url", "")
+                        # 如果没有 changes.json，回退到完整更新
+                        locked_files = self._apply_full_update(resource, extract_dir, original_resource_dir)
                 else:
-                    # Handle tags
-                    if result and isinstance(result, list) and len(result) > 0:
-                        latest_tag = result[0]
-                        latest_version = latest_tag.get("name", "").lstrip("v")
-                        download_url = f"https://github.com/{owner_repo}/archive/refs/tags/{latest_tag.get('name', '')}.zip"
+                    # 完整更新
+                    locked_files = self._apply_full_update(resource, extract_dir, original_resource_dir)
 
-                # Determine if update is available
-                if latest_version and latest_version != resource.resource_version:
-                    update_found = True
+                # 重新加载资源配置
+                global_config.load_resource_config(str(original_resource_dir / "resource_config.json"))
+
+                # 更新全局配置中的版本
+                for r in global_config.get_all_resource_configs():
+                    if r.resource_name == resource.resource_name and new_version:
+                        r.resource_version = new_version
+                        break
+
+                # 保存所有配置
+                global_config.save_all_configs()
+
+                # 完成安装
+                self.install_completed.emit(resource.resource_name, new_version, locked_files)
+
         except Exception as e:
-            logger = log_manager.get_app_logger()
-            logger.error(f"Error checking for update: {str(e)}")
+            logger.error(f"安装资源 {resource.resource_name} 更新失败: {str(e)}")
+            self.install_failed.emit(resource.resource_name, str(e))
 
-        return update_found, latest_version, download_url, update_type
+    def _find_or_create_config(self, extract_dir, data, resource_name):
+        """查找现有配置或创建新配置"""
+        # 尝试查找现有配置
+        for root, dirs, files in os.walk(extract_dir):
+            if "resource_config.json" in files:
+                return root, os.path.join(root, "resource_config.json")
 
-    @staticmethod
-    def download_and_apply_update(resource, download_url, version, update_type, temp_dir):
-        """Download and apply an update for a resource"""
+        # 创建新配置
+        main_dir = extract_dir
+        for item in os.listdir(extract_dir):
+            item_path = os.path.join(extract_dir, item)
+            if os.path.isdir(item_path) and not item.startswith('.'):
+                main_dir = item_path
+                break
+
+        # 创建资源配置
+        resource_config = {
+            "resource_name": data["name"] or resource_name,
+            "resource_version": data.get("version", "1.0.0"),
+            "resource_author": data.get("author", "未知"),
+            "resource_description": data["description"] or "从外部源添加的资源",
+            "resource_update_service_id": data["url"] if "github.com" in data["url"] else ""
+        }
+
+        # 写入配置文件
+        resource_config_path = os.path.join(main_dir, "resource_config.json")
+        with open(resource_config_path, 'w', encoding='utf-8') as f:
+            json.dump(resource_config, f, ensure_ascii=False, indent=4)
+
+        return main_dir, resource_config_path
+
+    def _create_backup(self, resource, resource_dir):
+        """创建资源备份"""
+        # 创建历史目录
+        history_dir = Path("assets/history")
+        history_dir.mkdir(parents=True, exist_ok=True)
+
+        # 创建时间戳备份文件名
+        timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+        backup_filename = f"{resource.resource_name}_{resource.resource_version}_{timestamp}.zip"
+        backup_path = history_dir / backup_filename
+
+        # 创建备份
+        with zipfile.ZipFile(backup_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+            for root, dirs, files in os.walk(resource_dir):
+                for file in files:
+                    file_path = Path(root) / file
+                    arcname = f"{resource.resource_name}/{os.path.relpath(file_path, resource_dir)}"
+                    zipf.write(file_path, arcname)
+
+        return str(backup_path)
+
+    def _apply_full_update(self, resource, extract_dir, original_resource_dir):
+        """应用完整更新"""
+        # 查找资源目录
+        resource_dir = None
+        resource_config_path = None
+
+        for root, dirs, files in os.walk(extract_dir):
+            if "resource_config.json" in files:
+                resource_config_path = os.path.join(root, "resource_config.json")
+                resource_dir = root
+                break
+
+        if not resource_config_path:
+            raise ValueError("更新包中未找到resource_config.json文件")
+
+        # 跟踪无法更新的文件
+        locked_files = []
+
+        # 应用更新并处理文件锁
+        app_root_dir = Path.cwd()
+        for root, dirs, files in os.walk(resource_dir):
+            # 获取相对路径
+            relative_path = os.path.relpath(root, resource_dir)
+
+            # 创建目标目录
+            for dir_name in dirs:
+                dir_path = original_resource_dir / relative_path / dir_name
+                dir_path.mkdir(parents=True, exist_ok=True)
+
+            # 复制/替换文件
+            for file_name in files:
+                source_file = Path(root) / file_name
+                target_file = original_resource_dir / relative_path / file_name
+                relative_target = os.path.relpath(target_file, app_root_dir)
+
+                # 尝试更新文件
+                try:
+                    # 删除现有文件（如果存在）
+                    if target_file.exists():
+                        target_file.unlink()
+
+                    # 创建父目录（如果不存在）
+                    target_file.parent.mkdir(parents=True, exist_ok=True)
+
+                    # 复制文件
+                    shutil.copy2(source_file, target_file)
+                except PermissionError:
+                    # 文件被锁定，添加到待处理更新
+                    locked_files.append(relative_target)
+                    self._schedule_pending_update(source_file, relative_target)
+
+        return locked_files
+
+    def _apply_incremental_update(self, resource, extract_dir, original_resource_dir, changes_path):
+        """应用增量更新"""
         try:
-            # Set temporary attributes
-            resource.temp_version = version
-            resource.temp_update_type = update_type
+            # 加载 changes.json
+            with open(changes_path, 'r', encoding='utf-8') as f:
+                changes = json.load(f)
 
-            # Create output filename
-            filename = f"{resource.resource_name}_{version}.zip"
-            output_path = temp_dir / filename
+            # 获取应用程序根目录
+            app_root_dir = Path.cwd()
 
-            # Download file
-            response = requests.get(download_url, stream=True)
-            response.raise_for_status()
+            # 跟踪无法更新的文件
+            locked_files = []
 
-            with open(output_path, 'wb') as f:
-                for chunk in response.iter_content(chunk_size=8192):
-                    if chunk:
-                        f.write(chunk)
+            # 处理修改的文件
+            if "modified" in changes:
+                for file_path in changes["modified"]:
+                    # 特殊处理主可执行文件
+                    if file_path == "MFWPH.exe":
+                        self._schedule_post_restart_update(extract_dir, file_path)
+                        continue
 
-            # Apply update
-            locked_files = install_update(resource, str(output_path))
+                    # 获取源和目标路径
+                    source_file = Path(extract_dir) / file_path
+                    target_file = app_root_dir / file_path
 
-            # Log information about locked files
-            if locked_files and len(locked_files) > 0:
-                logger = log_manager.get_app_logger()
-                logger.info(
-                    f"Resource {resource.resource_name} has {len(locked_files)} locked files that will be updated on restart")
+                    # 确保源文件存在
+                    if source_file.exists():
+                        # 确保目标目录存在
+                        target_file.parent.mkdir(parents=True, exist_ok=True)
 
-            return True
+                        # 尝试替换文件
+                        try:
+                            if target_file.exists():
+                                target_file.unlink()
+                            shutil.copy2(source_file, target_file)
+                        except PermissionError:
+                            # 文件被锁定，添加到待处理更新
+                            locked_files.append(file_path)
+                            self._schedule_pending_update(source_file, file_path)
+
+            # 处理添加的文件
+            if "added" in changes:
+                for file_path in changes["added"]:
+                    # 特殊处理主可执行文件
+                    if file_path == "MFWPH.exe":
+                        self._schedule_post_restart_update(extract_dir, file_path)
+                        continue
+
+                    # 获取源和目标路径
+                    source_file = Path(extract_dir) / file_path
+                    target_file = app_root_dir / file_path
+
+                    # 确保源文件存在
+                    if source_file.exists():
+                        # 确保目标目录存在
+                        target_file.parent.mkdir(parents=True, exist_ok=True)
+
+                        # 尝试添加新文件
+                        try:
+                            shutil.copy2(source_file, target_file)
+                        except PermissionError:
+                            # 文件被锁定，添加到待处理更新
+                            locked_files.append(file_path)
+                            self._schedule_pending_update(source_file, file_path)
+
+            # 处理删除的文件
+            if "deleted" in changes:
+                for file_path in changes["deleted"]:
+                    # 特殊处理主可执行文件
+                    if file_path == "MFWPH.exe":
+                        continue
+
+                    # 获取目标路径
+                    target_file = app_root_dir / file_path
+
+                    # 尝试删除文件（如果存在）
+                    if target_file.exists():
+                        try:
+                            target_file.unlink()
+                        except PermissionError:
+                            # 文件被锁定，计划在重启后删除
+                            locked_files.append(file_path)
+                            self._schedule_file_deletion(file_path)
+
+            return locked_files
+
         except Exception as e:
-            logger = log_manager.get_app_logger()
-            logger.error(f"Error downloading or applying update: {str(e)}")
-            return False
+            # 如果出错，回退到完整更新
+            logger.error(f"应用增量更新时出错: {str(e)}, 回退到完整更新")
+            return self._apply_full_update(resource, extract_dir, original_resource_dir)
+
+    def _schedule_pending_update(self, source_file, file_path):
+        """计划在应用程序重启后更新文件"""
+        # 创建待处理更新目录
+        pending_dir = Path("assets/pending_updates/files")
+        pending_dir.mkdir(parents=True, exist_ok=True)
+
+        # 为源文件创建目标目录
+        target_dir = pending_dir / Path(file_path).parent
+        target_dir.mkdir(parents=True, exist_ok=True)
+
+        # 将源文件复制到待处理目录
+        pending_file = pending_dir / file_path
+        shutil.copy2(source_file, pending_file)
+
+        # 添加到待处理操作文件
+        self._add_pending_operation("copy", file_path)
+
+    def _schedule_file_deletion(self, file_path):
+        """计划在应用程序重启后删除文件"""
+        # 添加到待处理操作文件
+        self._add_pending_operation("delete", file_path)
+
+    def _schedule_post_restart_update(self, extract_dir, file_path):
+        """特殊处理主可执行文件更新"""
+        # 创建待处理更新目录
+        pending_dir = Path("assets/pending_updates/files")
+        pending_dir.mkdir(parents=True, exist_ok=True)
+
+        # 将可执行文件复制到待处理目录
+        source_file = Path(extract_dir) / file_path
+        pending_file = pending_dir / file_path
+
+        if source_file.exists():
+            # 确保父目录存在
+            pending_file.parent.mkdir(parents=True, exist_ok=True)
+            shutil.copy2(source_file, pending_file)
+
+            # 添加到待处理操作文件，带有特殊可执行标志
+            self._add_pending_operation("executable", file_path)
+
+    def _add_pending_operation(self, operation_type, file_path):
+        """添加操作到待处理操作文件"""
+        # 创建操作文件
+        operations_file = Path("assets/pending_updates/operations.json")
+
+        # 读取现有操作（如果文件存在）
+        operations = []
+        if operations_file.exists():
+            try:
+                with open(operations_file, 'r', encoding='utf-8') as f:
+                    operations = json.load(f)
+            except:
+                operations = []
+
+        # 添加新操作
+        operations.append({
+            "type": operation_type,
+            "path": file_path,
+            "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+        })
+
+        # 写回文件
+        with open(operations_file, 'w', encoding='utf-8') as f:
+            json.dump(operations, f, ensure_ascii=False, indent=4)
 
 
-class ResourceVersionManager:
-    """Manages resource versions, history and rollbacks"""
+class ResourceVersionManager(QObject):
+    """资源版本管理器"""
+    # 信号定义
+    rollback_started = Signal(str)  # resource_name
+    rollback_completed = Signal(str, str, list)  # resource_name, version, locked_files
+    rollback_failed = Signal(str, str)  # resource_name, error_message
 
-    @staticmethod
-    def get_resource_history(resource_name):
-        """Get backup history for a specific resource"""
+    def __init__(self):
+        """初始化版本管理器"""
+        super().__init__()
+
+    def get_resource_history(self, resource_name):
+        """获取资源的备份历史"""
         history_dir = Path("assets/history")
         if not history_dir.exists():
             return []
 
-        # Find all backups for this resource
+        # 查找此资源的所有备份
         history_files = []
         for file in history_dir.glob(f"{resource_name}_*.zip"):
             try:
-                # Parse filename to extract version and timestamp
-                # Format: resource_name_version_timestamp.zip
+                # 解析文件名以提取版本和时间戳
+                # 格式：resource_name_version_timestamp.zip
                 parts = file.stem.split('_')
                 if len(parts) >= 3:
-                    # Extract version (could be multiple parts if version has underscores)
+                    # 提取版本（如果版本包含下划线）
                     timestamp_part = parts[-1]
                     version_parts = parts[1:-1]
                     version = '_'.join(version_parts)
 
-                    # Parse timestamp
+                    # 解析时间戳
                     timestamp = datetime.strptime(timestamp_part, "%Y%m%d_%H%M%S")
 
                     history_files.append({
@@ -338,18 +425,19 @@ class ResourceVersionManager:
                         "formatted_date": timestamp.strftime("%Y-%m-%d %H:%M:%S")
                     })
             except Exception:
-                # Skip files that don't match the expected format
+                # 跳过不匹配预期格式的文件
                 continue
 
-        # Sort by timestamp (newest first)
+        # 按时间戳排序（最新优先）
         history_files.sort(key=lambda x: x["timestamp"], reverse=True)
         return history_files
 
-    @staticmethod
-    def rollback_to_version(resource_name, backup_file_path):
-        """Roll back a resource to a previous version from backup"""
+    def rollback_to_version(self, resource_name, backup_file_path):
+        """回滚资源到之前的版本"""
+        self.rollback_started.emit(resource_name)
+
         try:
-            # Get the resource configuration
+            # 获取资源配置
             resource = None
             for r in global_config.get_all_resource_configs():
                 if r.resource_name == resource_name:
@@ -359,35 +447,22 @@ class ResourceVersionManager:
             if not resource:
                 raise ValueError(f"找不到资源 {resource_name}")
 
-            # Get the resource directory
+            # 获取资源目录
             resource_dir = Path(resource.source_file).parent
 
-            # Create temp directory for extraction
+            # 创建临时目录进行提取
             with tempfile.TemporaryDirectory() as temp_dir:
                 temp_path = Path(temp_dir)
 
-                # Extract backup
+                # 提取备份
                 with zipfile.ZipFile(backup_file_path, 'r') as zip_ref:
                     zip_ref.extractall(temp_path)
 
-                # Backup current version before rollback
-                timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-                rollback_backup_filename = f"{resource_name}_{resource.resource_version}_{timestamp}_pre_rollback.zip"
-                rollback_backup_path = Path("assets/history") / rollback_backup_filename
+                # 在回滚前备份当前版本
+                installer = UpdateInstaller()
+                installer._create_backup(resource, resource_dir)
 
-                # Ensure history directory exists
-                Path("assets/history").mkdir(parents=True, exist_ok=True)
-
-                # Create backup of current version
-                with zipfile.ZipFile(rollback_backup_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                    for root, dirs, files in os.walk(resource_dir):
-                        for file in files:
-                            file_path = Path(root) / file
-                            arcname = f"{resource_name}/{os.path.relpath(file_path, resource_dir)}"
-                            zipf.write(file_path, arcname)
-
-                # Find the root directory in the extracted backup
-                # This might be just temp_path or a subdirectory like temp_path/resource_name
+                # 查找提取的备份中的根目录
                 root_dir = temp_path
                 for item in os.listdir(temp_path):
                     item_path = temp_path / item
@@ -398,105 +473,98 @@ class ResourceVersionManager:
                         root_dir = item_path
                         break
 
-                # Keep track of locked files
+                # 跟踪锁定的文件
                 locked_files = []
 
-                # Selectively update files
+                # 选择性更新文件
                 for root, dirs, files in os.walk(root_dir):
-                    # Get relative path
+                    # 获取相对路径
                     if root_dir == temp_path:
                         relative_path = os.path.relpath(root, root_dir)
                     else:
-                        # Handle case where files are in a subdirectory named after the resource
+                        # 处理文件在以资源命名的子目录中的情况
                         if root_dir.name == resource_name:
                             relative_path = os.path.relpath(root, root_dir)
                         else:
-                            # Handle other cases
                             relative_path = os.path.relpath(root, root_dir)
 
-                    # Create directories in target
+                    # 在目标中创建目录
                     for dir_name in dirs:
                         dir_path = resource_dir / relative_path / dir_name
                         dir_path.mkdir(parents=True, exist_ok=True)
 
-                    # Copy/replace files
+                    # 复制/替换文件
                     for file_name in files:
                         source_file = Path(root) / file_name
                         target_file = resource_dir / relative_path / file_name
 
                         try:
-                            # Delete existing file if it exists
+                            # 删除现有文件（如果存在）
                             if target_file.exists():
                                 target_file.unlink()
 
-                            # Create parent directory if it doesn't exist
+                            # 创建父目录（如果不存在）
                             target_file.parent.mkdir(parents=True, exist_ok=True)
 
-                            # Copy the file
+                            # 复制文件
                             shutil.copy2(source_file, target_file)
                         except PermissionError:
-                            # File is locked, schedule for update after restart
+                            # 文件被锁定，计划在重启后更新
                             locked_files.append(str(target_file))
-                            schedule_pending_update(source_file, relative_path / file_name)
+                            installer._schedule_pending_update(source_file, relative_path / file_name)
 
-                # Extract version from the backup filename
+                # 从备份文件名中提取版本
                 backup_filename = Path(backup_file_path).name
                 version_parts = backup_filename.split('_')
+                version = "unknown"
                 if len(version_parts) >= 2:
                     version = version_parts[1]
 
-                    # Update resource version in global_config
-                    resource.resource_version = version
-                    global_config.save_all_configs()
+                # 更新全局配置中的资源版本
+                resource.resource_version = version
+                global_config.save_all_configs()
 
-                # Return result with locked files information
-                return {
-                    "success": True,
-                    "locked_files": locked_files,
-                    "message": f"资源已回滚到版本 {version}"
-                }
+                # 完成回滚
+                self.rollback_completed.emit(resource_name, version, locked_files)
+                return version
 
         except Exception as e:
-            logger = log_manager.get_app_logger()
-            logger.error(f"Rollback failed: {str(e)}")
-            return {
-                "success": False,
-                "message": f"回滚失败: {str(e)}"
-            }
+            logger.error(f"回滚失败: {str(e)}")
+            self.rollback_failed.emit(resource_name, str(e))
+            return None
 
-    @staticmethod
-    def clean_history(resource_name=None, keep_count=5):
-        """Clean up old history files, keeping only the most recent ones"""
+    def clean_history(self, resource_name=None, keep_count=5):
+        """清理旧历史文件，只保留最近的几个"""
         history_dir = Path("assets/history")
         if not history_dir.exists():
             return
 
         try:
             if resource_name:
-                # Get history for specific resource
-                history_files = ResourceVersionManager.get_resource_history(resource_name)
+                # 获取特定资源的历史
+                history_files = self.get_resource_history(resource_name)
 
-                # Keep only the specified number of most recent backups
+                # 只保留指定数量的最新备份
                 files_to_delete = history_files[keep_count:]
 
-                # Delete older files
+                # 删除较旧的文件
                 for file_info in files_to_delete:
                     file_path = Path(file_info["file_path"])
                     if file_path.exists():
                         file_path.unlink()
             else:
-                # Group all history files by resource
+                # 按资源分组所有历史文件
                 all_resources = {}
 
                 for file in history_dir.glob("*.zip"):
-                    # Extract resource name from filename
+                    # 从文件名中提取资源名称
                     parts = file.stem.split('_')
                     if len(parts) >= 3:
                         res_name = parts[0]
                         if res_name not in all_resources:
                             all_resources[res_name] = []
 
-                        # Parse timestamp
+                        # 解析时间戳
                         try:
                             timestamp_part = parts[-1]
                             timestamp = datetime.strptime(timestamp_part, "%Y%m%d_%H%M%S")
@@ -506,15 +574,15 @@ class ResourceVersionManager:
                                 "timestamp": timestamp
                             })
                         except:
-                            # Skip files with invalid timestamp format
+                            # 跳过时间戳格式无效的文件
                             continue
 
-                # For each resource, keep only the most recent files
+                # 对于每个资源，只保留最新的文件
                 for res_name, files in all_resources.items():
-                    # Sort by timestamp (newest first)
+                    # 按时间戳排序（最新优先）
                     files.sort(key=lambda x: x["timestamp"], reverse=True)
 
-                    # Delete older files
+                    # 删除较旧的文件
                     for file_info in files[keep_count:]:
                         file_path = file_info["file_path"]
                         if file_path.exists():
@@ -522,96 +590,134 @@ class ResourceVersionManager:
 
             return True
         except Exception as e:
-            logger = log_manager.get_app_logger()
-            logger.error(f"Error cleaning history: {str(e)}")
+            logger.error(f"清理历史时出错: {str(e)}")
             return False
 
 
-class BatchOperationManager:
-    """Manages batch operations for resources"""
+class PendingUpdateManager(QObject):
+    """待处理更新管理器"""
+    # 信号定义
+    pending_updates_applied = Signal(int, int)  # total_operations, failed_operations
 
-    @staticmethod
-    def apply_batch_operation(operation_type, resources=None):
-        """Apply a batch operation to multiple resources"""
-        if resources is None:
-            # Get all resources if none specified
-            resources = global_config.get_all_resource_configs()
+    def __init__(self):
+        """初始化待处理更新管理器"""
+        super().__init__()
 
-        results = {
-            "success": 0,
-            "failed": 0,
-            "skipped": 0,
-            "errors": []
-        }
+    def get_pending_operations(self):
+        """获取所有需要在重启后应用的待处理操作"""
+        operations_file = Path("assets/pending_updates/operations.json")
+        if not operations_file.exists():
+            return []
 
-        for resource in resources:
+        try:
+            with open(operations_file, 'r', encoding='utf-8') as f:
+                return json.load(f)
+        except Exception as e:
+            logger.error(f"加载待处理操作失败: {str(e)}")
+            return []
+
+    def apply_pending_operations(self):
+        """在应用程序启动时应用所有待处理操作"""
+        operations = self.get_pending_operations()
+        if not operations:
+            return
+
+        # 获取应用程序根目录
+        app_root_dir = Path.cwd()
+        pending_dir = Path("assets/pending_updates/files")
+
+        # 创建一个列表来存储失败的操作
+        failed_operations = []
+
+        # 按类型排序操作以确保正确的顺序（可执行文件最后）
+        operations.sort(key=lambda op: 0 if op["type"] != "executable" else 1)
+
+        # 处理每个操作
+        for operation in operations:
+            op_type = operation.get("type")
+            file_path = operation.get("path")
+
+            if not op_type or not file_path:
+                continue
+
             try:
-                if operation_type == "check_update":
-                    # Check for updates
-                    update_found, latest_version, download_url, update_type = ResourceDownloader.check_for_update(
-                        resource)
+                if op_type == "copy":
+                    # 从待处理目录复制文件到目标位置
+                    source = pending_dir / file_path
+                    target = app_root_dir / file_path
 
-                    if update_found:
-                        # Record update info for later use
-                        resource.temp_version = latest_version
-                        resource.temp_download_url = download_url
-                        resource.temp_update_type = update_type
-                        results["success"] += 1
-                    else:
-                        results["skipped"] += 1
+                    # 确保目标目录存在
+                    target.parent.mkdir(parents=True, exist_ok=True)
 
-                elif operation_type == "update_all":
-                    # Update all resources that have pending updates
-                    if hasattr(resource, 'temp_download_url') and resource.temp_download_url:
-                        # Create temp directory
-                        temp_dir = Path("assets/temp")
-                        temp_dir.mkdir(parents=True, exist_ok=True)
+                    # 复制文件
+                    if source.exists():
+                        shutil.copy2(source, target)
 
-                        # Download and apply update
-                        success = ResourceDownloader.download_and_apply_update(
-                            resource,
-                            resource.temp_download_url,
-                            resource.temp_version,
-                            resource.temp_update_type,
-                            temp_dir
-                        )
+                elif op_type == "delete":
+                    # 删除文件
+                    target = app_root_dir / file_path
+                    if target.exists():
+                        target.unlink()
 
-                        if success:
-                            results["success"] += 1
-                        else:
-                            results["failed"] += 1
-                            results["errors"].append(f"资源 {resource.resource_name} 更新失败")
-                    else:
-                        results["skipped"] += 1
+                elif op_type == "executable":
+                    # 特殊处理可执行文件
+                    source = pending_dir / file_path
+                    target = app_root_dir / file_path
 
-                elif operation_type == "cleanup_history":
-                    # Clean up history files
-                    success = ResourceVersionManager.clean_history(resource.resource_name)
-                    if success:
-                        results["success"] += 1
-                    else:
-                        results["failed"] += 1
+                    # 现在只是尝试直接复制它
+                    # 在实际应用中，这可能需要更复杂的方法
+                    if source.exists():
+                        # 首先尝试重命名原始可执行文件
+                        if target.exists():
+                            backup = app_root_dir / f"{file_path}.bak"
+                            if backup.exists():
+                                backup.unlink()
+                            target.rename(backup)
 
+                        # 复制新的可执行文件
+                        shutil.copy2(source, target)
             except Exception as e:
-                results["failed"] += 1
-                results["errors"].append(f"资源 {resource.resource_name} 操作失败: {str(e)}")
+                # 记录错误并添加到失败的操作
+                logger.error(f"应用操作 {op_type} 到 {file_path} 失败: {str(e)}")
+                failed_operations.append(operation)
 
-        return results
+        # 如果有失败，将它们写回文件
+        if failed_operations:
+            operations_file = Path("assets/pending_updates/operations.json")
+            with open(operations_file, 'w', encoding='utf-8') as f:
+                json.dump(failed_operations, f, ensure_ascii=False, indent=4)
+
+            self.pending_updates_applied.emit(len(operations), len(failed_operations))
+        else:
+            # 清除操作文件并清理
+            operations_file = Path("assets/pending_updates/operations.json")
+            if operations_file.exists():
+                operations_file.unlink()
+
+            # 清理待处理目录
+            if pending_dir.exists():
+                try:
+                    shutil.rmtree(pending_dir)
+                except:
+                    pass
+
+            self.pending_updates_applied.emit(len(operations), 0)
 
 
-# Initialize on module import
+# 初始化函数
 def initialize_update_system():
-    """Initialize the update system on application startup"""
+    """在应用程序启动时初始化更新系统"""
     try:
-        # Create necessary directories
+        # 创建必要的目录
         Path("assets/temp").mkdir(parents=True, exist_ok=True)
         Path("assets/history").mkdir(parents=True, exist_ok=True)
         Path("assets/pending_updates").mkdir(parents=True, exist_ok=True)
 
-        # Apply any pending operations from previous session
-        ResourceDownloader.apply_pending_operations()
+        # 应用前一个会话中的任何待处理操作
+        pending_manager = PendingUpdateManager()
+        pending_manager.apply_pending_operations()
 
-        # Clean up temp directory
+        # 清理临时目录
         try:
             temp_dir = Path("assets/temp")
             if temp_dir.exists():
@@ -619,15 +725,13 @@ def initialize_update_system():
                     if item.is_file():
                         item.unlink()
         except Exception as e:
-            logger = log_manager.get_app_logger()
-            logger.warning(f"Failed to clean temp directory: {str(e)}")
+            logger.warning(f"清理临时目录失败: {str(e)}")
 
         return True
     except Exception as e:
-        logger = log_manager.get_app_logger()
-        logger.error(f"Failed to initialize update system: {str(e)}")
+        logger.error(f"初始化更新系统失败: {str(e)}")
         return False
 
 
-# Call initialize function when module is imported
+# 当模块被导入时调用初始化函数
 initialize_update_system()

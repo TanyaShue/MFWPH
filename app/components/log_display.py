@@ -1,7 +1,7 @@
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QTextEdit,
-    QLabel, QFrame, QCheckBox
+    QLabel, QFrame
 )
 
 from app.models.logging.log_manager import log_manager

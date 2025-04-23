@@ -2,7 +2,7 @@ from PySide6.QtCore import Qt, QTime
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel, QScrollArea,
-    QPushButton, QComboBox, QCheckBox, QTimeEdit
+    QPushButton, QCheckBox, QTimeEdit
 )
 
 from app.components.collapsible_widget import CollapsibleWidget

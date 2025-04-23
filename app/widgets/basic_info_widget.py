@@ -1,4 +1,5 @@
 from datetime import datetime
+
 from PySide6.QtCore import QMutexLocker
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (

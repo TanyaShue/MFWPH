@@ -1,4 +1,5 @@
 import os
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QFont, QIcon, QPixmap
 from PySide6.QtWidgets import (
@@ -6,13 +7,11 @@ from PySide6.QtWidgets import (
     QScrollArea, QGridLayout, QPushButton, QSplitter,
     QSizePolicy
 )
-from qasync import asyncSlot
 
 from app.components.device_card import DeviceCard
 from app.components.log_display import LogDisplay
 from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager
-from core.tasker_manager import task_manager
 
 
 class HomePage(QFrame):

@@ -474,3 +474,4 @@ tools/ImageCropper/**/*.png
 */.idea/
 */__pycache__/
 MFWPH_*.spec
+/assets/pending_updates/

@@ -1,12 +1,12 @@
-from PySide6.QtCore import Qt, QTime, QThread, Signal
+from PySide6.QtCore import Qt, QThread, Signal
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
                                QLabel, QLineEdit, QPushButton,
-                               QWidget, QCheckBox, QGroupBox, QScrollArea,
-                               QTimeEdit, QMessageBox, QStackedWidget)
-from maa.toolkit import Toolkit
+                               QWidget, QGroupBox, QScrollArea,
+                               QMessageBox, QStackedWidget)
 from maa.define import (MaaAdbScreencapMethodEnum, MaaAdbInputMethodEnum,
-                        MaaWin32ScreencapMethodEnum, MaaWin32InputMethodEnum)
+                        MaaWin32ScreencapMethodEnum)
+from maa.toolkit import Toolkit
 
 from app.models.config.app_config import DeviceConfig, AdbDevice, Win32Device, DeviceType
 from app.models.logging.log_manager import log_manager

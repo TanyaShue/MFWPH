@@ -1,12 +1,12 @@
-from PySide6.QtCore import Qt, QSize
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtCore import Qt
+from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
     QScrollArea, QCheckBox, QLineEdit, QPushButton, QSizePolicy
 )
 
 from app.components.collapsible_widget import CollapsibleWidget, DraggableContainer
-from app.models.config.app_config import Resource, OptionConfig, ResourceSettings
+from app.models.config.app_config import Resource, ResourceSettings
 from app.models.config.global_config import global_config
 from app.models.config.resource_config import SelectOption, BoolOption, InputOption
 from app.models.logging.log_manager import log_manager

@@ -1,5 +1,6 @@
-from PySide6.QtWidgets import QComboBox
 from PySide6.QtGui import QWheelEvent
+from PySide6.QtWidgets import QComboBox
+
 
 class NoWheelComboBox(QComboBox):
     def __init__(self, parent=None):

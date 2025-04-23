@@ -1,14 +1,15 @@
-from PySide6.QtCore import Qt, QSize, QTimer
-from PySide6.QtGui import QFont, QPixmap, QIcon
+from PySide6.QtCore import QTimer
+from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QScrollArea, QFrame, QCheckBox,
-    QLineEdit, QPushButton, QSpinBox, QTextBrowser, QSizePolicy, QStackedLayout
+    QLineEdit, QPushButton, QSizePolicy, QStackedLayout
 )
 
 from app.models.config.global_config import global_config
 from app.utils.theme_manager import theme_manager
 from app.widgets.no_wheel_ComboBox import NoWheelComboBox
+
 
 class SettingsPage(QWidget):
     """Settings page with categories on the left and content on the right"""
@@ -353,8 +354,8 @@ class SettingsPage(QWidget):
 
     def create_about_section(self):
         """创建"关于我们"页面，展示应用、项目信息及鸣谢内容"""
-        from PySide6.QtCore import Qt, QUrl
-        from PySide6.QtGui import QDesktopServices, QFont, QPixmap
+        from PySide6.QtCore import Qt
+        from PySide6.QtGui import QFont, QPixmap
         from PySide6.QtWidgets import QHBoxLayout, QLabel
 
         layout = self.create_section("关于我们")

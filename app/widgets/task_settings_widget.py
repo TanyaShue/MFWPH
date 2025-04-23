@@ -1,15 +1,14 @@
-from PySide6.QtCore import Qt, QSize
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
-    QToolButton, QPushButton, QStackedWidget, QComboBox, QLineEdit, QMessageBox
+    QPushButton, QStackedWidget, QComboBox, QLineEdit, QMessageBox
 )
 
+from app.models.config.app_config import ResourceSettings
 from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager
 from app.widgets.advanced_settings_page import AdvancedSettingsPage
 from app.widgets.basic_settings_page import BasicSettingsPage
-from app.models.config.app_config import ResourceSettings
 
 
 class TaskSettingsWidget(QFrame):
