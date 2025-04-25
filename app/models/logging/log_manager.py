@@ -216,8 +216,8 @@ class LogManager(QObject):
         # 因为handle关联变化可能影响context的logger映射
         self.context_to_logger.clear()
 
-    def get_device_logs(self, device_name: str, max_lines: int = 100) -> List[str]:
-        """Retrieve recent logs for a specific device, filtered by current session"""
+    def get_device_logs(self, device_name: str) -> List[str]:
+        """Retrieve all logs for a specific device from the current session"""
         log_file = os.path.join(self.log_dir, f"{device_name}.log")
         if not os.path.exists(log_file):
             return []
@@ -241,11 +241,11 @@ class LogManager(QObject):
                 # This ensures we don't lose any logs due to format issues
                 session_lines.append(line)
 
-        # Return the last 'max_lines' lines from the current session
-        return session_lines[-max_lines:] if len(session_lines) > max_lines else session_lines
+        # Return all lines from the current session without limiting
+        return session_lines
 
-    def get_all_logs(self, max_lines: int = 100) -> List[str]:
-        """Retrieve recent logs from the main application log, filtered by current session"""
+    def get_all_logs(self) -> List[str]:
+        """Retrieve all logs from the main application log from the current session"""
         log_file = os.path.join(self.log_dir, "app.log")
         if not os.path.exists(log_file):
             return []
@@ -268,8 +268,8 @@ class LogManager(QObject):
                 # If we can't parse the timestamp, include the line anyway
                 session_lines.append(line)
 
-        # Return the last 'max_lines' lines from the current session
-        return session_lines[-max_lines:] if len(session_lines) > max_lines else session_lines
+        # Return all lines from the current session without limiting
+        return session_lines
 
 
 class AppLogSignalHandler(logging.Handler):

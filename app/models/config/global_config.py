@@ -43,7 +43,6 @@ class GlobalConfig:
         """
         self.app_config = AppConfig.from_json_file(file_path)
 
-
     def load_resource_config(self, file_path: str) -> None:
         """
         从 JSON 文件中加载单个 ResourceConfig，并存储到全局配置中。
