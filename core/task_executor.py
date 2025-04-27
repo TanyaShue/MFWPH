@@ -1,12 +1,14 @@
 # -*- coding: UTF-8 -*-
 import importlib.util
 import os
+import subprocess
 import time
 from datetime import datetime, timedelta
 from enum import Enum
 from typing import Optional, Dict, List
 
 from PySide6.QtCore import QObject, Signal, Slot, QThreadPool, QRunnable, QMutexLocker, QRecursiveMutex, Qt
+from maa.agent_client import AgentClient
 from maa.controller import AdbController, Win32Controller
 from maa.custom_action import CustomAction
 from maa.custom_recognition import CustomRecognition
@@ -15,7 +17,7 @@ from maa.tasker import Tasker
 from maa.toolkit import Toolkit
 
 from app.models.config.app_config import DeviceConfig, DeviceType
-from app.models.config.global_config import RunTimeConfigs
+from app.models.config.global_config import RunTimeConfigs, global_config
 from app.models.logging.log_manager import log_manager
 
 
@@ -191,6 +193,8 @@ class TaskExecutor(QObject):
 
     def __init__(self, device_config: DeviceConfig, parent=None):
         super().__init__(parent)
+        self.agent_identifier = None
+        self.agent = None
         self.device_name = device_config.device_name
         self.logger = log_manager.get_device_logs(self.device_name)
         self.device_config = device_config
@@ -276,61 +280,6 @@ class TaskExecutor(QObject):
             self.logger.error(error_msg)
             raise
 
-    def load_custom_objects(self, custom_dir):
-        if not os.path.exists(custom_dir):
-            self.logger.debug(f"自定义文件夹 {custom_dir} 不存在")
-            return
-
-        if not os.listdir(custom_dir):
-            self.logger.debug(f"自定义文件夹 {custom_dir} 为空")
-            return
-
-        # Traverse module type folders
-        for module_type, base_class in [("custom_actions", CustomAction),
-                                        ("custom_recognition", CustomRecognition)]:
-            module_type_dir = os.path.join(custom_dir, module_type)
-
-            if not os.path.exists(module_type_dir):
-                self.logger.debug(f"{module_type} 文件夹不存在于 {custom_dir}")
-                continue
-
-            self.logger.debug(f"开始加载 {module_type} 模块")
-
-            # Traverse all Python files in the directory
-            for file in os.listdir(module_type_dir):
-                file_path = os.path.join(module_type_dir, file)
-
-                # Ensure it's a file and a Python file
-                if os.path.isfile(file_path) and file.endswith('.py'):
-                    try:
-                        # Use the file name as the module name (without .py extension)
-                        module_name = os.path.splitext(file)[0]
-                        spec = importlib.util.spec_from_file_location(module_name, file_path)
-                        module = importlib.util.module_from_spec(spec)
-                        spec.loader.exec_module(module)
-
-                        # Iterate through all attributes in the module
-                        for attr_name in dir(module):
-                            attr = getattr(module, attr_name)
-
-                            # Check if it's a class and a subclass of the base class (but not the base class itself)
-                            if isinstance(attr, type) and issubclass(attr, base_class) and attr != base_class:
-
-                                # Use the class name as the registration name
-                                class_name = attr.__name__
-                                instance = attr()
-
-                                if module_type == "custom_actions":
-                                    if self.resource.register_custom_action(class_name, instance):
-                                        self.logger.debug(f"加载自定义动作 {class_name} 成功")
-
-                                elif module_type == "custom_recognition":
-                                    if self.resource.register_custom_recognition(class_name, instance):
-                                        self.logger.debug(f"加载自定义识别器 {class_name} 成功")
-
-                    except Exception as e:
-                        self.logger.error(f"加载自定义内容时发生错误 {file_path}: {e}")
-
     @Slot(str, dict)
     def _handle_scheduled_task_added(self, task_id, task_info):
         """处理定时任务添加"""
@@ -387,7 +336,9 @@ class TaskExecutor(QObject):
 
             self._tasker.bind(resource=self.resource, controller=self._controller)
 
-            self.load_custom_objects(os.path.join(task.data.resource_path, "custom_dir"))
+
+            if self.create_agent():
+                print(f"agent 初始化成功")
 
             # Create and start the task runner
             runner = TaskRunner(task, self)
@@ -399,6 +350,164 @@ class TaskExecutor(QObject):
             self.state.current_task = task
             self.logger.debug(f"设备 {self.device_name} 开始执行任务 {task.id}")
 
+    def create_agent(self) -> bool:
+        """Create and start MAA Agent process"""
+        try:
+            # Ensure we have a running task
+            if not self._running_task:
+                self.logger.error("Cannot create agent: No running task")
+                return False
+
+            # Get resource configuration
+            from app.models.config.global_config import global_config
+            resource_config = global_config.get_resource_config(self._running_task.data.resource_name)
+
+            if not resource_config:
+                self.logger.error(f"Resource config not found for {self._running_task.data.resource_name}")
+                return False
+
+            custom_path = resource_config.custom_path
+            custom_params = resource_config.custom_prams  # Note: This field has a typo in the original code
+
+            # Create agent client if not exists
+            if not self.agent:
+                self.agent = AgentClient()
+                self.agent.bind(self.resource)
+
+            # Create socket identifier if not exists
+            if not self.agent_identifier:
+                self.agent_identifier = self.agent.create_socket()
+                if not self.agent_identifier:
+                    self.logger.error("Failed to create agent socket")
+                    return False
+
+            # Resource path is the directory containing the resource files
+            resource_dir = self._running_task.data.resource_path
+
+            # Build the command with parameters
+            cmd = ["python", custom_path]
+
+            # Add custom parameters if provided
+            if custom_params:
+                cmd.extend(custom_params.split())
+
+            # Add socket ID parameter
+            cmd.extend(["-id", self.agent_identifier])
+
+            self.logger.debug(f"Starting Agent process with command: {' '.join(cmd)} in directory {resource_dir}")
+
+            # Start the Agent process with pipe redirection
+            import subprocess
+            self.agent_process = subprocess.Popen(
+                cmd,
+                cwd=resource_dir,  # Set working directory to resource path
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=False,  # Changed to false to receive bytes instead of text
+                bufsize=1  # Line buffered
+            )
+
+            # Start threads to capture and log output
+            self._start_output_capture_threads()
+
+            # Wait briefly for the process to start
+            time.sleep(1)
+
+            # Check if process started correctly
+            if self.agent_process.poll() is not None:
+                # Process terminated prematurely
+                error_msg = f"Agent process failed to start with exit code: {self.agent_process.returncode}"
+                self.logger.error(error_msg)
+                return False
+
+            # Now connect to the agent
+            connection_result = self.agent.connect()
+            if not connection_result:
+                self.logger.error("Failed to connect to agent")
+                self._terminate_agent_process()
+                return False
+
+            self.logger.debug("Agent connected successfully")
+
+            return self.agent._api_properties_initialized
+
+        except Exception as e:
+            error_msg = f"Agent initialization error: {str(e)}"
+            self.logger.error(error_msg)
+            self._terminate_agent_process()
+            return False
+
+    def _start_output_capture_threads(self):
+        """Start threads to capture and log subprocess output"""
+        import threading
+
+        # Flag to signal threads to stop
+        self._stop_output_capture = False
+
+        # Function to read from a pipe and log it
+        def log_output(pipe, prefix):
+            try:
+                for line in iter(lambda: pipe.readline(), b''):
+                    if self._stop_output_capture:
+                        break
+                    if line:
+                        try:
+                            # Try UTF-8 first with error handling
+                            decoded_line = line.decode('utf-8', errors='replace')
+                            self.logger.debug(f"[Agent {prefix}] {decoded_line.rstrip()}")
+                        except Exception as e:
+                            # If decoding fails, log the error and continue
+                            self.logger.warning(f"Error decoding Agent output: {e}")
+            except Exception as e:
+                self.logger.error(f"Error in output capture thread: {e}")
+            finally:
+                pipe.close()
+
+        # Create and start stdout thread
+        self.stdout_thread = threading.Thread(
+            target=log_output,
+            args=(self.agent_process.stdout, 'stdout'),
+            daemon=True
+        )
+        self.stdout_thread.start()
+
+        # Create and start stderr thread
+        self.stderr_thread = threading.Thread(
+            target=log_output,
+            args=(self.agent_process.stderr, 'stderr'),
+            daemon=True
+        )
+        self.stderr_thread.start()
+
+    def _terminate_agent_process(self):
+        """Terminate the agent process if it exists"""
+        if hasattr(self, 'agent_process') and self.agent_process:
+            try:
+                # Signal output capture threads to stop
+                if hasattr(self, '_stop_output_capture'):
+                    self._stop_output_capture = True
+
+                self.logger.debug("Terminating agent process")
+                self.agent_process.terminate()
+
+                # Wait for process to terminate
+                try:
+                    self.agent_process.wait(timeout=5)
+                except subprocess.TimeoutExpired:
+                    # Force kill if process doesn't terminate
+                    self.logger.warning("Agent process did not terminate, forcing kill")
+                    self.agent_process.kill()
+
+                # Wait for output threads to finish (with timeout)
+                if hasattr(self, 'stdout_thread') and self.stdout_thread.is_alive():
+                    self.stdout_thread.join(timeout=1)
+                if hasattr(self, 'stderr_thread') and self.stderr_thread.is_alive():
+                    self.stderr_thread.join(timeout=1)
+
+                self.agent_process = None
+                self.logger.debug("Agent process terminated")
+            except Exception as e:
+                self.logger.error(f"Error terminating agent process: {e}")
     @Slot(str, object)
     def _handle_task_completed(self, task_id):
         """Task completion handler"""
@@ -477,6 +586,9 @@ class TaskExecutor(QObject):
             self.logger.debug(f"正在停止任务执行器 {self.device_name}")
             self._active = False
             self.state.update_status(DeviceStatus.STOPPING)
+
+            # Terminate the agent process if it exists
+            self._terminate_agent_process()
 
             # Cancel all tasks in the queue
             for task in self._task_queue:

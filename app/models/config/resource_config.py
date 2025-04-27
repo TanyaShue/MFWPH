@@ -52,6 +52,8 @@ class ResourceConfig:
     resource_update_service_id:str
     resource_rep_url:str
     resource_icon: str
+    custom_path:str
+    custom_prams:str
     resource_tasks: List[Task] = field(default_factory=list)
     options: List[Option] = field(default_factory=list)
     source_file: str = ""  # 用于记录加载的文件路径，但不保存到输出 JSON 中
@@ -110,6 +112,8 @@ class ResourceConfig:
             resource_rep_url=data.get('resource_rep_url', ''),
             resource_description=data.get('resource_description', ''),
             resource_icon=data.get('resource_icon', ''),
+            custom_path=data.get('custom_path', ''),
+            custom_prams=data.get('custom_prams', ''),
             resource_tasks=tasks,
             options=options
         )
@@ -124,6 +128,8 @@ class ResourceConfig:
             "resource_rep_url": self.resource_rep_url,
             "resource_description": self.resource_description,
             "resource_icon": self.resource_icon,
+            "custom_path": self.custom_path,
+            "custom_prams": self.custom_prams,
             "resource_tasks": [task.__dict__ for task in self.resource_tasks],
             "options": [option_to_dict(option) for option in self.options],
         }
