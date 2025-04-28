@@ -396,15 +396,14 @@ class TaskExecutor(QObject):
 
             self.logger.debug(f"Starting Agent process with command: {' '.join(cmd)} in directory {resource_dir}")
 
-            # Start the Agent process with pipe redirection
+            # Start the Agent process with pipe redirection - removed bufsize parameter
             import subprocess
             self.agent_process = subprocess.Popen(
                 cmd,
                 cwd=resource_dir,  # Set working directory to resource path
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=False,  # Changed to false to receive bytes instead of text
-                bufsize=1  # Line buffered
+                text=False  # Binary mode for output handling
             )
 
             # Start threads to capture and log output
