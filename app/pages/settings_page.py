@@ -138,7 +138,7 @@ class SettingsPage(QWidget):
         theme_label.setObjectName("infoLabel")
         theme_combo = NoWheelComboBox()
         theme_combo.addItem("明亮主题")
-        theme_combo.addItem("深色主题")
+        theme_combo.addItem("深色主题(实验内容,不够完善)")
 
         if self.current_theme == "dark":
             theme_combo.setCurrentIndex(1)
