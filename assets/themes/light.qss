@@ -478,3 +478,37 @@ QToolTip#navButton {
     border: 1px solid #ffffff;
     background-color: #ffffff; /* 如果背景色与父控件相同，边框显示可能不明显 */
 }
+
+/* 下拉框（QComboBox）圆角样式 */
+QComboBox {
+    border: 1px solid #CCCCCC;        /* 淡灰色边框 */
+    border-radius: 10px;               /* 圆角半径 */
+    background-color: #FFFFFF;        /* 白色背景 */
+    padding: 4px 8px;                 /* 内边距，保证文字不贴边 */
+    min-height: 24px;                 /* 最小高度可根据需要调整 */
+}
+
+QComboBox:focus {
+    border-color: #0078D7;            /* 聚焦时使用主高亮色 */
+}
+
+QComboBox::drop-down {
+    subcontrol-origin: padding;
+    subcontrol-position: top right;
+    border-left: 1px solid #CCCCCC;   /* 与主体框分隔的竖线 */
+    border-radius: 0 5px 5px 0;       /* 右侧圆角 */
+    background-color: #F0F0F0;        /* 箭头区域略浅背景 */
+}
+
+QComboBox::down-arrow {
+    width: 8px;
+    height: 8px;
+}
+
+QComboBox QAbstractItemView {
+    border: 1px solid #CCCCCC;        /* 列表弹出框边框 */
+    border-radius: 5px;               /* 列表圆角 */
+    background-color: #FFFFFF;        /* 列表背景 */
+    selection-background-color: #E0E0E0; /* 选中项背景 */
+    selection-color: #000000;         /* 选中项文字颜色 */
+}
