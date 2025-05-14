@@ -376,7 +376,7 @@ class TaskExecutor(QObject):
 
             # Create socket identifier if not exists
             if not self.agent_identifier:
-                self.agent_identifier = self.agent.create_socket()
+                self.agent_identifier = self.agent.identifier()
                 if not self.agent_identifier:
                     self.logger.error("Failed to create agent socket")
                     return False
