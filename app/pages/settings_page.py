@@ -1,3 +1,6 @@
+import os
+import sys
+
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QFont
 from PySide6.QtWidgets import (
@@ -433,8 +436,6 @@ class SettingsPage(QWidget):
 
     def get_version_info(self):
         """从versioninfo.txt文件中获取版本信息"""
-        import os
-        import sys
 
         # 检查是否是打包后的可执行文件
         if getattr(sys, 'frozen', False):

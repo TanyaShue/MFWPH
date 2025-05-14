@@ -11,6 +11,7 @@ from maa.toolkit import Toolkit
 from app.models.config.app_config import DeviceConfig, AdbDevice, Win32Device, DeviceType
 from app.models.logging.log_manager import log_manager
 from app.widgets.no_wheel_ComboBox import NoWheelComboBox
+import re
 
 logger = log_manager.get_app_logger()
 
@@ -117,6 +118,7 @@ class AddDeviceDialog(QDialog):
         name_layout = QHBoxLayout()
         name_layout.addWidget(QLabel("设备名称:"))
         self.name_edit = QLineEdit()
+        self.name_edit.setToolTip("设备名称不能包含特殊符号和空格，这些字符将被替换为下划线")
         name_layout.addWidget(self.name_edit)
         info_layout.addLayout(name_layout)
 
@@ -242,16 +244,20 @@ class AddDeviceDialog(QDialog):
         self.win32_input_method_combo.addItem("Seize", 1)  # 对应枚举值为1
         self.win32_input_method_combo.addItem("SendMessage", 2)  # 对应枚举值为2
 
-    def _find_combo_index_by_value(self, combo, value):
-        """根据值查找下拉框中的索引位置"""
-        for i in range(combo.count()):
-            if combo.itemData(i) == value:
-                return i
-        # 如果找不到匹配的值，则返回默认值的索引
-        for i in range(combo.count()):
-            if 'Default' in combo.itemText(i):
-                return i
-        return 0  # 如果没有默认值，则返回第一个选项
+    def name_edit_focus_out(self, event):
+        """当设备名称输入框失去焦点时自动处理特殊符号和空格"""
+        current_text = self.name_edit.text()
+        sanitized_text = self._sanitize_device_name(current_text)
+        if current_text != sanitized_text:
+            self.name_edit.setText(sanitized_text)
+        super().focusOutEvent(event) if hasattr(super(), 'focusOutEvent') else None
+
+    def _sanitize_device_name(self, name):
+        """处理设备名称，将特殊符号和空格替换为下划线"""
+        # 使用正则表达式替换特殊字符和空格，只保留字母、数字、中文和下划线(不包括空格)
+        # 注意：\w在Python的正则表达式中包括字母、数字和下划线，但也包括空格，所以需要特别处理
+        sanitized_name = re.sub(r'[^\w\u4e00-\u9fa5]|[\s]', '_', name)
+        return sanitized_name
 
     def controller_type_changed(self, index):
         """当控制器类型变更时的处理函数"""
@@ -355,10 +361,13 @@ class AddDeviceDialog(QDialog):
             # 设置通用字段
             if not self.name_edit.text():
                 if controller_type == DeviceType.ADB:
-                    self.name_edit.setText(f"设备 {device.address}")
+                    # 自动生成的设备名称也需要处理特殊符号
+                    device_name = f"设备 {device.address}"
+                    self.name_edit.setText(self._sanitize_device_name(device_name))
                 elif controller_type == DeviceType.WIN32:
                     window_title = getattr(device, 'title', f"窗口 {device.hwnd}")
-                    self.name_edit.setText(window_title)
+                    # 自动生成的窗口名称也需要处理特殊符号
+                    self.name_edit.setText(self._sanitize_device_name(window_title))
 
             # 根据控制器类型填充相应字段
             if controller_type == DeviceType.ADB:
@@ -380,6 +389,14 @@ class AddDeviceDialog(QDialog):
 
         try:
             import json
+
+            # 获取设备名称并进行处理
+            device_name = self.name_edit.text()
+            sanitized_device_name = self._sanitize_device_name(device_name)
+
+            # 直接更新设备名称文本框，不使用弹窗提示
+            if device_name != sanitized_device_name:
+                self.name_edit.setText(sanitized_device_name)
 
             # 获取当前选择的控制器类型
             controller_type = self.controller_type_combo.currentData()
@@ -404,7 +421,7 @@ class AddDeviceDialog(QDialog):
 
                 # 创建ADB控制器配置
                 controller_config = AdbDevice(
-                    name=self.name_edit.text(),
+                    name=sanitized_device_name,  # 使用处理过的设备名称
                     adb_path=self.adb_path_edit.text(),
                     address=self.adb_address_edit.text(),
                     screencap_methods=screencap_method,
@@ -431,7 +448,7 @@ class AddDeviceDialog(QDialog):
 
             if self.edit_mode and self.device_config:
                 # 更新设备配置
-                self.device_config.device_name = self.name_edit.text()
+                self.device_config.device_name = sanitized_device_name  # 使用处理过的设备名称
                 self.device_config.device_type = controller_type
                 self.device_config.controller_config = controller_config
                 self.device_config.start_command = self.pre_command_edit.text()
@@ -440,7 +457,7 @@ class AddDeviceDialog(QDialog):
             else:
                 # 创建新设备配置
                 new_config = DeviceConfig(
-                    device_name=self.name_edit.text(),
+                    device_name=sanitized_device_name,  # 使用处理过的设备名称
                     device_type=controller_type,
                     controller_config=controller_config,
                     start_command=self.pre_command_edit.text()
