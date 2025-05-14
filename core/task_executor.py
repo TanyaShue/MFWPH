@@ -7,6 +7,7 @@ from datetime import datetime, timedelta
 from enum import Enum
 from typing import Optional, Dict, List
 
+import maa
 from PySide6.QtCore import QObject, Signal, Slot, QThreadPool, QRunnable, QMutexLocker, QRecursiveMutex, Qt
 from maa.agent_client import AgentClient
 from maa.controller import AdbController, Win32Controller
@@ -397,15 +398,18 @@ class TaskExecutor(QObject):
             self.logger.debug(f"Starting Agent process with command: {' '.join(cmd)} in directory {resource_dir}")
 
             # Start the Agent process with pipe redirection - removed bufsize parameter
-            import subprocess
+            # Prepare creation flags based on the platform
+
+            creation_flags = subprocess.CREATE_NO_WINDOW
+
             self.agent_process = subprocess.Popen(
                 cmd,
                 cwd=resource_dir,  # Set working directory to resource path
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                text=False  # Binary mode for output handling
+                text=False,  # Binary mode for output handling
+                creationflags=creation_flags  # Hide console window on Windows
             )
-
             # Start threads to capture and log output
             self._start_output_capture_threads()
 
