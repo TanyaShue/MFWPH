@@ -128,14 +128,12 @@ class GlobalConfig:
         # 使用有序字典来收集和保存任务，保持DeviceConfig中的顺序
         from collections import OrderedDict
         ordered_tasks = OrderedDict()
-
         # 从DeviceConfig中获取指定资源的选定任务
         if self.app_config is not None:
             for device in self.app_config.devices:
                 # 如果提供了device_id，则只处理指定设备
                 if device_id is not None and device.device_name != device_id:
                     continue
-
                 device_has_matching_resource = False
                 for device_resource in device.resources:
                     if device_resource.resource_name == resource_name and device_resource.enable:

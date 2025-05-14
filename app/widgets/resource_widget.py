@@ -133,7 +133,7 @@ class ResourceWidget(QFrame):
             run_btn.setIconSize(QSize(14, 14))  # Smaller icon
             run_btn.setToolTip("运行此资源")
             run_btn.clicked.connect(lambda checked, r_name=resource_name:
-                                    task_manager.run_resource_task(self.device_config, r_name))
+                                    task_manager.run_resource_task(self.device_config.device_name, r_name))
 
             settings_btn = QPushButton()
             settings_btn.setFixedSize(24, 24)  # Smaller size

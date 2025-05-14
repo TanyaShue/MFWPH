@@ -54,73 +54,139 @@ class AddDeviceDialog(QDialog):
 
         self.setObjectName("addDeviceDialog")
         self.setWindowTitle("编辑设备" if edit_mode else "添加设备")
-        self.setMinimumSize(500, 500)
+        self.setMinimumSize(550, 550)  # 稍微增加了窗口大小，提供更好的视觉体验
 
         self.init_ui()
         self.fill_device_data()
 
+        # 连接名称输入框的焦点事件，用于自动处理特殊字符
+        self.name_edit.focusOutEvent = self.name_edit_focus_out
+
     def init_ui(self):
+        # 设置主布局和边距
         main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(15, 15, 15, 15)  # 增加窗口边距
+        main_layout.setSpacing(12)  # 设置垂直间距
 
         # 创建滚动区域
         scroll_area = QScrollArea()
         scroll_area.setObjectName("addDeviceScrollArea")
         scroll_area.setWidgetResizable(True)
         scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+        scroll_area.setVerticalScrollBarPolicy(Qt.ScrollBarAsNeeded)
+        scroll_area.setFrameShape(QScrollArea.NoFrame)  # 移除边框，使界面更简洁
 
         scroll_content = QWidget()
         scroll_content.setObjectName("scroll_content")
         scroll_layout = QVBoxLayout(scroll_content)
+        scroll_layout.setContentsMargins(0, 0, 10, 0)  # 内容区右侧预留滚动条空间
+        scroll_layout.setSpacing(15)  # 组之间间距增加
+
+        # 定义统一的标签宽度和字段宽度
+        LABEL_WIDTH = 100  # 所有标签统一宽度
+        FIELD_WIDTH = 300  # 所有输入字段统一宽度
 
         # 设备类型选择区域
         device_type_group = QGroupBox("设备类型")
         device_type_group.setObjectName("addDeviceGroupBox")
-        device_type_layout = QHBoxLayout()
-        device_type_layout.addWidget(QLabel("控制器类型:"))
+        device_type_layout = QFormLayout(device_type_group)
+        device_type_layout.setContentsMargins(15, 15, 15, 15)  # 组内边距增加
+        device_type_layout.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)  # 标签左对齐
+        device_type_layout.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)  # 保持字段尺寸
+
+        # 创建标签并设置固定宽度
+        type_label = QLabel("控制器类型:")
+        type_label.setFixedWidth(LABEL_WIDTH)
+
+        # 创建控制器类型下拉框并设置固定宽度
         self.controller_type_combo = NoWheelComboBox()
+        self.controller_type_combo.setFixedWidth(FIELD_WIDTH)
         self.controller_type_combo.addItem("ADB设备", DeviceType.ADB)
         self.controller_type_combo.addItem("Win32窗口", DeviceType.WIN32)
         self.controller_type_combo.currentIndexChanged.connect(self.controller_type_changed)
-        device_type_layout.addWidget(self.controller_type_combo)
-        device_type_layout.addStretch()
-        device_type_group.setLayout(device_type_layout)
+
+        device_type_layout.addRow(type_label, self.controller_type_combo)
         scroll_layout.addWidget(device_type_group)
 
         # 设备搜索区域
         self.search_group = QGroupBox("设备搜索")
         self.search_group.setObjectName("addDeviceGroupBox")
-        search_layout = QVBoxLayout()
-        search_btn_layout = QHBoxLayout()
-        self.search_btn = QPushButton("搜索设备")
+        search_layout = QVBoxLayout(self.search_group)
+        search_layout.setContentsMargins(15, 15, 15, 15)
+        search_layout.setSpacing(10)
+
+        # 搜索按钮和状态布局 - 使用FormLayout保持对齐
+        search_btn_form = QFormLayout()
+        search_btn_form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)  # 标签左对齐
+        search_btn_form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)
+
+        # 创建搜索标签并设置固定宽度
+        search_label = QLabel("搜索设备:")
+        search_label.setFixedWidth(LABEL_WIDTH)
+
+        # 创建搜索按钮和状态的容器
+        search_btn_container = QWidget()
+        search_btn_layout = QHBoxLayout(search_btn_container)
+        search_btn_layout.setContentsMargins(0, 0, 0, 0)
+        search_btn_layout.setSpacing(10)
+
+        self.search_btn = QPushButton("搜索")
         self.search_btn.setIcon(QIcon("assets/icons/search.svg"))
+        self.search_btn.setObjectName("secondaryButton")
+        self.search_btn.setFixedWidth(100)  # 设置固定按钮宽度
         self.search_btn.clicked.connect(self.search_devices)
+
         self.search_status = QLabel("未搜索")
+        self.search_status.setStyleSheet("color: #666;")  # 状态文本颜色调整，增加可辨识度
+
         search_btn_layout.addWidget(self.search_btn)
         search_btn_layout.addWidget(self.search_status)
         search_btn_layout.addStretch()
-        device_select_layout = QHBoxLayout()
-        device_select_layout.addWidget(QLabel("发现的设备:"))
+
+        # 添加到表单布局，确保对齐
+        search_btn_form.addRow(search_label, search_btn_container)
+        search_layout.addLayout(search_btn_form)
+
+        # 设备选择布局 - 使用FormLayout确保标签对齐
+        device_select_layout = QFormLayout()
+        device_select_layout.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)  # 标签左对齐
+        device_select_layout.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)  # 保持字段尺寸
+
+        # 创建标签并设置固定宽度
+        device_label = QLabel("发现的设备:")
+        device_label.setFixedWidth(LABEL_WIDTH)
+
         self.device_combo = NoWheelComboBox()
-        self.device_combo.setMinimumWidth(250)
+        self.device_combo.setFixedWidth(FIELD_WIDTH)  # 固定宽度，确保与其他输入字段对齐
         self.device_combo.currentIndexChanged.connect(self.device_selected)
-        device_select_layout.addWidget(self.device_combo)
-        search_layout.addLayout(search_btn_layout)
+
+        device_select_layout.addRow(device_label, self.device_combo)
         search_layout.addLayout(device_select_layout)
-        self.search_group.setLayout(search_layout)
+
         scroll_layout.addWidget(self.search_group)
 
         # 设备基本信息 - 使用堆叠部件以便切换不同类型的控制器配置
         self.info_group = QGroupBox("设备信息")
         self.info_group.setObjectName("addDeviceGroupBox")
-        info_layout = QVBoxLayout()
+        info_layout = QVBoxLayout(self.info_group)
+        info_layout.setContentsMargins(15, 15, 15, 15)
+        info_layout.setSpacing(12)
 
         # 设备名称 - 对所有设备类型都适用
-        name_layout = QHBoxLayout()
-        name_layout.addWidget(QLabel("设备名称:"))
+        name_form = QFormLayout()
+        name_form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)  # 标签左对齐
+        name_form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)  # 保持字段尺寸
+
+        # 创建标签并设置固定宽度
+        name_label = QLabel("设备名称:")
+        name_label.setFixedWidth(LABEL_WIDTH)
+
         self.name_edit = QLineEdit()
+        self.name_edit.setFixedWidth(FIELD_WIDTH)
         self.name_edit.setToolTip("设备名称不能包含特殊符号和空格，这些字符将被替换为下划线")
-        name_layout.addWidget(self.name_edit)
-        info_layout.addLayout(name_layout)
+
+        name_form.addRow(name_label, self.name_edit)
+        info_layout.addLayout(name_form)
 
         # 控制器配置堆叠部件
         self.controller_stack = QStackedWidget()
@@ -128,65 +194,125 @@ class AddDeviceDialog(QDialog):
         # ADB设备配置页
         adb_widget = QWidget()
         adb_form = QFormLayout(adb_widget)
-        self.adb_path_edit = QLineEdit()
-        self.adb_address_edit = QLineEdit()
+        adb_form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)  # 标签左对齐
+        adb_form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)  # 保持字段尺寸
+        adb_form.setSpacing(10)
+        adb_form.setContentsMargins(0, 5, 0, 5)  # 减少边距，因为已经在父容器中设置
 
-        # 替换文本框为下拉框: ADB设备截图方法
+        # 创建ADB路径标签和输入框
+        adb_path_label = QLabel("ADB 路径:")
+        adb_path_label.setFixedWidth(LABEL_WIDTH)
+        self.adb_path_edit = QLineEdit()
+        self.adb_path_edit.setFixedWidth(FIELD_WIDTH)
+
+        # 创建ADB地址标签和输入框
+        adb_addr_label = QLabel("ADB 地址:")
+        adb_addr_label.setFixedWidth(LABEL_WIDTH)
+        self.adb_address_edit = QLineEdit()
+        self.adb_address_edit.setFixedWidth(FIELD_WIDTH)
+
+        # 创建截图方法标签和下拉框
+        screenshot_label = QLabel("截图方法:")
+        screenshot_label.setFixedWidth(LABEL_WIDTH)
         self.screenshot_method_combo = NoWheelComboBox()
+        self.screenshot_method_combo.setFixedWidth(FIELD_WIDTH)
         self._populate_adb_screencap_combo()
 
-        # 替换文本框为下拉框: ADB设备输入方法
+        # 创建输入方法标签和下拉框
+        input_label = QLabel("输入方法:")
+        input_label.setFixedWidth(LABEL_WIDTH)
         self.input_method_combo = NoWheelComboBox()
+        self.input_method_combo.setFixedWidth(FIELD_WIDTH)
         self._populate_adb_input_combo()
 
-        self.config_edit = QLineEdit()
+        # 创建Agent路径标签和输入框
+        agent_label = QLabel("Agent 路径:")
+        agent_label.setFixedWidth(LABEL_WIDTH)
         self.agent_path_edit = QLineEdit()
+        self.agent_path_edit.setFixedWidth(FIELD_WIDTH)
 
-        adb_form.addRow("ADB 路径:", self.adb_path_edit)
-        adb_form.addRow("ADB 地址:", self.adb_address_edit)
-        adb_form.addRow("截图方法:", self.screenshot_method_combo)
-        adb_form.addRow("输入方法:", self.input_method_combo)
-        adb_form.addRow("Agent 路径:", self.agent_path_edit)
-        adb_form.addRow("配置:", self.config_edit)
+        # 创建配置标签和输入框
+        config_label = QLabel("配置:")
+        config_label.setFixedWidth(LABEL_WIDTH)
+        self.config_edit = QLineEdit()
+        self.config_edit.setFixedWidth(FIELD_WIDTH)
+
+        # 添加表单行，使用显式标签确保对齐
+        adb_form.addRow(adb_path_label, self.adb_path_edit)
+        adb_form.addRow(adb_addr_label, self.adb_address_edit)
+        adb_form.addRow(screenshot_label, self.screenshot_method_combo)
+        adb_form.addRow(input_label, self.input_method_combo)
+        adb_form.addRow(agent_label, self.agent_path_edit)
+        adb_form.addRow(config_label, self.config_edit)
         self.controller_stack.addWidget(adb_widget)
 
         # Win32设备配置页
         win32_widget = QWidget()
         win32_form = QFormLayout(win32_widget)
-        self.hwnd_edit = QLineEdit()
+        win32_form.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)  # 标签左对齐
+        win32_form.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)  # 保持字段尺寸
+        win32_form.setSpacing(10)
+        win32_form.setContentsMargins(0, 5, 0, 5)  # 减少边距
 
-        # 替换文本框为下拉框: Win32设备截图方法
+        # 创建窗口句柄标签和输入框
+        hwnd_label = QLabel("窗口句柄 (hWnd):")
+        hwnd_label.setFixedWidth(LABEL_WIDTH)
+        self.hwnd_edit = QLineEdit()
+        self.hwnd_edit.setFixedWidth(FIELD_WIDTH)
+
+        # 创建Win32截图方法标签和下拉框
+        win32_screenshot_label = QLabel("截图方法:")
+        win32_screenshot_label.setFixedWidth(LABEL_WIDTH)
         self.win32_screenshot_method_combo = NoWheelComboBox()
+        self.win32_screenshot_method_combo.setFixedWidth(FIELD_WIDTH)
         self._populate_win32_screencap_combo()
 
-        # 替换文本框为下拉框: Win32设备输入方法
+        # 创建Win32输入方法标签和下拉框
+        win32_input_label = QLabel("输入方法:")
+        win32_input_label.setFixedWidth(LABEL_WIDTH)
         self.win32_input_method_combo = NoWheelComboBox()
+        self.win32_input_method_combo.setFixedWidth(FIELD_WIDTH)
         self._populate_win32_input_combo()
 
-        win32_form.addRow("窗口句柄 (hWnd):", self.hwnd_edit)
-        win32_form.addRow("截图方法:", self.win32_screenshot_method_combo)
-        win32_form.addRow("输入方法:", self.win32_input_method_combo)
+        # 添加表单行，使用显式标签确保对齐
+        win32_form.addRow(hwnd_label, self.hwnd_edit)
+        win32_form.addRow(win32_screenshot_label, self.win32_screenshot_method_combo)
+        win32_form.addRow(win32_input_label, self.win32_input_method_combo)
         self.controller_stack.addWidget(win32_widget)
 
         info_layout.addWidget(self.controller_stack)
-        self.info_group.setLayout(info_layout)
         scroll_layout.addWidget(self.info_group)
 
         # 高级设置
         advanced_group = QGroupBox("高级设置")
         advanced_group.setObjectName("addDeviceGroupBox")
-        advanced_layout = QVBoxLayout()
+        advanced_layout = QVBoxLayout(advanced_group)
+        advanced_layout.setContentsMargins(15, 15, 15, 15)
+        advanced_layout.setSpacing(10)
 
         # 命令设置
         command_layout = QFormLayout()
+        command_layout.setLabelAlignment(Qt.AlignLeft | Qt.AlignVCenter)  # 标签左对齐
+        command_layout.setFieldGrowthPolicy(QFormLayout.FieldsStayAtSizeHint)  # 保持字段尺寸
+        command_layout.setSpacing(10)
+
+        # 创建启动前命令标签和输入框
+        pre_command_label = QLabel("启动前命令:")
+        pre_command_label.setFixedWidth(LABEL_WIDTH)
         self.pre_command_edit = QLineEdit()
+        self.pre_command_edit.setFixedWidth(FIELD_WIDTH)
+
+        # 创建启动后命令标签和输入框
+        post_command_label = QLabel("启动后命令:")
+        post_command_label.setFixedWidth(LABEL_WIDTH)
         self.post_command_edit = QLineEdit()
-        command_layout.addRow("启动前命令:", self.pre_command_edit)
-        command_layout.addRow("启动后命令:", self.post_command_edit)
-        advanced_layout.addSpacing(10)
+        self.post_command_edit.setFixedWidth(FIELD_WIDTH)
+
+        # 添加表单行，使用显式标签确保对齐
+        command_layout.addRow(pre_command_label, self.pre_command_edit)
+        command_layout.addRow(post_command_label, self.post_command_edit)
         advanced_layout.addLayout(command_layout)
 
-        advanced_group.setLayout(advanced_layout)
         scroll_layout.addWidget(advanced_group)
         scroll_layout.addStretch()
         scroll_area.setWidget(scroll_content)
@@ -194,18 +320,31 @@ class AddDeviceDialog(QDialog):
 
         # 底部按钮
         buttons_layout = QHBoxLayout()
+        buttons_layout.setContentsMargins(0, 10, 0, 0)  # 顶部增加间距
+        buttons_layout.setSpacing(10)  # 按钮间距
+
         # 如果是编辑模式，添加删除按钮
         if self.edit_mode:
             delete_btn = QPushButton("删除")
+            delete_btn.setIcon(QIcon("assets/icons/delete.svg"))  # 假设有删除图标
+            delete_btn.setMinimumWidth(100)  # 设置统一按钮宽度
             delete_btn.clicked.connect(self.delete_device)
             buttons_layout.addWidget(delete_btn)
+
         buttons_layout.addStretch()
-        save_btn = QPushButton("保存")
+
         cancel_btn = QPushButton("取消")
-        save_btn.clicked.connect(self.save_device)
+        cancel_btn.setMinimumWidth(100)
         cancel_btn.clicked.connect(self.reject)
-        buttons_layout.addWidget(save_btn)
+
+        save_btn = QPushButton("保存")
+        save_btn.setMinimumWidth(100)
+        save_btn.setObjectName("primaryButton")  # 假设有主按钮样式
+        save_btn.clicked.connect(self.save_device)
+
         buttons_layout.addWidget(cancel_btn)
+        buttons_layout.addWidget(save_btn)
+
         main_layout.addLayout(buttons_layout)
 
     def _populate_adb_screencap_combo(self):
@@ -250,12 +389,12 @@ class AddDeviceDialog(QDialog):
         sanitized_text = self._sanitize_device_name(current_text)
         if current_text != sanitized_text:
             self.name_edit.setText(sanitized_text)
-        super().focusOutEvent(event) if hasattr(super(), 'focusOutEvent') else None
+        super(QLineEdit, self.name_edit).focusOutEvent(event) if hasattr(super(QLineEdit, self.name_edit),
+                                                                         'focusOutEvent') else None
 
     def _sanitize_device_name(self, name):
         """处理设备名称，将特殊符号和空格替换为下划线"""
         # 使用正则表达式替换特殊字符和空格，只保留字母、数字、中文和下划线(不包括空格)
-        # 注意：\w在Python的正则表达式中包括字母、数字和下划线，但也包括空格，所以需要特别处理
         sanitized_name = re.sub(r'[^\w\u4e00-\u9fa5]|[\s]', '_', name)
         return sanitized_name
 
@@ -320,6 +459,7 @@ class AddDeviceDialog(QDialog):
             self.pre_command_edit.setText(self.device_config.start_command)
         if hasattr(self.device_config, 'stop_command'):
             self.post_command_edit.setText(self.device_config.stop_command)
+
     def _find_combo_index_by_value(self, combo, value):
         """根据值查找下拉框中的索引位置"""
         for i in range(combo.count()):
@@ -330,7 +470,9 @@ class AddDeviceDialog(QDialog):
             if 'Default' in combo.itemText(i):
                 return i
         return 0  # 如果没有默认值，则返回第一个选项
+
     def search_devices(self):
+        """搜索设备"""
         self.search_btn.setEnabled(False)
         self.search_status.setText("正在搜索...")
         self.search_thread = DeviceSearchThread(self.controller_type_combo.currentData())
@@ -340,6 +482,7 @@ class AddDeviceDialog(QDialog):
         self.search_thread.start()
 
     def on_devices_found(self, devices):
+        """处理找到的设备"""
         self.device_combo.clear()
         self.found_devices = devices
         if devices:
@@ -352,15 +495,18 @@ class AddDeviceDialog(QDialog):
             self.search_status.setText("未找到设备")
 
     def on_search_error(self, error_msg):
+        """处理搜索错误"""
         self.device_combo.clear()
         self.device_combo.addItem("搜索出错")
         self.search_status.setText(f"搜索出错: {error_msg}")
 
     def on_search_completed(self):
+        """搜索完成后恢复按钮状态"""
         self.search_btn.setEnabled(True)
         self.search_thread = None
 
     def device_selected(self, index):
+        """处理设备选择"""
         # 获取当前选择的控制器类型
         controller_type = self.controller_type_combo.currentData()
 

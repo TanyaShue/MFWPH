@@ -308,27 +308,29 @@ class TaskerManager(QObject):
             self.logger.warning(f"设备 {device_config.device_name} 没有找到可用的运行时配置")
 
     @asyncSlot(DeviceConfig, str)
-    async def run_resource_task(self, device_config: DeviceConfig, resource_name: str) -> None:
+    async def run_resource_task(self, device_config_name: str, resource_name: str) -> None:
         """
         提交指定资源的任务。
         """
-        self.logger.info(f"为设备 {device_config.device_name} 提交资源 {resource_name} 的任务")
-        runtime_config = global_config.get_runtime_configs_for_resource(resource_name, device_config.device_name)
+        self.logger.info(f"为设备 {device_config_name} 提交资源 {resource_name} 的任务")
+        runtime_config = global_config.get_runtime_configs_for_resource(resource_name, device_config_name)
 
         if not runtime_config:
-            self.logger.error(f"找不到设备 {device_config.device_name} 资源 {resource_name} 的运行时配置")
+            self.logger.error(f"找不到设备 {device_config_name} 资源 {resource_name} 的运行时配置")
             return
 
         # 这里启动一个任务，将异步方法调度到事件循环中
-        self.logger.info(f"找到设备 {device_config.device_name} 资源 {resource_name} 的运行时配置")
+        self.logger.info(f"找到设备 {device_config_name} 资源 {resource_name} 的运行时配置")
+        device_config=global_config.get_device_config(device_config_name)
+        print(f"device_config: {device_config}")
         # 再次确保执行器创建成功
         success = await self.create_executor(device_config)
         if not success:
-            self.logger.error(f"为设备 {device_config.device_name} 创建执行器失败，无法运行资源 {resource_name}")
+            self.logger.error(f"为设备 {device_config_name} 创建执行器失败，无法运行资源 {resource_name}")
             return
 
         # 获取执行器，更新状态为等待执行
-        executor = self._get_executor(device_config.device_name)
+        executor = self._get_executor(device_config_name)
         if executor and (executor.state.status == DeviceStatus.IDLE or executor.state.status == DeviceStatus.SCHEDULED):
             executor.state.update_status(DeviceStatus.WAITING)
 

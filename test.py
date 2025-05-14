@@ -10,7 +10,7 @@ from app.pages import HomePage
 def main():
     app = QApplication(sys.argv)
 
-    devices_config_path = "assets/config/app_config.json"
+    devices_config_path = "assets/debug/app_config.json"
     # 如果文件不存在，先创建该文件并写入 "{}"
     if not os.path.exists(devices_config_path):
         # 确保父目录存在
