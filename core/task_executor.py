@@ -353,6 +353,11 @@ class TaskExecutor(QObject):
 
     def create_agent(self) -> bool:
         """Create and start MAA Agent process"""
+        # Try with system Python first, then fallback to current executable if needed
+        return self._try_create_agent_with_system_python() or self._try_create_agent_with_current_python()
+
+    def _try_create_agent_with_system_python(self) -> bool:
+        """Try to create and start MAA Agent with system Python"""
         try:
             # Ensure we have a running task
             if not self._running_task:
@@ -385,7 +390,7 @@ class TaskExecutor(QObject):
             # Resource path is the directory containing the resource files
             resource_dir = self._running_task.data.resource_path
 
-            # Build the command with parameters
+            # Build the command with parameters (using system Python)
             cmd = ["python", custom_path]
 
             # Add custom parameters if provided
@@ -395,11 +400,10 @@ class TaskExecutor(QObject):
             # Add socket ID parameter
             cmd.extend(["-id", self.agent_identifier])
 
-            self.logger.debug(f"Starting Agent process with command: {' '.join(cmd)} in directory {resource_dir}")
+            self.logger.debug(f"Starting Agent process with system Python: {' '.join(cmd)} in directory {resource_dir}")
 
             # Start the Agent process with pipe redirection - removed bufsize parameter
             # Prepare creation flags based on the platform
-
             creation_flags = subprocess.CREATE_NO_WINDOW
 
             self.agent_process = subprocess.Popen(
@@ -419,23 +423,114 @@ class TaskExecutor(QObject):
             # Check if process started correctly
             if self.agent_process.poll() is not None:
                 # Process terminated prematurely
-                error_msg = f"Agent process failed to start with exit code: {self.agent_process.returncode}"
+                error_msg = f"Agent process failed to start with system Python with exit code: {self.agent_process.returncode}"
                 self.logger.error(error_msg)
                 return False
 
             # Now connect to the agent
             connection_result = self.agent.connect()
             if not connection_result:
-                self.logger.error("Failed to connect to agent")
+                self.logger.error("Failed to connect to agent with system Python")
                 self._terminate_agent_process()
                 return False
 
-            self.logger.debug("Agent connected successfully")
-
+            self.logger.debug("Agent connected successfully with system Python")
             return self.agent._api_properties_initialized
 
         except Exception as e:
-            error_msg = f"Agent initialization error: {str(e)}"
+            error_msg = f"Agent initialization with system Python error: {str(e)}"
+            self.logger.error(error_msg)
+            self._terminate_agent_process()
+            return False
+
+    def _try_create_agent_with_current_python(self) -> bool:
+        """Try to create and start MAA Agent using the current Python interpreter (from exe)"""
+        try:
+            import sys
+
+            self.logger.info("Attempting to create agent with current Python interpreter (fallback method)")
+
+            # Ensure we have a running task
+            if not self._running_task:
+                self.logger.error("Cannot create agent: No running task")
+                return False
+
+            # Get resource configuration
+            from app.models.config.global_config import global_config
+            resource_config = global_config.get_resource_config(self._running_task.data.resource_name)
+
+            if not resource_config:
+                self.logger.error(f"Resource config not found for {self._running_task.data.resource_name}")
+                return False
+
+            custom_path = resource_config.custom_path
+            custom_params = resource_config.custom_prams  # Note: This field has a typo in the original code
+
+            # Create agent client if not exists
+            if not self.agent:
+                self.agent = AgentClient()
+                self.agent.bind(self.resource)
+
+            # Create socket identifier if not exists
+            if not self.agent_identifier:
+                self.agent_identifier = self.agent.identifier()
+                if not self.agent_identifier:
+                    self.logger.error("Failed to create agent socket")
+                    return False
+
+            # Resource path is the directory containing the resource files
+            resource_dir = self._running_task.data.resource_path
+
+            # Build the command with parameters (using current Python interpreter)
+            cmd = [sys.executable, custom_path]
+
+            # Add custom parameters if provided
+            if custom_params:
+                cmd.extend(custom_params.split())
+
+            # Add socket ID parameter
+            cmd.extend(["-id", self.agent_identifier])
+
+            self.logger.debug(
+                f"Starting Agent process with current Python interpreter: {' '.join(cmd)} in directory {resource_dir}")
+
+            # Start the Agent process with pipe redirection
+            creation_flags = subprocess.CREATE_NO_WINDOW
+
+            self.agent_process = subprocess.Popen(
+                cmd,
+                cwd=resource_dir,  # Set working directory to resource path
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                text=False,  # Binary mode for output handling
+                creationflags=creation_flags  # Hide console window on Windows
+            )
+
+            # Start threads to capture and log output
+            self._start_output_capture_threads()
+
+            # Wait briefly for the process to start
+            time.sleep(1)
+
+            # Check if process started correctly
+            if self.agent_process.poll() is not None:
+                # Process terminated prematurely
+                error_msg = f"Agent process failed to start with current Python interpreter with exit code: {self.agent_process.returncode}"
+                self.logger.error(error_msg)
+                return False
+
+            # Now connect to the agent
+            connection_result = self.agent.connect()
+            if not connection_result:
+                self.logger.error("Failed to connect to agent with current Python interpreter")
+                self._terminate_agent_process()
+                return False
+
+            self.logger.debug("Agent connected successfully with current Python interpreter")
+            return self.agent._api_properties_initialized
+
+        except Exception as e:
+            error_msg = f"Agent initialization with current Python interpreter error: {str(e)}"
             self.logger.error(error_msg)
             self._terminate_agent_process()
             return False
