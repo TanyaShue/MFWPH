@@ -320,7 +320,16 @@ class AddDeviceDialog(QDialog):
             self.pre_command_edit.setText(self.device_config.start_command)
         if hasattr(self.device_config, 'stop_command'):
             self.post_command_edit.setText(self.device_config.stop_command)
-
+    def _find_combo_index_by_value(self, combo, value):
+        """根据值查找下拉框中的索引位置"""
+        for i in range(combo.count()):
+            if combo.itemData(i) == value:
+                return i
+        # 如果找不到匹配的值，则返回默认值的索引
+        for i in range(combo.count()):
+            if 'Default' in combo.itemText(i):
+                return i
+        return 0  # 如果没有默认值，则返回第一个选项
     def search_devices(self):
         self.search_btn.setEnabled(False)
         self.search_status.setText("正在搜索...")
