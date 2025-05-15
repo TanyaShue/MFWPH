@@ -53,7 +53,7 @@ class ResourceConfig:
     resource_rep_url:str
     resource_icon: str
     custom_path:str
-    custom_prams =None
+    custom_prams:str
     custom_dir:str
     resource_tasks: List[Task] = field(default_factory=list)
     options: List[Option] = field(default_factory=list)

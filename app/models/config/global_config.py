@@ -169,7 +169,7 @@ class GlobalConfig:
         # 通过 source_file（包含文件名）计算出资源加载目录
         resource_path = Path(resource_config.source_file).parent if resource_config.source_file else Path()
 
-        if resource_config.custom_dir:
+        if resource_config.custom_dir != '':
             source_path = Path(resource_config.source_file).resolve()
             custom_dir_path = (source_path.parent / resource_config.custom_dir).resolve()
         else:
