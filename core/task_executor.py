@@ -341,8 +341,10 @@ class TaskExecutor(QObject):
             self._tasker.bind(resource=self.resource, controller=self._controller)
 
             if self.create_agent():
-                print(f"agent 初始化成功")
-
+                self.logger.info(f"agent 初始化成功")
+            elif self.register_custom(task.data):
+                self.logger.info(f"使用内置自定义方法")
+                 
             # Create and start the task runner
             runner = TaskRunner(task, self)
             runner.setAutoDelete(True)
@@ -353,11 +355,71 @@ class TaskExecutor(QObject):
             self.state.current_task = task
             self.logger.debug(f"设备 {self.device_name} 开始执行任务 {task.id}")
     
-    def register_custom(self):
-        """<UNK>"""
+    def register_custom(self,data) -> bool:
+        """注册自定义文件夹"""
+        try:
+            if data.resource_custom_path:
+                self.load_custom_objects(data.resource_custom_path)
+                return True
+            return False
+        except Exception as e:
+            self.logger.error(e)
+            return False
+    def load_custom_objects(self, custom_dir):
+        if not os.path.exists(custom_dir):
+            self.logger.info(f"自定义文件夹 {custom_dir} 不存在")
+            return
 
-        pass
-    
+        if not os.listdir(custom_dir):
+            self.logger.info(f"自定义文件夹 {custom_dir} 为空")
+            return
+
+        # Traverse module type folders
+        for module_type, base_class in [("custom_actions", CustomAction),
+                                        ("custom_recognition", CustomRecognition)]:
+            module_type_dir = os.path.join(custom_dir, module_type)
+
+            if not os.path.exists(module_type_dir):
+                self.logger.info(f"{module_type} 文件夹不存在于 {custom_dir}")
+                continue
+
+            self.logger.info(f"开始加载 {module_type} 模块")
+
+            # Traverse all Python files in the directory
+            for file in os.listdir(module_type_dir):
+                file_path = os.path.join(module_type_dir, file)
+
+                # Ensure it's a file and a Python file
+                if os.path.isfile(file_path) and file.endswith('.py'):
+                    try:
+                        # Use the file name as the module name (without .py extension)
+                        module_name = os.path.splitext(file)[0]
+                        spec = importlib.util.spec_from_file_location(module_name, file_path)
+                        module = importlib.util.module_from_spec(spec)
+                        spec.loader.exec_module(module)
+
+                        # Iterate through all attributes in the module
+                        for attr_name in dir(module):
+                            attr = getattr(module, attr_name)
+
+                            # Check if it's a class and a subclass of the base class (but not the base class itself)
+                            if isinstance(attr, type) and issubclass(attr, base_class) and attr != base_class:
+
+                                # Use the class name as the registration name
+                                class_name = attr.__name__
+                                instance = attr()
+
+                                if module_type == "custom_actions":
+                                    if self.resource.register_custom_action(class_name, instance):
+                                        self.logger.info(f"加载自定义动作 {class_name} 成功")
+
+                                elif module_type == "custom_recognition":
+                                    if self.resource.register_custom_recognition(class_name, instance):
+                                        self.logger.info(f"加载自定义识别器 {class_name} 成功")
+
+                    except Exception as e:
+                        self.logger.error(f"加载自定义内容时发生错误 {file_path}: {e}")
+
     def create_agent(self) -> bool:
         """Create and start MAA Agent process"""
         # Try with system Python first, then fallback to current executable if needed

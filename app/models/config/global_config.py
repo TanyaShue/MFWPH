@@ -1,3 +1,4 @@
+import os
 from dataclasses import dataclass, field
 from pathlib import Path
 from typing import List, Dict, Optional, Any
@@ -19,6 +20,7 @@ class RunTimeConfigs:
     task_list: List[RunTimeConfig] = field(default_factory=list)
     resource_path: str = field(default_factory=Path)  # 当前资源加载时所在的目录路径
     resource_name: str = field(default_factory=str)
+    resource_custom_path: str = field(default_factory=Path)
 
 
 class GlobalConfig:
@@ -166,7 +168,13 @@ class GlobalConfig:
         logger.debug(f"RuntimeConfigs: {runtime_configs}")
         # 通过 source_file（包含文件名）计算出资源加载目录
         resource_path = Path(resource_config.source_file).parent if resource_config.source_file else Path()
-        return RunTimeConfigs(task_list=runtime_configs, resource_path=resource_path,resource_name=resource_name)
+
+        if resource_config.custom_dir:
+            source_path = Path(resource_config.source_file).resolve()
+            custom_dir_path = (source_path.parent / resource_config.custom_dir).resolve()
+        else:
+            custom_dir_path = None
+        return RunTimeConfigs(task_list=runtime_configs, resource_path=resource_path,resource_name=resource_name,resource_custom_path=custom_dir_path)
 
     def get_runtime_config_for_task(self, resource_name: str, task_name: str, device_id: str = None) -> Optional[
         RunTimeConfig]:

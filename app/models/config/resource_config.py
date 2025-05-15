@@ -53,7 +53,8 @@ class ResourceConfig:
     resource_rep_url:str
     resource_icon: str
     custom_path:str
-    custom_prams:str
+    custom_prams =None
+    custom_dir:str
     resource_tasks: List[Task] = field(default_factory=list)
     options: List[Option] = field(default_factory=list)
     source_file: str = ""  # 用于记录加载的文件路径，但不保存到输出 JSON 中
@@ -114,6 +115,7 @@ class ResourceConfig:
             resource_icon=data.get('resource_icon', ''),
             custom_path=data.get('custom_path', ''),
             custom_prams=data.get('custom_prams', ''),
+            custom_dir=data.get('custom_dir', ''),
             resource_tasks=tasks,
             options=options
         )
@@ -130,6 +132,7 @@ class ResourceConfig:
             "resource_icon": self.resource_icon,
             "custom_path": self.custom_path,
             "custom_prams": self.custom_prams,
+            "custom_dir": self.custom_dir,
             "resource_tasks": [task.__dict__ for task in self.resource_tasks],
             "options": [option_to_dict(option) for option in self.options],
         }
