@@ -2,6 +2,8 @@
 import importlib.util
 import os
 import subprocess
+import sys
+import threading
 import time
 from datetime import datetime, timedelta
 from enum import Enum
@@ -33,7 +35,6 @@ class TaskStatus(Enum):
 
 class Task:
     """统一任务表示"""
-
     def __init__(self, task_data: RunTimeConfigs):
         self.id = f"task_{id(self)}"  # 唯一任务ID
         self.data = task_data  # 任务数据
@@ -178,6 +179,7 @@ class DeviceState(QObject):
             tasks_info.append(task_info)
         return tasks_info
 
+
 class TaskExecutor(QObject):
     # 核心信号定义
     task_started = Signal(str)  # 任务开始信号
@@ -191,6 +193,7 @@ class TaskExecutor(QObject):
     process_next_task_signal = Signal()  # 触发下一个任务处理的信号
     scheduled_task_added = Signal(str, dict)  # 定时任务添加信号
     scheduled_task_removed = Signal(str)  # 定时任务移除信号
+    stop_running_task_signal = Signal()  # 停止正在运行的任务信号
 
     def __init__(self, device_config: DeviceConfig, parent=None):
         super().__init__(parent)
@@ -337,7 +340,6 @@ class TaskExecutor(QObject):
 
             self._tasker.bind(resource=self.resource, controller=self._controller)
 
-
             if self.create_agent():
                 print(f"agent 初始化成功")
 
@@ -350,7 +352,12 @@ class TaskExecutor(QObject):
             self.state.update_status(DeviceStatus.RUNNING)
             self.state.current_task = task
             self.logger.debug(f"设备 {self.device_name} 开始执行任务 {task.id}")
+    
+    def register_custom(self):
+        """<UNK>"""
 
+        pass
+    
     def create_agent(self) -> bool:
         """Create and start MAA Agent process"""
         # Try with system Python first, then fallback to current executable if needed
@@ -365,7 +372,6 @@ class TaskExecutor(QObject):
                 return False
 
             # Get resource configuration
-            from app.models.config.global_config import global_config
             resource_config = global_config.get_resource_config(self._running_task.data.resource_name)
 
             if not resource_config:
@@ -446,8 +452,6 @@ class TaskExecutor(QObject):
     def _try_create_agent_with_current_python(self) -> bool:
         """Try to create and start MAA Agent using the current Python interpreter (from exe)"""
         try:
-            import sys
-
             self.logger.info("Attempting to create agent with current Python interpreter (fallback method)")
 
             # Ensure we have a running task
@@ -456,7 +460,6 @@ class TaskExecutor(QObject):
                 return False
 
             # Get resource configuration
-            from app.models.config.global_config import global_config
             resource_config = global_config.get_resource_config(self._running_task.data.resource_name)
 
             if not resource_config:
@@ -537,8 +540,6 @@ class TaskExecutor(QObject):
 
     def _start_output_capture_threads(self):
         """Start threads to capture and log subprocess output"""
-        import threading
-
         # Flag to signal threads to stop
         self._stop_output_capture = False
 
@@ -606,6 +607,7 @@ class TaskExecutor(QObject):
                 self.logger.debug("Agent process terminated")
             except Exception as e:
                 self.logger.error(f"Error terminating agent process: {e}")
+
     @Slot(str, object)
     def _handle_task_completed(self, task_id):
         """Task completion handler"""
@@ -677,30 +679,37 @@ class TaskExecutor(QObject):
 
     def stop(self):
         """Stop task executor"""
-        with QMutexLocker(self._mutex):
-            if not self._active:
-                return
+        if not self._active:
+            return
 
-            self.logger.debug(f"正在停止任务执行器 {self.device_name}")
-            self._active = False
-            self.state.update_status(DeviceStatus.STOPPING)
+        self.logger.debug(f"正在停止任务执行器 {self.device_name}")
+        self._active = False
+        self.state.update_status(DeviceStatus.STOPPING)
 
-            # Terminate the agent process if it exists
-            self._terminate_agent_process()
+        # 如果有正在运行的任务，通知它停止
+        if self._running_task and self._running_task.runner:
+            self.logger.debug(f"正在停止运行中的任务 {self._running_task.id}")
 
-            # Cancel all tasks in the queue
-            for task in self._task_queue:
-                task.status = TaskStatus.CANCELED
-                self.task_canceled.emit(task.id)
-                self.logger.debug(f"任务 {task.id} 已取消")
-            self._task_queue.clear()
+            # 发送停止信号给 TaskRunner
+            self.stop_running_task_signal.connect(self._running_task.runner.stop_task, Qt.DirectConnection)
+            self.stop_running_task_signal.emit()
 
-            # 清除定时任务信息
-            self.state.scheduled_tasks.clear()
-            self.state.next_scheduled_run = None
+        # Terminate the agent process if it exists
+        self._terminate_agent_process()
 
-            self.logger.debug(f"任务执行器 {self.device_name} 已停止")
-            self.executor_stopped.emit()
+        # Cancel all tasks in the queue
+        for task in self._task_queue:
+            task.status = TaskStatus.CANCELED
+            self.task_canceled.emit(task.id)
+            self.logger.debug(f"任务 {task.id} 已取消")
+        self._task_queue.clear()
+
+        # 清除定时任务信息
+        self.state.scheduled_tasks.clear()
+        self.state.next_scheduled_run = None
+
+        self.logger.debug(f"任务执行器 {self.device_name} 已停止")
+        self.executor_stopped.emit()
 
     def get_state(self):
         """Get the current executor state"""
@@ -725,6 +734,7 @@ class TaskRunner(QRunnable):
         self.task.runner = self
         self.device_name = executor.device_name
         self.logger = executor.logger
+        self._current_task_handle = None  # 保存当前任务句柄
 
     def run(self):
         """Run the task"""
@@ -770,8 +780,15 @@ class TaskRunner(QRunnable):
         self.logger.info(f"执行任务列表，共 {len(task_data.task_list)} 个子任务")
 
         for i, task in enumerate(task_data.task_list):
+            # 检查是否已取消
+            if self.canceled:
+                self.logger.info(f"任务已取消，停止执行")
+                break
+
             self.logger.info(f"执行子任务 {i + 1}/{len(task_data.task_list)}: {task.task_entry}")
-            self.tasker.post_task(task.task_entry, task.pipeline_override).wait()
+            # 保存任务句柄，以便后续可以停止
+            self._current_task_handle = self.tasker.post_task(task.task_entry, task.pipeline_override)
+            self._current_task_handle.wait()
             self.logger.info(f"子任务 {i + 1} 完成")
 
         # Send progress update signal
@@ -781,3 +798,16 @@ class TaskRunner(QRunnable):
         time.sleep(0.5)
 
         return {"result": "success", "data": task_data}
+
+    @Slot()
+    def stop_task(self):
+        """停止当前正在执行的任务"""
+        self.canceled = True
+        self.logger.info(f"收到停止任务信号，任务 {self.task.id} 正在停止")
+
+        # 如果有当前任务句柄，使用MAA框架的停止方法
+        if self._current_task_handle:
+            try:
+                self.tasker.post_stop()
+            except Exception as e:
+                self.logger.error(f"停止任务时出错: {e}")

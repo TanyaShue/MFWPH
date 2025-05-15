@@ -104,8 +104,6 @@ class BasicInfoWidget(QFrame):
             schedule_layout.addStretch()
             content_layout.addLayout(schedule_layout)
 
-            # 立即更新状态显示
-            self.update_status_display()
         else:
             error_label = QLabel("未找到设备配置信息")
             error_label.setObjectName("errorText")
@@ -120,17 +118,18 @@ class BasicInfoWidget(QFrame):
         button_layout.setSpacing(10)
         button_layout.addStretch()
 
-        run_btn = QPushButton("运行任务")
-        run_btn.setObjectName("primaryButton")
-        run_btn.setIcon(QIcon("assets/icons/play.svg"))
-        run_btn.clicked.connect(self.run_device_tasks)
+        # Run/Stop button
+        self.run_btn = QPushButton("运行任务")
+        self.run_btn.setObjectName("primaryButton")
+        self.run_btn.setIcon(QIcon("assets/icons/play.svg"))
+        self.run_btn.clicked.connect(self.handle_run_stop_action)
 
         settings_btn = QPushButton("设备设置")
         settings_btn.setObjectName("secondaryButton")
         settings_btn.setIcon(QIcon("assets/icons/settings.svg"))
         settings_btn.clicked.connect(self.open_settings_dialog)
 
-        button_layout.addWidget(run_btn)
+        button_layout.addWidget(self.run_btn)
         button_layout.addWidget(settings_btn)
         button_layout.addStretch()
         layout.addLayout(button_layout)
@@ -140,6 +139,7 @@ class BasicInfoWidget(QFrame):
         # 连接TaskerManager的全局信号
         task_manager.device_added.connect(self.on_device_changed)
         task_manager.device_removed.connect(self.on_device_changed)
+        task_manager.device_status_changed.connect(self.update_status_display)
         task_manager.scheduled_task_modified.connect(self.update_status_display)
 
         # 如果设备执行器已存在，连接其信号
@@ -208,9 +208,14 @@ class BasicInfoWidget(QFrame):
         self.schedule_value.setText(schedule_text)
 
         # 更新任务运行状态
-        if task_manager.is_device_active(self.device_name):
+        is_active = task_manager.is_device_active(self.device_name)
+        is_running = False
+
+        if is_active:
             device_state = task_manager.get_executor_state(self.device_name)
             if device_state:
+                status = device_state.status.value
+
                 # 获取状态文本
                 status_map = {
                     "idle": "空闲",
@@ -222,7 +227,11 @@ class BasicInfoWidget(QFrame):
                     "disconnected": "未连接",
                     "connecting": "连接中"
                 }
-                status_text = status_map.get(device_state.status.value, device_state.status.value)
+                status_text = status_map.get(status, status)
+
+                # 检查是否在运行状态
+                if status == "running":
+                    is_running = True
 
                 # 添加当前任务信息
                 if device_state.current_task:
@@ -232,10 +241,42 @@ class BasicInfoWidget(QFrame):
                 queue_length = task_manager.get_device_queue_info().get(self.device_name, 0)
                 if queue_length > 0:
                     status_text += f"，队列中还有 {queue_length} 个任务"
+            else:
+                status_text = "未知状态"
         else:
             status_text = "未运行"
 
         self.status_value.setText(status_text)
+
+        # 更新按钮状态
+        if is_running:
+            self.run_btn.setText("停止任务")
+            self.run_btn.setIcon(QIcon("assets/icons/stop.svg"))
+        else:
+            self.run_btn.setText("运行任务")
+            self.run_btn.setIcon(QIcon("assets/icons/play.svg"))
+
+    @asyncSlot()
+    async def handle_run_stop_action(self):
+        """Handle run/stop button click based on current state"""
+        if not self.device_config:
+            return
+
+        # Check if device is running
+        is_active = task_manager.is_device_active(self.device_name)
+        is_running = False
+
+        if is_active:
+            device_state = task_manager.get_executor_state(self.device_name)
+            if device_state and device_state.status.value == "running":
+                is_running = True
+
+        if is_running:
+            # Stop the device
+            await self.stop_device_tasks()
+        else:
+            # Run the device
+            await self.run_device_tasks()
 
     @asyncSlot()
     async def run_device_tasks(self):
@@ -243,15 +284,49 @@ class BasicInfoWidget(QFrame):
         try:
             if self.device_config:
                 self.logger.info("开始执行设备任务")
+
+                # Disable button during execution
+                self.run_btn.setEnabled(False)
+                self.run_btn.setText("运行中...")
+
                 success = await task_manager.run_device_all_resource_task(self.device_config)
+
                 if success:
                     self.logger.info("设备任务执行完成")
+
+                self.run_btn.setEnabled(True)
                 self.update_status_display()
 
                 if task_manager.is_device_active(self.device_name):
                     self.connect_executor_signals()
         except Exception as e:
             self.logger.error(f"运行任务时出错: {str(e)}")
+            self.run_btn.setEnabled(True)
+            self.update_status_display()
+
+    @asyncSlot()
+    async def stop_device_tasks(self):
+        """Stop all tasks for this device"""
+        try:
+            if self.device_config:
+                self.logger.info("停止设备任务")
+
+                # Disable button during stopping
+                self.run_btn.setEnabled(False)
+                self.run_btn.setText("停止中...")
+
+                # Stop the device executor
+                success = await task_manager.stop_executor(self.device_name)
+
+                if success:
+                    self.logger.info("设备任务已停止")
+
+                self.run_btn.setEnabled(True)
+                self.update_status_display()
+        except Exception as e:
+            self.logger.error(f"停止任务时出错: {str(e)}")
+            self.run_btn.setEnabled(True)
+            self.update_status_display()
 
     def open_settings_dialog(self):
         """Open device settings dialog"""

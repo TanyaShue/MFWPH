@@ -204,6 +204,27 @@ QLabel#instructionText {
     background-color: #a8c7fa; /* 浅蓝色 */
     color: #f8f9fa;
 }
+#stopButton {
+    background-color: #d93025; /* 明亮的红色 */
+    color: white;
+    border: none;
+}
+
+/* 红色按钮悬停状态 */
+#stopButton:hover {
+    background-color: #e25b4f; /* 略微更亮的红色 */
+}
+
+/* 红色按钮按压状态 */
+#stopButton:active {
+    background-color: #b1271b; /* 按压时略深一点 */
+}
+
+/* 红色按钮禁用状态 */
+#stopButton:disabled {
+    background-color: #f4b5b0; /* 浅红色 */
+    color: #f8f9fa;
+}
 
 /* 白色按钮样式 */
 #secondaryButton, #cancelButton {

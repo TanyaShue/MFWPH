@@ -125,26 +125,25 @@ class TaskerManager(QObject):
         """
         异步停止特定设备的执行器。
         """
-        with QMutexLocker(self._mutex):
-            executor = self._get_executor(device_name)
-            if not executor:
-                self.logger.error(f"停止执行器失败: 设备 {device_name} 的执行器未找到")
-                return False
+        executor = self._get_executor(device_name)
+        if not executor:
+            self.logger.error(f"停止执行器失败: 设备 {device_name} 的执行器未找到")
+            return False
 
-            try:
-                self.logger.info(f"正在停止设备 {device_name} 的执行器")
+        try:
+            self.logger.info(f"正在停止设备 {device_name} 的执行器")
 
-                # 先取消所有定时任务
-                self.cancel_device_scheduled_tasks(device_name)
+            # 先取消所有定时任务
+            self.cancel_device_scheduled_tasks(device_name)
 
-                executor.stop()
-                del self._executors[device_name]
-                self.device_removed.emit(device_name)
-                self.logger.info(f"设备 {device_name} 的执行器已成功停止并移除")
-                return True
-            except Exception as e:
-                self.logger.error(f"停止设备 {device_name} 的执行器失败: {e}", exc_info=True)
-                return False
+            executor.stop()
+            del self._executors[device_name]
+            self.device_removed.emit(device_name)
+            self.logger.info(f"设备 {device_name} 的执行器已成功停止并移除")
+            return True
+        except Exception as e:
+            self.logger.error(f"停止设备 {device_name} 的执行器失败: {e}", exc_info=True)
+            return False
 
     def get_executor_state(self, device_name: str) -> Optional[DeviceState]:
         """

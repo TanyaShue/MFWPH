@@ -30,6 +30,7 @@ class DeviceCard(QFrame):
         task_manager.device_added.connect(self.on_device_changed)
         task_manager.device_removed.connect(self.on_device_changed)
         task_manager.scheduled_task_modified.connect(self.update_status)
+        task_manager.device_status_changed.connect(self.update_status)
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -122,11 +123,11 @@ class DeviceCard(QFrame):
         # Action buttons
         button_layout = QHBoxLayout()
 
-        # Run button
+        # Run/Stop button
         self.run_btn = QPushButton("运行")
         self.run_btn.setObjectName("primaryButton")
         self.run_btn.setIcon(QIcon("assets/icons/play.svg"))
-        self.run_btn.clicked.connect(self.run_device_tasks)
+        self.run_btn.clicked.connect(self.handle_run_stop_action)
 
         # Settings button
         settings_btn = QPushButton("设备详情")
@@ -146,6 +147,7 @@ class DeviceCard(QFrame):
 
         # Update status
         is_active = task_manager.is_device_active(self.device_config.device_name)
+        is_running = False
 
         if is_active:
             device_state = task_manager.get_executor_state(self.device_config.device_name)
@@ -158,6 +160,7 @@ class DeviceCard(QFrame):
                 elif status == "running":
                     self.status_value.setText("运行中")
                     self.status_value.setStyleSheet("color: #2196F3;")  # Blue
+                    is_running = True
                 elif status == "error":
                     self.status_value.setText("错误")
                     self.status_value.setStyleSheet("color: #F44336;")  # Red
@@ -167,6 +170,16 @@ class DeviceCard(QFrame):
         else:
             self.status_value.setText("未运行")
             self.status_value.setStyleSheet("color: #9E9E9E;")  # Gray
+
+        # Update run/stop button based on status
+        if is_running:
+            self.run_btn.setText("停止")
+            self.run_btn.setObjectName("stopButton")
+            self.run_btn.setIcon(QIcon("assets/icons/stop.svg"))
+        else:
+            self.run_btn.setText("运行")
+            self.run_btn.setObjectName("primaryButton")
+            self.run_btn.setIcon(QIcon("assets/icons/play.svg"))
 
         # Update schedule information
         has_enabled_schedules = False
@@ -208,13 +221,35 @@ class DeviceCard(QFrame):
             self.update_status()
 
     @asyncSlot()
+    async def handle_run_stop_action(self):
+        """Handle run/stop button click based on current state"""
+        if not self.device_config:
+            return
+
+        # Check if device is running
+        is_active = task_manager.is_device_active(self.device_config.device_name)
+        is_running = False
+
+        if is_active:
+            device_state = task_manager.get_executor_state(self.device_config.device_name)
+            if device_state and device_state.status.value == "running":
+                is_running = True
+
+        if is_running:
+            # Stop the device
+            await self.stop_device_tasks()
+        else:
+            # Run the device
+            await self.run_device_tasks()
+
+    @asyncSlot()
     async def run_device_tasks(self):
         """Run all tasks for this device"""
         if self.device_config:
             device_name = self.device_config.device_name
             try:
                 # Log the start of task execution
-                self.logger.info( f"开始执行设备任务")
+                self.logger.info(f"开始执行设备任务")
 
                 # Execute tasks
                 self.run_btn.setEnabled(False)
@@ -224,18 +259,49 @@ class DeviceCard(QFrame):
 
                 # Log completion
                 if success:
-                    self.logger.info( f"设备任务执行完成")
+                    self.logger.info(f"设备任务执行完成")
 
                 self.run_btn.setEnabled(True)
-                self.run_btn.setText("运行")
 
-                # Update status
+                # Update status (this will also update the button text)
                 self.update_status()
             except Exception as e:
                 # Log error
-                self.logger.error( f"运行任务时出错: {str(e)}")
+                self.logger.error(f"运行任务时出错: {str(e)}")
                 self.run_btn.setEnabled(True)
-                self.run_btn.setText("运行")
+                # Update status (this will also update the button text)
+                self.update_status()
+
+    @asyncSlot()
+    async def stop_device_tasks(self):
+        """Stop all tasks for this device"""
+        if self.device_config:
+            device_name = self.device_config.device_name
+            try:
+                # Log the stop action
+                self.logger.info(f"停止设备任务")
+
+                # Stop tasks
+                self.run_btn.setEnabled(False)
+                self.run_btn.setText("停止中...")
+
+                # Stop the device executor
+                success = await task_manager.stop_executor(device_name)
+
+                # Log completion
+                if success:
+                    self.logger.info(f"设备任务已停止")
+
+                self.run_btn.setEnabled(True)
+
+                # Update status (this will also update the button text)
+                self.update_status()
+            except Exception as e:
+                # Log error
+                self.logger.error(f"停止任务时出错: {str(e)}")
+                self.run_btn.setEnabled(True)
+                # Update status (this will also update the button text)
+                self.update_status()
 
     def open_device_page(self):
         """Open detailed device page"""
