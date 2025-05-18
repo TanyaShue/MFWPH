@@ -12,6 +12,7 @@ from app.models.config.app_config import DeviceConfig, AdbDevice, Win32Device, D
 from app.models.logging.log_manager import log_manager
 from app.widgets.no_wheel_ComboBox import NoWheelComboBox
 import re
+import ast
 
 logger = log_manager.get_app_logger()
 
@@ -32,6 +33,7 @@ class DeviceSearchThread(QThread):
                 devices = Toolkit.find_adb_devices()
             elif self.search_type == DeviceType.WIN32:
                 devices = Toolkit.find_desktop_windows()
+                logger.debug(f"hr: {devices}")
                 devices = [device for device in devices if device.window_name != '']
             logger.debug(f"搜索发现:{len(devices)}个设备:{devices}")
             self.devices_found.emit(devices)
@@ -558,15 +560,21 @@ class AddDeviceDialog(QDialog):
 
             # 根据控制器类型获取和验证输入
             if controller_type == DeviceType.ADB:
-                if not self.adb_address_edit.text():
+                adb_address = self.adb_address_edit.text()
+                if not adb_address:
                     QMessageBox.warning(self, "输入错误", "ADB地址不能为空")
+                    return
+
+                if self.adb_address_exists(adb_address):
+                    QMessageBox.warning(self, "设备已存在", "该设备已被加入，请勿重复添加")
                     return
 
                 # 尝试解析配置文本为字典，如果解析失败则使用空字典
                 try:
                     config_text = self.config_edit.text()
-                    config_dict = json.loads(config_text) if config_text.strip() != "" else {}
-                except json.JSONDecodeError as e:
+                    config_dict = ast.literal_eval(config_text)
+                    # config_dict = json.loads(config_text) if config_text.strip() != "" else {}
+                except Exception as e:
                     print("配置数据格式错误，无法解析为字典。", e)
                     config_dict = {}
 
@@ -578,7 +586,7 @@ class AddDeviceDialog(QDialog):
                 controller_config = AdbDevice(
                     name=sanitized_device_name,  # 使用处理过的设备名称
                     adb_path=self.adb_path_edit.text(),
-                    address=self.adb_address_edit.text(),
+                    address=adb_address,
                     screencap_methods=screencap_method,
                     input_methods=input_method,
                     agent_path=self.agent_path_edit.text() or None,
@@ -625,6 +633,10 @@ class AddDeviceDialog(QDialog):
         except Exception as e:
             print(f"保存设备时出错: {e}")
             QMessageBox.critical(self, "错误", f"保存设备时出错: {e}")
+
+    def adb_address_exists(self, new_address):
+        devices = self.global_config.app_config.devices
+        return any(new_address == dev.controller_config.address for dev in devices)
 
     def delete_device(self):
         """删除该设备"""
