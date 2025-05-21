@@ -491,14 +491,14 @@ class TaskExecutor(QObject):
             # Check if process started correctly
             if self.agent_process.poll() is not None:
                 # Process terminated prematurely
-                error_msg = f"Agent process failed to start with system Python with exit code: {self.agent_process.returncode}"
-                self.logger.error(error_msg)
+                w = f"Agent process failed to start with system Python with exit code: {self.agent_process.returncode}"
+                self.logger.warning(w)
                 return False
 
             # Now connect to the agent
             connection_result = self.agent.connect()
             if not connection_result:
-                self.logger.error("Failed to connect to agent with system Python")
+                self.logger.warning("Failed to connect to agent with system Python")
                 self._terminate_agent_process()
                 return False
 
