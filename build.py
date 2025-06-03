@@ -16,8 +16,10 @@ import semver
 
 # 常量定义
 APP_NAME = "MFWPH"
+UPDATER_NAME = "update"
 DEFAULT_VERSION = "0.0.1"
-DEFAULT_EXCLUSIONS = ['.git', '.github', '.gitignore', '.gitmodules', '.nicegui', '.idea', 'config', 'debug','logs','pending_updates','resource']
+DEFAULT_EXCLUSIONS = ['.git', '.github', '.gitignore', '.gitmodules', '.nicegui', '.idea', 'config', 'debug', 'logs',
+                      'pending_updates', 'resource']
 
 # 配置日志
 logging.basicConfig(
@@ -118,7 +120,7 @@ def create_file_with_content(content: str, suffix: str = '.txt') -> str:
         return f.name
 
 
-def create_version_info_files(version: str, build_time: str, ctx: BuildContext):
+def create_version_info_files(version: str, build_time: str, ctx: BuildContext, app_name: str = APP_NAME):
     """创建版本相关的信息文件"""
     # 创建版本信息文件 - 使用固定名称 versioninfo.txt
     version_content = f"version={version}\nbuild_time={build_time}\n"
@@ -149,12 +151,12 @@ VSVersionInfo(
         StringTable(
           u'040904B0',
           [StringStruct(u'CompanyName', u''),
-           StringStruct(u'FileDescription', u'{APP_NAME}'),
+           StringStruct(u'FileDescription', u'{app_name}'),
            StringStruct(u'FileVersion', u'{version}'),
-           StringStruct(u'InternalName', u'{APP_NAME}'),
+           StringStruct(u'InternalName', u'{app_name}'),
            StringStruct(u'LegalCopyright', u''),
-           StringStruct(u'OriginalFilename', u'{APP_NAME}.exe'),
-           StringStruct(u'ProductName', u'{APP_NAME}'),
+           StringStruct(u'OriginalFilename', u'{app_name}.exe'),
+           StringStruct(u'ProductName', u'{app_name}'),
            StringStruct(u'ProductVersion', u'{version}')])
       ]),
     VarFileInfo([VarStruct(u'Translation', [1033, 1200])])
@@ -168,7 +170,7 @@ VSVersionInfo(
 
 
 def run_pyinstaller(version_file: str, win_version_file: str):
-    """运行PyInstaller"""
+    """运行PyInstaller构建主程序"""
     maa_bin_path = find_site_package_path('maa/bin')
     maa_agent_path = find_site_package_path('MaaAgentBinary')
 
@@ -185,9 +187,26 @@ def run_pyinstaller(version_file: str, win_version_file: str):
         f'--version-file={win_version_file}'
     ]
 
-    logger.info("正在运行PyInstaller...")
+    logger.info("正在运行PyInstaller构建主程序...")
     PyInstaller.__main__.run(args)
-    logger.info("PyInstaller构建成功")
+    logger.info("PyInstaller构建主程序成功")
+
+
+def run_pyinstaller_updater(win_version_file: str):
+    """运行PyInstaller构建更新程序"""
+    args = [
+        'update.py',
+        '--onefile',
+        '--console',  # 更新程序使用控制台模式
+        f'--name={UPDATER_NAME}',
+        '--clean',
+        '--uac-admin',
+        f'--version-file={win_version_file}'
+    ]
+
+    logger.info("正在运行PyInstaller构建更新程序...")
+    PyInstaller.__main__.run(args)
+    logger.info("PyInstaller构建更新程序成功")
 
 
 def copy_assets(dist_dir: str):
@@ -204,14 +223,32 @@ def copy_assets(dist_dir: str):
         logger.warning(f"assets文件夹不存在: {src}")
 
 
-def create_zip_package(dist_dir: str, zip_path: str, exclusions: List[str]):
+def create_zip_package(dist_dir: str, zip_path: str, exclusions: List[str], include_updater: bool = True):
     """创建ZIP包"""
     with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        # 添加主程序
+        main_exe = os.path.join(dist_dir, f"{APP_NAME}.exe")
+        if os.path.exists(main_exe):
+            zipf.write(main_exe, f"{APP_NAME}.exe")
+            logger.info(f"添加主程序到ZIP: {APP_NAME}.exe")
+
+        # 添加更新程序
+        if include_updater:
+            updater_exe = os.path.join(dist_dir, f"{UPDATER_NAME}.exe")
+            if os.path.exists(updater_exe):
+                zipf.write(updater_exe, f"{UPDATER_NAME}.exe")
+                logger.info(f"添加更新程序到ZIP: {UPDATER_NAME}.exe")
+
+        # 添加其他文件和文件夹
         for root, dirs, files in os.walk(dist_dir):
             # 排除指定目录
             dirs[:] = [d for d in dirs if d not in exclusions]
 
             for file in files:
+                # 跳过exe文件（已经单独处理）
+                if file.endswith('.exe'):
+                    continue
+
                 if file == os.path.basename(zip_path) or file in exclusions:
                     continue
 
@@ -229,6 +266,7 @@ def main():
     parser.add_argument('--exclude', '-e', nargs='+', default=DEFAULT_EXCLUSIONS, help='Files to exclude')
     parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose logging')
     parser.add_argument('--bump', choices=['major', 'minor', 'patch'], help='Increment version')
+    parser.add_argument('--skip-updater', action='store_true', help='Skip building updater')
     args = parser.parse_args()
 
     if args.verbose:
@@ -252,15 +290,21 @@ def main():
         zip_path = os.path.join(dist_dir, f"{zip_name}.zip")
 
         with BuildContext(args.keep_files) as ctx:
-            # 创建版本信息文件
-            version_file, win_version_file = create_version_info_files(version, build_time, ctx)
+            # 创建主程序版本信息文件
+            version_file, win_version_file = create_version_info_files(version, build_time, ctx, APP_NAME)
 
-            # 运行PyInstaller
+            # 运行PyInstaller构建主程序
             run_pyinstaller(version_file, win_version_file)
+
+            # 构建更新程序
+            if not args.skip_updater:
+                # 创建更新程序版本信息文件
+                _, updater_win_version_file = create_version_info_files(version, build_time, ctx, UPDATER_NAME)
+                run_pyinstaller_updater(updater_win_version_file)
 
             # 复制assets并创建ZIP包
             copy_assets(dist_dir)
-            create_zip_package(dist_dir, zip_path, args.exclude)
+            create_zip_package(dist_dir, zip_path, args.exclude, include_updater=not args.skip_updater)
 
         # 设置GitHub Actions输出
         print(f"::set-output name=zip_file::{zip_path}")

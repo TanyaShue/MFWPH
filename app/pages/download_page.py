@@ -1,10 +1,11 @@
 """
 资源下载页面，提供资源下载和更新检查功能。
+支持独立更新程序的重启机制。
 """
 from pathlib import Path
 
 import requests
-from PySide6.QtCore import QTimer
+from PySide6.QtCore import QTimer, QCoreApplication
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QFrame, QTableWidget,
                                QTableWidgetItem, QPushButton, QHeaderView, QHBoxLayout,
@@ -21,6 +22,7 @@ class DownloadPage(QWidget):
         super().__init__(parent)
         self.setObjectName("downloadPage")
         self.threads = []  # 存储线程引用
+        self.pending_updates = []  # 存储待处理的更新
 
         # 创建更新安装器
         self.installer = UpdateInstaller()
@@ -82,6 +84,7 @@ class DownloadPage(QWidget):
         # 连接安装器信号
         self.installer.install_completed.connect(self._handle_install_completed)
         self.installer.install_failed.connect(self._handle_install_failed)
+        self.installer.restart_required.connect(self._handle_restart_required)
 
     def _create_section_label(self, text):
         """创建具有一致样式的章节标签"""
@@ -253,17 +256,34 @@ class DownloadPage(QWidget):
         self.load_resources()
         self._restore_add_button()
 
-        # 显示锁定文件消息（如果有）
-        if locked_files and len(locked_files) > 0:
-            self._show_locked_files_message(resource_name, locked_files)
-        else:
-            # 显示成功消息
-            QMessageBox.information(self, "操作完成", f"资源 {resource_name} 已成功添加/更新")
+        # 显示成功消息
+        QMessageBox.information(self, "操作完成", f"资源 {resource_name} 已成功添加/更新到版本 {version}")
 
     def _handle_install_failed(self, resource_name, error_message):
         """处理安装失败信号"""
         self._restore_add_button()
         self._show_error(resource_name, error_message)
+
+    def _handle_restart_required(self):
+        """处理需要重启的情况"""
+        # 显示确认对话框
+        reply = QMessageBox.question(
+            self,
+            "需要重启应用",
+            "此更新需要重启应用程序才能完成。\n\n应用程序将自动重启，您的更新将在重启后应用。\n\n是否立即重启？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+
+        if reply == QMessageBox.Yes:
+            # 退出应用程序（独立更新程序会自动重启）
+            QTimer.singleShot(100, QCoreApplication.quit)
+        else:
+            QMessageBox.information(
+                self,
+                "更新延迟",
+                "更新已下载但尚未应用。请手动重启应用程序以完成更新。"
+            )
 
     def _handle_resource_download_failed(self, resource_name, error):
         """处理资源下载失败"""
@@ -292,29 +312,6 @@ class DownloadPage(QWidget):
     def _show_error(self, resource_name, error):
         """显示通用错误消息"""
         QMessageBox.warning(self, "操作失败", f"资源 {resource_name} 操作失败: {error}")
-
-    def _show_locked_files_message(self, resource_name, locked_files):
-        """显示有关锁定文件的消息"""
-        if not locked_files or len(locked_files) == 0:
-            return
-
-        # 创建带有锁定文件列表的消息
-        message = f"资源 {resource_name} 的以下文件因被占用无法立即更新，将在应用重启后完成更新：\n\n"
-
-        # 限制显示的文件数量以避免过长的消息
-        max_files_to_show = 10
-        files_to_show = locked_files[:max_files_to_show]
-
-        for file in files_to_show:
-            message += f"• {file}\n"
-
-        if len(locked_files) > max_files_to_show:
-            message += f"\n...以及其他 {len(locked_files) - max_files_to_show} 个文件"
-
-        message += "\n\n这些文件将在应用下次启动时自动更新。"
-
-        # 显示消息框
-        QMessageBox.information(self, "文件更新待处理", message)
 
     def load_resources(self):
         """从全局配置加载资源到表格"""
@@ -510,7 +507,7 @@ class DownloadPage(QWidget):
         resources = global_config.get_all_resource_configs()
 
         # 过滤具有更新源的资源
-        resources_with_update = [r for r in resources if r.resource_update_service_id]
+        resources_with_update = [r for r in resources if r.resource_update_service_id or r.resource_rep_url]
 
         if not resources_with_update:
             self.update_all_button.setText("一键检查所有更新")
@@ -548,7 +545,20 @@ class DownloadPage(QWidget):
 
     def _update_all_resources(self):
         """更新所有具有可用更新的资源"""
+        # 收集所有需要更新的资源
+        self.pending_updates = []
+
         for row in range(self.resources_table.rowCount()):
             update_btn = self.resources_table.cellWidget(row, 4)
             if update_btn and isinstance(update_btn, QPushButton) and "更新" in update_btn.text():
-                update_btn.click()
+                self.pending_updates.append(update_btn)
+
+        # 依次触发更新
+        if self.pending_updates:
+            self.pending_updates[0].click()
+
+    def _check_and_update_next(self):
+        """检查并更新下一个待处理的资源"""
+        if self.pending_updates and len(self.pending_updates) > 1:
+            self.pending_updates.pop(0)
+            self.pending_updates[0].click()

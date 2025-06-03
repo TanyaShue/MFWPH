@@ -89,7 +89,18 @@ jobs:
             Write-Host "::error::Build failed - zip file was not created"
             exit 1
           }
-          Write-Host "Zip file successfully created"
+          
+          # Check if update.exe was created
+          $updaterFile = Get-ChildItem -Path "./dist" -Filter "update.exe" | Select-Object -First 1
+          if ($updaterFile) {
+            Write-Host "Update.exe found: $($updaterFile.FullName)"
+            echo "UPDATER_CREATED=true" >> $env:GITHUB_ENV
+          } else {
+            Write-Host "Update.exe not found, build might have skipped updater"
+            echo "UPDATER_CREATED=false" >> $env:GITHUB_ENV
+          }
+          
+          Write-Host "Build completed successfully"
 
       - name: Create GitHub Release
         id: create_release
