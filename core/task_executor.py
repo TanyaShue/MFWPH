@@ -507,7 +507,7 @@ class TaskExecutor(QObject):
 
         except Exception as e:
             error_msg = f"Agent initialization with system Python error: {str(e)}"
-            self.logger.error(error_msg)
+            self.logger.warning(error_msg)
             self._terminate_agent_process()
             return False
 
