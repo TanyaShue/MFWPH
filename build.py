@@ -16,7 +16,7 @@ import semver
 
 # 常量定义
 APP_NAME = "MFWPH"
-UPDATER_NAME = "update"
+UPDATER_NAME = "updater"
 DEFAULT_VERSION = "0.0.1"
 DEFAULT_EXCLUSIONS = ['.git', '.github', '.gitignore', '.gitmodules', '.nicegui', '.idea', 'config', 'debug', 'logs',
                       'pending_updates', 'resource']

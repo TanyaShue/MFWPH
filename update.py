@@ -47,6 +47,9 @@ class StandaloneUpdater:
         self.backup_dir = self.target_dir / "update_backup"
         self.temp_dir = self.target_dir / "update_temp"
 
+        # 需要跳过的文件列表
+        self.skip_files = ['update.exe', 'updater.exe']
+
     def wait_for_process_exit(self, pid, timeout=30):
         """等待指定进程退出"""
         if not pid:
@@ -82,7 +85,10 @@ class StandaloneUpdater:
                 backup_path.parent.mkdir(parents=True, exist_ok=True)
 
                 try:
-                    shutil.copy2(source, backup_path)
+                    if source.is_file():
+                        shutil.copy2(source, backup_path)
+                    else:
+                        shutil.copytree(source, backup_path)
                     logger.debug(f"备份文件: {file_path}")
                 except Exception as e:
                     logger.error(f"备份文件失败 {file_path}: {e}")
@@ -206,48 +212,75 @@ class StandaloneUpdater:
             return False
 
     def apply_full_update(self):
-        """应用完整更新"""
+        """应用完整更新 - 直接覆盖根目录文件"""
         logger.info("应用完整更新...")
 
-        # 查找资源目录
-        resource_dirs = []
-        for item in self.temp_dir.iterdir():
-            if item.is_dir() and (item / "resource_config.json").exists():
-                resource_dirs.append(item)
+        try:
+            # 收集所有需要更新的文件
+            files_to_update = []
+            files_to_backup = []
 
-        if not resource_dirs:
-            logger.error("未找到有效的资源目录")
+            # 遍历临时目录中的所有文件
+            for root, dirs, files in os.walk(self.temp_dir):
+                for file in files:
+                    source_path = Path(root) / file
+                    relative_path = source_path.relative_to(self.temp_dir)
+
+                    # 跳过更新程序自身
+                    if file.lower() in self.skip_files:
+                        logger.info(f"跳过文件: {file}")
+                        continue
+
+                    files_to_update.append(relative_path)
+
+                    # 如果目标文件存在，加入备份列表
+                    target_path = self.target_dir / relative_path
+                    if target_path.exists():
+                        files_to_backup.append(relative_path)
+
+            # 创建备份
+            if files_to_backup:
+                self.create_backup(files_to_backup)
+
+            # 执行更新
+            success = True
+            for relative_path in files_to_update:
+                source = self.temp_dir / relative_path
+                target = self.target_dir / relative_path
+
+                try:
+                    # 确保目标目录存在
+                    target.parent.mkdir(parents=True, exist_ok=True)
+
+                    # 如果目标文件存在，先删除
+                    if target.exists():
+                        if target.is_file():
+                            target.unlink()
+                        else:
+                            shutil.rmtree(target)
+
+                    # 复制新文件
+                    if source.is_file():
+                        shutil.copy2(source, target)
+                    else:
+                        shutil.copytree(source, target)
+
+                    logger.info(f"更新文件: {relative_path}")
+                except Exception as e:
+                    logger.error(f"更新文件失败 {relative_path}: {e}")
+                    success = False
+
+            # 如果更新失败，恢复备份
+            if not success:
+                logger.error("部分文件更新失败")
+                return False
+
+            logger.info(f"成功更新 {len(files_to_update)} 个文件")
+            return True
+
+        except Exception as e:
+            logger.error(f"应用完整更新失败: {e}")
             return False
-
-        success = True
-
-        for resource_dir in resource_dirs:
-            # 读取资源配置以获取资源名称
-            try:
-                with open(resource_dir / "resource_config.json", 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                    resource_name = config.get("resource_name", resource_dir.name)
-
-                # 确定目标资源目录
-                target_resource_dir = self.target_dir / "assets" / "resource" / resource_name.lower().replace(' ', '_')
-
-                # 备份现有资源
-                if target_resource_dir.exists():
-                    backup_path = self.backup_dir / "assets" / "resource" / resource_name.lower().replace(' ', '_')
-                    backup_path.parent.mkdir(parents=True, exist_ok=True)
-                    shutil.copytree(target_resource_dir, backup_path)
-                    shutil.rmtree(target_resource_dir)
-
-                # 复制新资源
-                target_resource_dir.parent.mkdir(parents=True, exist_ok=True)
-                shutil.copytree(resource_dir, target_resource_dir)
-                logger.info(f"更新资源: {resource_name}")
-
-            except Exception as e:
-                logger.error(f"更新资源失败: {e}")
-                success = False
-
-        return success
 
     def cleanup(self):
         """清理临时文件"""
