@@ -1,17 +1,108 @@
 import os
 import sys
+import tempfile
+from pathlib import Path
 
-from PySide6.QtCore import QTimer
-from PySide6.QtGui import QFont
+import requests
+from PySide6.QtCore import QTimer, QThread, Signal, QCoreApplication, Qt
+from PySide6.QtGui import QFont, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QScrollArea, QFrame, QCheckBox,
-    QLineEdit, QPushButton, QSizePolicy, QStackedLayout
+    QLineEdit, QPushButton, QSizePolicy, QStackedLayout, QMessageBox,
+    QProgressDialog
 )
 
 from app.models.config.global_config import global_config
+from app.models.logging.log_manager import log_manager
 from app.utils.theme_manager import theme_manager
+from app.utils.update_check import UpdateDownloader
+from app.utils.update_install import UpdateInstaller
 from app.widgets.no_wheel_ComboBox import NoWheelComboBox
+
+logger = log_manager.get_app_logger()
+
+
+class AppUpdateChecker(QThread):
+    """主程序更新检查线程"""
+    update_found = Signal(str, str, str)  # latest_version, current_version, download_url
+    update_not_found = Signal()
+    check_failed = Signal(str)  # error_message
+
+    def __init__(self):
+        super().__init__()
+        self.github_api_url = "https://api.github.com"
+        self.repo_owner = "TanyaShue"
+        self.repo_name = "MFWPH"
+        self.asset_name = "MFWPH_RELEASE.zip"
+
+    def run(self):
+        try:
+            # 获取最新发布版本
+            api_url = f"{self.github_api_url}/repos/{self.repo_owner}/{self.repo_name}/releases/latest"
+            headers = {"Accept": "application/vnd.github.v3+json"}
+
+            response = requests.get(api_url, headers=headers, timeout=10)
+
+            if response.status_code == 403:
+                self.check_failed.emit("请求被拒绝：可能超出了 GitHub API 请求速率限制")
+                return
+
+            if response.status_code != 200:
+                self.check_failed.emit(f"GitHub API 返回错误 ({response.status_code})")
+                return
+
+            release_info = response.json()
+            latest_version = release_info.get('tag_name', '').lstrip('v')
+
+            # 获取当前版本
+            current_version = self.get_current_version()
+
+            # 查找特定的安装包
+            download_url = None
+            for asset in release_info.get('assets', []):
+                if asset.get('name') == self.asset_name:
+                    download_url = asset.get('browser_download_url')
+                    break
+
+            if not download_url:
+                self.check_failed.emit(f"未找到安装包文件: {self.asset_name}")
+                return
+
+            # 比较版本
+            if latest_version and latest_version != current_version:
+                self.update_found.emit(latest_version, current_version, download_url)
+            else:
+                self.update_not_found.emit()
+
+        except requests.exceptions.Timeout:
+            self.check_failed.emit("连接超时，请检查网络连接")
+        except requests.exceptions.ConnectionError:
+            self.check_failed.emit("网络连接失败")
+        except Exception as e:
+            self.check_failed.emit(f"检查更新时出错: {str(e)}")
+
+    def get_current_version(self):
+        """获取当前版本"""
+        # 检查是否是打包后的可执行文件
+        if getattr(sys, 'frozen', False):
+            base_path = sys._MEIPASS if hasattr(sys, '_MEIPASS') else os.path.dirname(sys.executable)
+        else:
+            base_path = os.getcwd()
+
+        version_file_path = os.path.join(base_path, 'versioninfo.txt')
+
+        try:
+            if os.path.exists(version_file_path):
+                with open(version_file_path, 'r', encoding='utf-8') as f:
+                    for line in f:
+                        line = line.strip()
+                        if line.startswith('version='):
+                            return line.split('=', 1)[1]
+        except Exception as e:
+            logger.error(f"读取版本信息失败: {e}")
+
+        return "未知版本"
 
 
 class SettingsPage(QWidget):
@@ -22,6 +113,9 @@ class SettingsPage(QWidget):
         self.setObjectName("settingsPage")
         self.theme_manager = theme_manager
         self.current_theme = "light"
+        self.update_checker_thread = None
+        self.download_thread = None
+        self.installer = UpdateInstaller()
         self.initUI()
 
     def initUI(self):
@@ -39,9 +133,6 @@ class SettingsPage(QWidget):
 
         # Add categories
         categories = [
-            # "切换配置", "定时执行", "性能设置", "运行设置",
-            # "连接设置", "启动设置", "远程控制", "界面设置",
-            # "外部通知", "热键设置",
             "界面设置", "更新设置", "关于我们"
         ]
 
@@ -71,18 +162,9 @@ class SettingsPage(QWidget):
         self.sections = {}
 
         # Create sections
-        # self.create_config_switch_section()
-        # self.create_scheduled_tasks_section()
-        # self.create_performance_section()
-        # self.create_operation_section()
-        # self.create_connection_section()
-        # self.create_startup_section()
-        # self.create_remote_control_section()
         self.create_interface_section()
-        # self.create_notifications_section()
-        # self.create_hotkey_section()
         self.create_update_section()
-        self.create_about_section()  # 新增的"关于我们"部分
+        self.create_about_section()
 
         # Add a spacer at the end
         self.content_layout.addStretch()
@@ -96,6 +178,9 @@ class SettingsPage(QWidget):
 
         # Select the first category by default
         self.categories_widget.setCurrentRow(0)
+
+        # Connect installer signals
+        self.installer.restart_required.connect(self.handle_restart_required)
 
     def create_section(self, title):
         """Create a new section with title and return its content layout"""
@@ -160,7 +245,6 @@ class SettingsPage(QWidget):
         lang_label.setObjectName("infoLabel")
         lang_combo = NoWheelComboBox()
         lang_combo.addItem("简体中文")
-        # lang_combo.addItem("English")
 
         lang_row.addWidget(lang_label)
         lang_row.addWidget(lang_combo)
@@ -197,35 +281,35 @@ class SettingsPage(QWidget):
 
         auto_check = QCheckBox("自动检查更新")
         beta_updates = QCheckBox("接收测试版更新")
-        check_button = QPushButton("立即检查更新")
-        check_button.setObjectName("primaryButton")
+
+        # 立即检查更新按钮
+        self.check_button = QPushButton("立即检查更新")
+        self.check_button.setObjectName("primaryButton")
+        self.check_button.clicked.connect(self.check_app_update)
 
         # 从配置初始化复选框状态
         try:
-            # 使用不同的变量名存储布尔值
             auto_check_value = global_config.get_app_config().auto_check_update
             auto_check.setChecked(auto_check_value)
         except:
             auto_check.setChecked(False)
 
-        # 获取测试版设置，如果不存在或不合法则默认为False
+        # 获取测试版设置
         try:
             receive_beta = global_config.get_app_config().receive_beta_update
-            if not isinstance(receive_beta, bool):  # 如果不是布尔值
+            if not isinstance(receive_beta, bool):
                 receive_beta = False
         except:
             receive_beta = False
 
-        # 设置测试版复选框状态
         beta_updates.setChecked(receive_beta)
 
-        # 如果启用了测试版，设置警告消息
         if receive_beta:
             set_warning_message("测试版可能包含不稳定功能，可能影响正常使用")
 
         # 定义复选框状态变化的处理函数
         def on_beta_checkbox_changed(state):
-            is_checked = (state == 2)  # 2 = 选中状态 (Qt.Checked)
+            is_checked = (state == 2)
             global_config.get_app_config().receive_beta_update = is_checked
 
             if is_checked:
@@ -246,7 +330,7 @@ class SettingsPage(QWidget):
         update_row.addWidget(auto_check)
         update_row.addWidget(beta_updates)
         update_row.addStretch()
-        update_row.addWidget(check_button)
+        update_row.addWidget(self.check_button)
 
         layout.addLayout(update_row)
 
@@ -276,7 +360,7 @@ class SettingsPage(QWidget):
 
         layout.addLayout(source_row)
 
-        # 为CDK区域预留空间，使用 QStackedLayout 切换显示内容
+        # CDK 输入区域
         layout.addSpacing(15)
         self.cdk_container = QWidget()
         self.cdk_stack = QStackedLayout(self.cdk_container)
@@ -309,7 +393,6 @@ class SettingsPage(QWidget):
 
         # Page 1：空白占位页面
         placeholder_page = QWidget()
-        placeholder_page.setFixedHeight(cdk_page.sizeHint().height())
 
         # 将两个页面添加到stacked布局中
         self.cdk_stack.addWidget(cdk_page)
@@ -355,12 +438,148 @@ class SettingsPage(QWidget):
 
         self.update_source_combo.currentTextChanged.connect(update_source_changed)
 
+    def check_app_update(self):
+        """检查主程序更新"""
+        # 禁用按钮并更改文本
+        self.check_button.setEnabled(False)
+        self.check_button.setText("检查中...")
+
+        # 创建并启动检查线程
+        self.update_checker_thread = AppUpdateChecker()
+        self.update_checker_thread.update_found.connect(self.handle_update_found)
+        self.update_checker_thread.update_not_found.connect(self.handle_update_not_found)
+        self.update_checker_thread.check_failed.connect(self.handle_check_failed)
+        self.update_checker_thread.start()
+
+    def handle_update_found(self, latest_version, current_version, download_url):
+        """处理发现更新"""
+        # 恢复按钮
+        self.check_button.setEnabled(True)
+        self.check_button.setText("立即检查更新")
+
+        # 显示更新对话框
+        reply = QMessageBox.question(
+            self,
+            "发现新版本",
+            f"发现新版本 {latest_version}！\n"
+            f"当前版本：{current_version}\n\n"
+            f"是否立即下载并安装更新？\n"
+            f"注意：更新将需要重启应用程序。",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+
+        if reply == QMessageBox.Yes:
+            self.download_and_install_update(download_url, latest_version)
+
+    def handle_update_not_found(self):
+        """处理未发现更新"""
+        self.check_button.setEnabled(True)
+        self.check_button.setText("立即检查更新")
+
+        # 显示当前版本信息
+        current_version = self.update_checker_thread.get_current_version()
+        QMessageBox.information(
+            self,
+            "检查更新",
+            f"您的应用程序已是最新版本！\n当前版本：{current_version}"
+        )
+
+    def handle_check_failed(self, error_message):
+        """处理检查失败"""
+        self.check_button.setEnabled(True)
+        self.check_button.setText("立即检查更新")
+
+        QMessageBox.warning(
+            self,
+            "检查更新失败",
+            f"无法检查更新：\n{error_message}"
+        )
+
+    def download_and_install_update(self, download_url, version):
+        """下载并安装更新"""
+        # 创建进度对话框
+        self.progress_dialog = QProgressDialog("正在下载更新...", "取消", 0, 100, self)
+        self.progress_dialog.setWindowTitle("下载更新")
+        self.progress_dialog.setWindowModality(Qt.WindowModal)
+        self.progress_dialog.show()
+
+        # 创建临时目录
+        temp_dir = Path("assets/temp")
+        temp_dir.mkdir(parents=True, exist_ok=True)
+
+        # 创建下载线程
+        self.download_thread = UpdateDownloader(
+            "MFWPH主程序",
+            download_url,
+            temp_dir,
+            version=version
+        )
+
+        # 连接信号
+        self.download_thread.progress_updated.connect(self.update_download_progress)
+        self.download_thread.download_completed.connect(self.handle_download_completed)
+        self.download_thread.download_failed.connect(self.handle_download_failed)
+
+        # 连接取消按钮
+        self.progress_dialog.canceled.connect(self.download_thread.cancel)
+
+        # 启动下载
+        self.download_thread.start()
+
+    def update_download_progress(self, resource_name, progress, speed):
+        """更新下载进度"""
+        self.progress_dialog.setValue(int(progress))
+        self.progress_dialog.setLabelText(f"正在下载更新... {int(progress)}% ({speed:.2f} MB/s)")
+
+    def handle_download_completed(self, resource_name, file_path, data):
+        """处理下载完成"""
+        self.progress_dialog.close()
+
+        # 显示安装确认
+        reply = QMessageBox.question(
+            self,
+            "下载完成",
+            "更新已下载完成。\n\n"
+            "安装更新将需要重启应用程序。\n"
+            "是否立即安装？",
+            QMessageBox.Yes | QMessageBox.No,
+            QMessageBox.Yes
+        )
+
+        if reply == QMessageBox.Yes:
+            # 使用独立更新程序安装
+            try:
+                self.installer._launch_updater(file_path, "full")
+                QMessageBox.information(
+                    self,
+                    "正在更新",
+                    "更新程序已启动，应用程序将自动重启以完成更新。"
+                )
+                # 延迟后退出应用
+                QTimer.singleShot(1000, QCoreApplication.quit)
+            except Exception as e:
+                QMessageBox.critical(
+                    self,
+                    "更新失败",
+                    f"无法启动更新程序：\n{str(e)}"
+                )
+
+    def handle_download_failed(self, resource_name, error):
+        """处理下载失败"""
+        self.progress_dialog.close()
+        QMessageBox.critical(
+            self,
+            "下载失败",
+            f"更新下载失败：\n{error}"
+        )
+
+    def handle_restart_required(self):
+        """处理需要重启的情况"""
+        QTimer.singleShot(100, QCoreApplication.quit)
+
     def create_about_section(self):
         """创建"关于我们"页面，展示应用、项目信息及鸣谢内容"""
-        from PySide6.QtCore import Qt
-        from PySide6.QtGui import QFont, QPixmap
-        from PySide6.QtWidgets import QHBoxLayout, QLabel
-
         layout = self.create_section("关于我们")
 
         app_info_row = QHBoxLayout()
@@ -371,7 +590,6 @@ class SettingsPage(QWidget):
             logo_pixmap = QPixmap("assets/icons/app/logo.png")
             logo_label.setPixmap(logo_pixmap.scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         except Exception as e:
-            # 若加载Logo失败，则显示项目简称
             logo_label.setText("MFWPH")
             logo_label.setFont(QFont("Arial", 16, QFont.Bold))
         logo_label.setFixedSize(50, 50)
@@ -386,7 +604,7 @@ class SettingsPage(QWidget):
         app_info_row.addWidget(app_info)
         app_info_row.addStretch()
 
-        # GitHub链接（点击后会使用默认浏览器打开项目页面）
+        # GitHub链接
         github_link = QLabel("<a href='https://github.com/TanyaShue/MFWPH'>访问项目 GitHub</a>")
         github_link.setOpenExternalLinks(True)
         github_link.setCursor(Qt.PointingHandCursor)
@@ -436,13 +654,9 @@ class SettingsPage(QWidget):
 
     def get_version_info(self):
         """从versioninfo.txt文件中获取版本信息"""
-
-        # 检查是否是打包后的可执行文件
         if getattr(sys, 'frozen', False):
-            # 如果是打包环境，versioninfo.txt应该在执行文件所在目录
             base_path = sys._MEIPASS if hasattr(sys, '_MEIPASS') else os.path.dirname(sys.executable)
         else:
-            # 如果是开发环境，尝试从当前目录查找
             base_path = os.getcwd()
 
         version_file_path = os.path.join(base_path, 'versioninfo.txt')
@@ -458,7 +672,6 @@ class SettingsPage(QWidget):
         except Exception as e:
             print(f"读取版本信息失败: {e}")
 
-        # 如果无法获取版本信息，返回未知版本
         return "未知版本"
 
     def scroll_to_section(self, index):
@@ -466,19 +679,17 @@ class SettingsPage(QWidget):
         if index < 0 or index >= len(self.sections):
             return
 
-        # Get the section widget based on the index
         section_title = self.categories_widget.item(index).text()
         if section_title in self.sections:
             section = self.sections[section_title]
-            # Scroll to the section
             self.scroll_area.ensureWidgetVisible(section)
 
     def toggle_theme(self, index):
         """Toggle between light and dark themes"""
-        if index == 0:  # Light theme
+        if index == 0:
             self.theme_manager.apply_theme("light")
             self.current_theme = "light"
-        else:  # Dark theme
+        else:
             self.theme_manager.apply_theme("dark")
             self.current_theme = "dark"
 
