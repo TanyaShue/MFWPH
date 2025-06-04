@@ -509,6 +509,7 @@ class TaskExecutor(QObject):
             error_msg = f"Agent initialization with system Python error: {str(e)}"
             self.logger.warning(error_msg)
             self._terminate_agent_process()
+            self.agent.disconnect()
             return False
 
     # def _try_create_agent_with_current_python(self) -> bool:
