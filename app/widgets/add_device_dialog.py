@@ -10,7 +10,7 @@ from maa.toolkit import Toolkit
 
 from app.models.config.app_config import DeviceConfig, AdbDevice, Win32Device, DeviceType
 from app.models.logging.log_manager import log_manager
-from app.widgets.no_wheel_ComboBox import NoWheelComboBox
+from app.components.no_wheel_ComboBox import NoWheelComboBox
 import re
 import ast
 

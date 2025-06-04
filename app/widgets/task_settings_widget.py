@@ -42,27 +42,82 @@ class TaskSettingsWidget(QFrame):
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(12)
 
+        # 创建资源头部区域
         self.resource_header = QWidget()
         self.resource_header.setVisible(False)
         resource_header_layout = QVBoxLayout(self.resource_header)
         resource_header_layout.setContentsMargins(0, 0, 0, 0)
         resource_header_layout.setSpacing(8)
 
+        # 顶部头部 - 包含资源名称、设置选择器、控制按钮和状态指示器
         top_header_widget = QWidget()
         top_header_layout = QHBoxLayout(top_header_widget)
         top_header_layout.setContentsMargins(0, 0, 0, 0)
+        top_header_layout.setSpacing(12)
 
+        # 资源名称标签
         self.resource_name_label = QLabel()
-        self.resource_name_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
+        self.resource_name_label.setFont(QFont("Segoe UI", 12, QFont.Bold))
         self.resource_name_label.setObjectName("sectionTitle")
 
+        # 设置选择器区域
+        settings_widget = QWidget()
+        settings_layout = QHBoxLayout(settings_widget)
+        settings_layout.setContentsMargins(0, 0, 0, 0)
+        settings_layout.setSpacing(6)
+
+        # 设置下拉框
+        self.settings_selector = QComboBox()
+        self.settings_selector.setObjectName("settingsSelector")
+        self.settings_selector.setMinimumWidth(0)
+        self.settings_selector.currentIndexChanged.connect(self.on_settings_changed)
+
+        # 设置名称编辑器（编辑模式时显示）
+        self.settings_name_editor = QLineEdit()
+        self.settings_name_editor.setObjectName("settingsNameEditor")
+        self.settings_name_editor.setMinimumWidth(10)
+        self.settings_name_editor.setVisible(False)
+
+        # 添加按钮（小图标按钮）
+        self.add_button = QPushButton()
+        self.add_button.setIcon(QIcon("assets/icons/add.svg"))
+        self.add_button.setToolTip("添加新设置")
+        self.add_button.setObjectName("smallIconButton")
+        self.add_button.setFixedSize(24, 24)
+        self.add_button.clicked.connect(self.add_new_settings)
+
+        # 编辑按钮（小图标按钮）
+        self.edit_button = QPushButton()
+        self.edit_button.setIcon(QIcon("assets/icons/edit.svg"))
+        self.edit_button.setToolTip("编辑设置名称")
+        self.edit_button.setObjectName("smallIconButton")
+        self.edit_button.setFixedSize(24, 24)
+        self.edit_button.clicked.connect(self.toggle_edit_mode)
+
+        # 删除按钮（小图标按钮，编辑模式时显示）
+        self.delete_button = QPushButton()
+        self.delete_button.setIcon(QIcon("assets/icons/delete.svg"))
+        self.delete_button.setToolTip("删除当前设置")
+        self.delete_button.setObjectName("smallIconButton")
+        self.delete_button.setFixedSize(24, 24)
+        self.delete_button.setVisible(False)
+        self.delete_button.clicked.connect(self.delete_settings)
+
+        # 将控件添加到设置区域
+        settings_layout.addWidget(self.settings_selector)
+        settings_layout.addWidget(self.settings_name_editor)
+        settings_layout.addWidget(self.add_button)
+        settings_layout.addWidget(self.edit_button)
+        settings_layout.addWidget(self.delete_button)
+
+        # 状态指示器
         self.status_indicator = QWidget()
         status_layout = QHBoxLayout(self.status_indicator)
         status_layout.setContentsMargins(0, 0, 0, 0)
         status_layout.setSpacing(5)
 
         self.status_dot = QLabel()
-        self.status_dot.setFixedSize(8, 8)
+        self.status_dot.setFixedSize(4, 4)
 
         self.status_text = QLabel()
         self.status_text.setObjectName("statusText")
@@ -70,62 +125,19 @@ class TaskSettingsWidget(QFrame):
         status_layout.addWidget(self.status_dot)
         status_layout.addWidget(self.status_text)
 
+        # 组装顶部布局
         top_header_layout.addWidget(self.resource_name_label)
-        top_header_layout.addStretch()
+        top_header_layout.addStretch()  # 弹性空间，将设置区域推到中间
+        top_header_layout.addWidget(settings_widget)
+        top_header_layout.addStretch()  # 弹性空间，将状态指示器推到右侧
         top_header_layout.addWidget(self.status_indicator)
 
-        settings_selector_widget = QWidget()
-        settings_selector_layout = QHBoxLayout(settings_selector_widget)
-        settings_selector_layout.setContentsMargins(0, 0, 0, 0)
-        settings_selector_layout.setSpacing(8)
-
-        settings_label = QLabel("设置配置:")
-        settings_label.setObjectName("settingsLabel")
-
-        self.settings_selector = QComboBox()
-        self.settings_selector.setObjectName("settingsSelector")
-        self.settings_selector.currentIndexChanged.connect(self.on_settings_changed)
-
-        self.settings_name_editor = QLineEdit()
-        self.settings_name_editor.setObjectName("settingsNameEditor")
-        self.settings_name_editor.setVisible(False)
-
-        self.add_button = QPushButton("添加")
-        self.add_button.setIcon(QIcon("assets/icons/add.svg"))
-        self.add_button.setToolTip("添加新设置")
-        self.add_button.setObjectName("iconButton")
-        self.add_button.clicked.connect(self.add_new_settings)
-
-        self.edit_button = QPushButton("编辑")
-        self.edit_button.setIcon(QIcon("assets/icons/edit.svg"))
-        self.edit_button.setToolTip("编辑设置名称")
-        self.edit_button.setObjectName("iconButton")
-        self.edit_button.clicked.connect(self.toggle_edit_mode)
-
-        self.delete_button = QPushButton("删除")
-        self.delete_button.setIcon(QIcon("assets/icons/delete.svg"))
-        self.delete_button.setToolTip("删除当前设置")
-        self.delete_button.setObjectName("iconButton")
-        self.delete_button.setVisible(False)
-        self.delete_button.clicked.connect(self.delete_settings)
-
-        settings_selector_layout.addWidget(settings_label)
-        settings_selector_layout.addWidget(self.settings_selector)
-        settings_selector_layout.addWidget(self.settings_name_editor)
-        settings_selector_layout.addWidget(self.add_button)
-        settings_selector_layout.addWidget(self.edit_button)
-        settings_selector_layout.addWidget(self.delete_button)
-        settings_selector_layout.addStretch()
-
         resource_header_layout.addWidget(top_header_widget)
-        resource_header_layout.addWidget(settings_selector_widget)
-
         self.layout.addWidget(self.resource_header)
 
+        # 内容堆栈
         self.content_stack = QStackedWidget()
-        self.content_stack.setFixedHeight(400)
-        self.content_stack.setObjectName("contentStack")
-
+        self.content_stack.setMinimumHeight(200)
         self.basic_settings_page = BasicSettingsPage(self.device_config)
         self.advanced_settings_page = AdvancedSettingsPage(self.device_config)
 
@@ -133,6 +145,7 @@ class TaskSettingsWidget(QFrame):
         self.content_stack.addWidget(self.advanced_settings_page)
         self.layout.addWidget(self.content_stack)
 
+        # 标签页按钮
         self.tab_buttons_widget = QWidget()
         tab_buttons_layout = QHBoxLayout(self.tab_buttons_widget)
         tab_buttons_layout.setContentsMargins(0, 0, 0, 0)
@@ -152,7 +165,6 @@ class TaskSettingsWidget(QFrame):
         tab_buttons_layout.addWidget(self.advanced_tab_btn)
 
         self.layout.addWidget(self.tab_buttons_widget)
-        self.layout.addStretch()
 
         self.content_stack.setCurrentWidget(self.basic_settings_page)
         self.tab_buttons_widget.setVisible(False)
@@ -163,28 +175,30 @@ class TaskSettingsWidget(QFrame):
             return
 
         if self.is_editing_name:
+            # 保存模式 -> 查看模式
             new_name = self.settings_name_editor.text().strip()
             if new_name and new_name != self.selected_settings_name:
                 self.rename_settings(self.selected_settings_name, new_name)
 
             self.settings_name_editor.setVisible(False)
             self.settings_selector.setVisible(True)
-            self.edit_button.setText("编辑")
             self.edit_button.setIcon(QIcon("assets/icons/edit.svg"))
             self.edit_button.setToolTip("编辑设置名称")
             self.is_editing_name = False
             self.delete_button.setVisible(False)
+            self.add_button.setVisible(True)
             self.update_settings_selector()
         else:
+            # 查看模式 -> 编辑模式
             current_name = self.selected_settings_name
             self.settings_name_editor.setText(current_name)
             self.settings_name_editor.setVisible(True)
             self.settings_selector.setVisible(False)
-            self.edit_button.setText("保存")
             self.edit_button.setIcon(QIcon("assets/icons/save.svg"))
             self.edit_button.setToolTip("保存设置名称")
             self.is_editing_name = True
             self.delete_button.setVisible(True)
+            self.add_button.setVisible(False)
 
     def delete_settings(self):
         """删除当前选择的设置"""
@@ -531,9 +545,10 @@ class TaskSettingsWidget(QFrame):
             self.settings_name_editor.setVisible(False)
             self.settings_selector.setVisible(True)
             self.edit_button.setIcon(QIcon("assets/icons/edit.svg"))
-            self.edit_button.setText("编辑")
+            self.edit_button.setToolTip("编辑设置名称")
             self.is_editing_name = False
             self.delete_button.setVisible(False)
+            self.add_button.setVisible(True)
 
     def update_resource_status(self, resource_name, enabled):
         """更新 UI 中的资源状态"""

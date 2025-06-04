@@ -1,6 +1,5 @@
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 import requests
@@ -18,7 +17,7 @@ from app.models.logging.log_manager import log_manager
 from app.utils.theme_manager import theme_manager
 from app.utils.update_check import UpdateDownloader
 from app.utils.update_install import UpdateInstaller
-from app.widgets.no_wheel_ComboBox import NoWheelComboBox
+from app.components.no_wheel_ComboBox import NoWheelComboBox
 
 logger = log_manager.get_app_logger()
 

@@ -36,31 +36,10 @@ class ResourceWidget(QFrame):
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
-
-        # Header with section title and count
-        header_layout = QHBoxLayout()
-
-        # Section title
-        section_title = QLabel("资源选择")
-        section_title.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        section_title.setObjectName("sectionTitle")
-
-        header_layout.addWidget(section_title)
-        header_layout.addStretch()
-
-        layout.addLayout(header_layout)
-
         # Create resource table
         self.resource_table = self.create_resource_table()
         layout.addWidget(self.resource_table)
 
-        # "One Key Start" button
-        one_key_start_btn = QPushButton("一键启动所有资源")
-        one_key_start_btn.setIcon(QIcon("assets/icons/rocket.svg"))
-        one_key_start_btn.setIconSize(QSize(16, 16))
-        one_key_start_btn.setObjectName("oneKeyButton")
-        one_key_start_btn.clicked.connect(self.run_all_resources)
-        layout.addWidget(one_key_start_btn)
 
     def create_resource_table(self):
         """Create a compact, optimized table for resource selection"""
@@ -198,22 +177,6 @@ class ResourceWidget(QFrame):
     def show_resource_settings(self, resource_name):
         """Emit signal to show settings for the selected resource"""
         self.resource_selected.emit(resource_name)
-
-    @asyncSlot()
-    async def run_all_resources(self):
-        """Run all enabled resources for this device"""
-        try:
-            if self.device_config:
-                # Log the start of task execution
-                self.logger.debug( f"开始执行所有资源任务")
-                # Execute tasks
-                success =await task_manager.run_device_all_resource_task(self.device_config)
-                if success:
-                    # Log completion
-                    self.logger.debug( f"所有资源任务执行完成")
-        except Exception as e:
-            # Log error
-            self.logger.error( f"运行任务时出错: {str(e)}")
 
     def refresh_ui(self, device_config):
         """Refresh widget with updated device config"""

@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 from app.components.collapsible_widget import CollapsibleWidget
 from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager
-from app.widgets.no_wheel_ComboBox import NoWheelComboBox
+from app.components.no_wheel_ComboBox import NoWheelComboBox
 from core.tasker_manager import task_manager
 
 

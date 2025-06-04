@@ -34,12 +34,6 @@ class BasicInfoWidget(QFrame):
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
 
-        # Section title
-        section_title = QLabel("基本信息")
-        section_title.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        section_title.setObjectName("sectionTitle")
-        layout.addWidget(section_title)
-
         # Content container
         content_widget = QWidget()
         content_layout = QVBoxLayout(content_widget)
