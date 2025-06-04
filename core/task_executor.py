@@ -7,7 +7,7 @@ import threading
 import time
 from datetime import datetime, timedelta
 from enum import Enum
-from typing import Optional, Dict, List
+from typing import Optional, Dict, List, Callable
 
 import maa
 from PySide6.QtCore import QObject, Signal, Slot, QThreadPool, QRunnable, QMutexLocker, QRecursiveMutex, Qt
@@ -15,6 +15,7 @@ from maa.agent_client import AgentClient
 from maa.controller import AdbController, Win32Controller
 from maa.custom_action import CustomAction
 from maa.custom_recognition import CustomRecognition
+from maa.notification_handler import NotificationHandler, NotificationType
 from maa.resource import Resource
 from maa.tasker import Tasker
 from maa.toolkit import Toolkit
@@ -195,6 +196,28 @@ class TaskExecutor(QObject):
     scheduled_task_removed = Signal(str)  # 定时任务移除信号
     stop_running_task_signal = Signal()  # 停止正在运行的任务信号
 
+    class MyNotificationHandler(NotificationHandler):
+
+        def __init__(self) -> None:
+            super().__init__()
+
+            self.on_next_list_starting: Callable = None
+            self.on_recognized: Callable = None
+
+        def on_node_recognition(
+            self,
+            noti_type: NotificationType,
+            detail: NotificationHandler.NodeRecognitionDetail,
+        ):
+            if (
+                noti_type != NotificationType.Succeeded
+                and noti_type != NotificationType.Failed
+            ):
+                return
+            self.on_recognized(
+                detail.reco_id, detail.name, noti_type == NotificationType.Succeeded
+            )
+
     def __init__(self, device_config: DeviceConfig, parent=None):
         super().__init__(parent)
         self.agent_identifier = None
@@ -203,7 +226,6 @@ class TaskExecutor(QObject):
         self.logger = log_manager.get_device_logs(self.device_name)
         self.device_config = device_config
         self.resource_path: Optional[str] = None
-
         # 根据设备类型选择不同的控制器
         if device_config.device_type == DeviceType.ADB:
             # ADB控制器
@@ -214,23 +236,23 @@ class TaskExecutor(QObject):
                 adb_config.screencap_methods,
                 adb_config.input_methods,
                 adb_config.config,
-                agent_path=adb_config.agent_path,
-                notification_handler=adb_config.notification_handler
+                agent_path=adb_config.agent_path
             )
         elif device_config.device_type == DeviceType.WIN32:
             # Win32控制器
             win32_config = device_config.controller_config
             self._controller = Win32Controller(
-                win32_config.hWnd,
-                notification_handler=win32_config.notification_handler
+                win32_config.hWnd
             )
         else:
             raise ValueError(f"不支持的设备类型: {device_config.device_type}")
 
         # Device state management
         self.state = DeviceState()
-        self._tasker: Optional[Tasker] = Tasker()
-
+        # 创建任务通知处理器
+        self.notification_handler = self.MyNotificationHandler()
+        self.notification_handler.on_recognized = self.on_recognized
+        self._tasker: Optional[Tasker] = Tasker(notification_handler=self.notification_handler)
         # Use global thread pool
         self.thread_pool = QThreadPool.globalInstance()
 
@@ -246,13 +268,13 @@ class TaskExecutor(QObject):
         # Get app logger for common operations
         self.app_logger = log_manager.get_app_logger()
 
-        # Signal connections
         self.task_completed.connect(self._handle_task_completed)
         self.task_failed.connect(self._handle_task_failed)
         self.process_next_task_signal.connect(self._process_next_task, Qt.QueuedConnection)
         self.scheduled_task_added.connect(self._handle_scheduled_task_added)
         self.scheduled_task_removed.connect(self._handle_scheduled_task_removed)
-
+    def on_recognized(self, reco_id: int, name: str, hit: bool):
+        self.logger.debug(f"on_recognized: {reco_id}, {name}, {hit}")
     def start(self):
         """Start task executor"""
         with QMutexLocker(self._mutex):
@@ -327,7 +349,7 @@ class TaskExecutor(QObject):
             self._running_task = task
             current_dir = os.getcwd()
             Toolkit.init_option(os.path.join(current_dir, "assets"))
-
+            Tasker.set_debug_mode(True)
             # Initialize resources and controller
             if self.resource_path != task.data.resource_path:
                 self._initialize_resources(task.data.resource_path)
@@ -344,7 +366,7 @@ class TaskExecutor(QObject):
                 self.logger.info(f"agent 初始化成功")
             elif self.register_custom(task.data):
                 self.logger.info(f"使用内置自定义方法")
-                 
+
             # Create and start the task runner
             runner = TaskRunner(task, self)
             runner.setAutoDelete(True)
