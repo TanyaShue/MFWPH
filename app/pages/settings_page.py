@@ -19,6 +19,8 @@ from app.utils.theme_manager import theme_manager
 from app.utils.update_check import UpdateDownloader
 from app.utils.update_install import UpdateInstaller
 from app.widgets.no_wheel_ComboBox import NoWheelComboBox
+# 导入通知管理器
+from app.utils.notification_manager import notification_manager
 
 logger = log_manager.get_app_logger()
 
@@ -133,7 +135,7 @@ class SettingsPage(QWidget):
 
         # Add categories
         categories = [
-            "界面设置", "更新设置", "关于我们"
+            "界面设置", "更新设置", "开发者选项", "关于我们"
         ]
 
         for category in categories:
@@ -164,6 +166,7 @@ class SettingsPage(QWidget):
         # Create sections
         self.create_interface_section()
         self.create_update_section()
+        self.create_developer_section()
         self.create_about_section()
 
         # Add a spacer at the end
@@ -262,19 +265,6 @@ class SettingsPage(QWidget):
         """创建更新设置的界面区域"""
         layout = self.create_section("更新设置")
 
-        # 创建一个公共的状态标签，用于显示各种消息
-        self.status_label = QLabel("")
-        self.status_label.setObjectName("hintText")
-        self.status_label.setMinimumHeight(20)
-
-        # 添加设置警告和清除警告的辅助方法
-        def set_warning_message(message):
-            self.status_label.setText(message)
-            self.status_label.setStyleSheet("color: #E6A700; font-weight: bold;")
-
-        def clear_message():
-            self.status_label.setText("")
-            self.status_label.setStyleSheet("")
 
         # 第一行：自动检查更新、测试版更新及立即检查按钮
         update_row = QHBoxLayout()
@@ -304,24 +294,39 @@ class SettingsPage(QWidget):
 
         beta_updates.setChecked(receive_beta)
 
-        if receive_beta:
-            set_warning_message("测试版可能包含不稳定功能，可能影响正常使用")
-
         # 定义复选框状态变化的处理函数
         def on_beta_checkbox_changed(state):
             is_checked = (state == 2)
             global_config.get_app_config().receive_beta_update = is_checked
 
             if is_checked:
-                set_warning_message("测试版可能包含不稳定功能，可能影响正常使用")
+                notification_manager.show_warning(
+                    "测试版可能包含不稳定功能,可能影响正常使用",
+                    "测试版更新已启用"
+                )
             else:
-                clear_message()
+                notification_manager.show_warning(
+                    "您将只接收稳定版本的更新",
+                    "测试版更新已关闭"
+                )
 
             global_config.save_all_configs()
 
         def on_auto_check_changed(state):
-            global_config.get_app_config().auto_check_update = (state == 2)
+            is_checked = (state == 2)
+            global_config.get_app_config().auto_check_update = is_checked
             global_config.save_all_configs()
+
+            if is_checked:
+                notification_manager.show_success(
+                    "应用将在启动时自动检查更新",
+                    "自动更新已启用"
+                )
+            else:
+                notification_manager.show_info(
+                    "您需要手动检查更新",
+                    "自动更新已关闭"
+                )
 
         # 连接信号与槽
         beta_updates.stateChanged.connect(on_beta_checkbox_changed)
@@ -333,12 +338,6 @@ class SettingsPage(QWidget):
         update_row.addWidget(self.check_button)
 
         layout.addLayout(update_row)
-
-        # 添加状态标签到布局
-        status_row = QHBoxLayout()
-        status_row.addWidget(self.status_label)
-        status_row.addStretch()
-        layout.addLayout(status_row)
 
         # 设置更新源部分
         source_row = QHBoxLayout()
@@ -405,21 +404,22 @@ class SettingsPage(QWidget):
 
         # 定义保存CDK功能的槽函数
         def save_cdk():
-            global_config.get_app_config().CDK = cdk_input.text()
+            cdk_text = cdk_input.text()
+            if not cdk_text:
+                notification_manager.show_warning(
+                    "请输入有效的密钥",
+                    "密钥为空"
+                )
+                return
+
+            global_config.get_app_config().CDK = cdk_text
             global_config.save_all_configs()
 
-            # 临时显示保存成功消息
-            self.status_label.setText("密钥保存成功!")
-            self.status_label.setStyleSheet("color: #28a745; font-weight: bold;")
-
-            # 3秒后恢复之前的状态
-            def restore_previous_state():
-                if beta_updates.isChecked():
-                    set_warning_message("测试版可能包含不稳定功能，可能影响正常使用")
-                else:
-                    clear_message()
-
-            QTimer.singleShot(3000, restore_previous_state)
+            # 显示保存成功通知
+            notification_manager.show_success(
+                "密钥已成功保存到配置文件",
+                "保存成功"
+            )
 
         save_button.clicked.connect(save_cdk)
         cdk_input.returnPressed.connect(save_cdk)
@@ -430,9 +430,17 @@ class SettingsPage(QWidget):
             self.cdk_stack.setCurrentIndex(0 if is_mirror else 1)
             global_config.get_app_config().update_method = "MirrorChyan" if is_mirror else "github"
 
-            # 确保beta警告的状态正确
-            if beta_updates.isChecked():
-                set_warning_message("测试版可能包含不稳定功能，可能影响正常使用")
+            # 显示更新源切换通知
+            if is_mirror:
+                notification_manager.show_info(
+                    "已切换到 Mirror酱 更新源，请确保已配置有效的CDK",
+                    "更新源已切换"
+                )
+            else:
+                notification_manager.show_info(
+                    "已切换到 GitHub 官方更新源",
+                    "更新源已切换"
+                )
 
             global_config.save_all_configs()
 
@@ -443,6 +451,12 @@ class SettingsPage(QWidget):
         # 禁用按钮并更改文本
         self.check_button.setEnabled(False)
         self.check_button.setText("检查中...")
+
+        # 显示检查中的通知
+        notification_manager.show_info(
+            "正在检查最新版本...",
+            "检查更新"
+        )
 
         # 创建并启动检查线程
         self.update_checker_thread = AppUpdateChecker()
@@ -457,7 +471,13 @@ class SettingsPage(QWidget):
         self.check_button.setEnabled(True)
         self.check_button.setText("立即检查更新")
 
-        # 显示更新对话框
+        # 显示发现新版本的通知
+        notification_manager.show_success(
+            f"发现新版本 {latest_version}！当前版本：{current_version}",
+            "有可用更新"
+        )
+
+        # 显示更新对话框（保留用户确认）
         reply = QMessageBox.question(
             self,
             "发现新版本",
@@ -477,12 +497,13 @@ class SettingsPage(QWidget):
         self.check_button.setEnabled(True)
         self.check_button.setText("立即检查更新")
 
-        # 显示当前版本信息
+        # 获取当前版本
         current_version = self.update_checker_thread.get_current_version()
-        QMessageBox.information(
-            self,
-            "检查更新",
-            f"您的应用程序已是最新版本！\n当前版本：{current_version}"
+
+        # 显示通知而不是对话框
+        notification_manager.show_info(
+            f"您的应用程序已是最新版本（{current_version}）",
+            "无可用更新"
         )
 
     def handle_check_failed(self, error_message):
@@ -490,14 +511,20 @@ class SettingsPage(QWidget):
         self.check_button.setEnabled(True)
         self.check_button.setText("立即检查更新")
 
-        QMessageBox.warning(
-            self,
-            "检查更新失败",
-            f"无法检查更新：\n{error_message}"
+        # 显示错误通知而不是对话框
+        notification_manager.show_error(
+            f"无法检查更新：{error_message}",
+            "检查更新失败"
         )
 
     def download_and_install_update(self, download_url, version):
         """下载并安装更新"""
+        # 显示开始下载的通知
+        notification_manager.show_info(
+            f"正在下载版本 {version}...",
+            "开始下载"
+        )
+
         # 创建进度对话框
         self.progress_dialog = QProgressDialog("正在下载更新...", "取消", 0, 100, self)
         self.progress_dialog.setWindowTitle("下载更新")
@@ -536,7 +563,13 @@ class SettingsPage(QWidget):
         """处理下载完成"""
         self.progress_dialog.close()
 
-        # 显示安装确认
+        # 显示下载完成通知
+        notification_manager.show_success(
+            "更新文件下载完成",
+            "下载成功"
+        )
+
+        # 显示安装确认（保留用户确认）
         reply = QMessageBox.question(
             self,
             "下载完成",
@@ -551,31 +584,32 @@ class SettingsPage(QWidget):
             # 使用独立更新程序安装
             try:
                 self.installer._launch_updater(file_path, "full")
-                QMessageBox.information(
-                    self,
-                    "正在更新",
-                    "更新程序已启动，应用程序将自动重启以完成更新。"
+                notification_manager.show_info(
+                    "更新程序已启动，应用程序将自动重启以完成更新",
+                    "正在更新"
                 )
                 # 延迟后退出应用
                 QTimer.singleShot(1000, QCoreApplication.quit)
             except Exception as e:
-                QMessageBox.critical(
-                    self,
-                    "更新失败",
-                    f"无法启动更新程序：\n{str(e)}"
+                notification_manager.show_error(
+                    f"无法启动更新程序：{str(e)}",
+                    "更新失败"
                 )
 
     def handle_download_failed(self, resource_name, error):
         """处理下载失败"""
         self.progress_dialog.close()
-        QMessageBox.critical(
-            self,
-            "下载失败",
-            f"更新下载失败：\n{error}"
+        notification_manager.show_error(
+            f"更新下载失败：{error}",
+            "下载失败"
         )
 
     def handle_restart_required(self):
         """处理需要重启的情况"""
+        notification_manager.show_info(
+            "应用程序将在几秒后重启",
+            "需要重启"
+        )
         QTimer.singleShot(100, QCoreApplication.quit)
 
     def create_about_section(self):
@@ -686,12 +720,28 @@ class SettingsPage(QWidget):
 
     def toggle_theme(self, index):
         """Toggle between light and dark themes"""
+        old_theme = self.current_theme
         if index == 0:
             self.theme_manager.apply_theme("light")
             self.current_theme = "light"
         else:
             self.theme_manager.apply_theme("dark")
             self.current_theme = "dark"
+
+        # 显示主题切换通知
+        if old_theme != self.current_theme:
+            theme_name = "明亮主题" if self.current_theme == "light" else "深色主题"
+            notification_manager.show_success(
+                f"界面已切换到{theme_name}",
+                "主题已更改"
+            )
+
+            # 如果切换到深色主题，显示实验性警告
+            if self.current_theme == "dark":
+                notification_manager.show_warning(
+                    "深色主题仍在开发中，部分界面可能显示不正常",
+                    "实验性功能"
+                )
 
     def update_source_changed(self, text):
         """处理更新源变更"""
@@ -700,3 +750,85 @@ class SettingsPage(QWidget):
         else:
             global_config.get_app_config().update_method = "github"
         global_config.save_all_configs()
+
+    def create_developer_section(self):
+        """创建开发者选项部分"""
+        layout = self.create_section("开发者选项")
+
+        # Debug mode toggle
+        debug_row = QHBoxLayout()
+        debug_label = QLabel("调试模式")
+        debug_label.setObjectName("infoLabel")
+
+        self.debug_checkbox = QCheckBox("启用调试日志")
+
+        # 从配置初始化调试模式状态
+        try:
+            debug_enabled = global_config.app_config.debug_model
+            if not isinstance(debug_enabled, bool):
+                debug_enabled = False
+            self.debug_checkbox.setChecked(debug_enabled)
+        except AttributeError:
+            # 如果属性不存在，默认为False
+            self.debug_checkbox.setChecked(False)
+            # 同时设置默认值
+            try:
+                global_config.app_config.debug_model = False
+                global_config.save_all_configs()
+            except:
+                pass
+
+        # 连接状态改变信号
+        self.debug_checkbox.stateChanged.connect(self.on_debug_changed)
+
+        debug_row.addWidget(debug_label)
+        debug_row.addWidget(self.debug_checkbox)
+        debug_row.addStretch()
+
+        layout.addLayout(debug_row)
+
+        # 警告文本 - 现在仅作为静态提示
+        warning = QLabel("⚠️ 注意：启用调试模式可能会影响应用性能并生成大量日志文件")
+        warning.setObjectName("warningText")
+        warning.setStyleSheet("color: #E6A700; font-size: 12px;")
+        warning.setWordWrap(True)
+        layout.addWidget(warning)
+
+        # 添加间距
+        layout.addSpacing(10)
+
+    def on_debug_changed(self, state):
+        """处理调试模式切换"""
+        is_enabled = (state == 2)  # Qt.Checked = 2
+
+        try:
+            # 更新配置值
+            global_config.app_config.debug_model = is_enabled
+
+            # 保存配置
+            global_config.save_all_configs()
+
+            # 可选：立即应用调试设置到日志管理器
+            if hasattr(log_manager, 'set_debug_mode'):
+                log_manager.set_debug_mode(is_enabled)
+
+            # 使用通知管理器显示状态
+            if is_enabled:
+                notification_manager.show_warning(
+                    "调试模式已启用，将生成详细的调试日志。这可能会影响应用性能。",
+                    "调试模式已启用"
+                )
+            else:
+                notification_manager.show_info(
+                    "调试模式已关闭",
+                    "调试模式已关闭"
+                )
+
+        except Exception as e:
+            logger.error(f"切换调试模式时出错: {e}")
+            # 恢复复选框状态
+            self.debug_checkbox.setChecked(not is_enabled)
+            notification_manager.show_error(
+                "调试模式切换失败，请重试",
+                "操作失败"
+            )

@@ -1,14 +1,12 @@
 from enum import Enum
 from PySide6.QtCore import (Qt, QTimer, QPropertyAnimation, QEasingCurve,
                             QRect, QPoint, Signal, QObject, Property, QParallelAnimationGroup,
-                            QEvent, QSequentialAnimationGroup, QRectF)
+                            QEvent, QSequentialAnimationGroup)
 from PySide6.QtWidgets import (QWidget, QLabel, QVBoxLayout, QHBoxLayout,
                                QApplication, QGraphicsOpacityEffect, QPushButton,
-                               QGraphicsDropShadowEffect, QGraphicsBlurEffect)
-from PySide6.QtGui import QPainter, QBrush, QColor, QPen, QFont, QPalette, QLinearGradient, QRadialGradient, \
-    QPainterPath
+                               QGraphicsDropShadowEffect)
+from PySide6.QtGui import QPainter, QBrush, QColor, QPen, QLinearGradient
 import sys
-import weakref
 
 
 class NotificationLevel(Enum):
@@ -35,21 +33,18 @@ class NotificationLevel(Enum):
              "×")
 
 
-
-
 class NotificationWidget(QWidget):
     """单个通知弹窗组件"""
 
     closed = Signal(object)  # 传递自身引用
 
-    def __init__(self, title, message, level=NotificationLevel.INFO, duration=2000, parent=None):
+    def __init__(self, title, message, level=NotificationLevel.INFO, duration=5000, parent=None):
         super().__init__(parent)
         self.level = level
         self.duration = duration
         self._is_closing = False
         self._is_hovered = False
         self._progress = 100
-        self._glow_opacity = 0
 
         # 设置窗口属性
         self.setWindowFlags(
@@ -64,10 +59,15 @@ class NotificationWidget(QWidget):
         self.setAttribute(Qt.WA_DeleteOnClose, True)
 
         # 设置尺寸
-        self.setFixedSize(260, 74)  # 稍微增加高度以容纳进度条
+        self.setMinimumWidth(260)
+        self.setMaximumWidth(320)
+        self.setFixedWidth(280)  # 固定宽度，避免尺寸变化
 
         # 初始化UI
         self.setupUI(title, message)
+
+        # 调整大小以适应内容
+        self.adjustSizeToContent()
 
         # 添加阴影效果
         self.setupShadow()
@@ -78,30 +78,25 @@ class NotificationWidget(QWidget):
         # 启动定时器
         self.startTimer()
 
-        # 启动呼吸灯效果
-        self.startGlowAnimation()
+    def adjustSizeToContent(self):
+        """根据内容调整窗口大小"""
+        # 让Qt计算所需的最小尺寸
+        self.adjustSize()
+
+        # 获取内容的实际高度
+        content_height = self.sizeHint().height()
+
+        # 添加进度条空间
+        progress_bar_height = 14 if self.duration > 0 else 0
+
+        # 设置最终高度
+        final_height = max(74, content_height + progress_bar_height)
+        self.setFixedHeight(final_height)
 
     def setupUI(self, title, message):
         """设置UI"""
         # 获取级别信息
         _, main_color, light_color, dark_color, icon = self.level.value
-
-        # 添加调试输出
-        if self.level == NotificationLevel.WARNING:
-            print(f"WARNING颜色值:")
-            print(f"  主色: {main_color.name()}, Alpha: {main_color.alpha()}")
-            print(f"  浅色: {light_color.name()}, Alpha: {light_color.alpha()}")
-            print(f"  深色: {dark_color.name()}, Alpha: {dark_color.alpha()}")
-
-        # Helper function to convert QColor to rgba() string
-        def to_rgba_string(qcolor):
-            return f"rgba({qcolor.red()}, {qcolor.green()}, {qcolor.blue()}, {qcolor.alpha()})"
-
-        # Convert colors to rgba strings for stylesheet
-        light_rgba_str = to_rgba_string(light_color)
-        main_rgba_str = to_rgba_string(main_color)
-        dark_rgba_str = to_rgba_string(dark_color)
-        lighter_main_rgba_str = to_rgba_string(main_color.lighter(120)) # For icon gradient
 
         # 主布局
         main_layout = QVBoxLayout(self)
@@ -113,7 +108,7 @@ class NotificationWidget(QWidget):
         self.content_widget.setObjectName("content")
         self.content_widget.setStyleSheet("""
             QWidget#content {
-                background-color: rgba(255, 255, 255, 0.95);
+                background-color: rgba(255, 255, 255, 0.98);
                 border-radius: 12px;
             }
         """)
@@ -123,16 +118,15 @@ class NotificationWidget(QWidget):
         content_layout.setContentsMargins(0, 0, 0, 0)
         content_layout.setSpacing(0)
 
-        # 左侧渐变装饰条 - 作为内部元素
+        # 左侧渐变装饰条
         self.gradient_bar = QWidget()
-        self.gradient_bar.setFixedWidth(6)  # 加宽装饰条
-        # Use rgba strings here
+        self.gradient_bar.setFixedWidth(6)
         self.gradient_bar.setStyleSheet(f"""
             QWidget {{
                 background: qlineargradient(x1:0, y1:0, x2:0, y2:1,
-                    stop:0 {light_rgba_str},
-                    stop:0.5 {main_rgba_str},
-                    stop:1 {dark_rgba_str});
+                    stop:0 {light_color.name()},
+                    stop:0.5 {main_color.name()},
+                    stop:1 {dark_color.name()});
                 border-top-left-radius: 12px;
                 border-bottom-left-radius: 12px;
             }}
@@ -155,12 +149,11 @@ class NotificationWidget(QWidget):
         # 图标
         icon_widget = QWidget()
         icon_widget.setFixedSize(36, 36)
-        # Use rgba strings here
         icon_widget.setStyleSheet(f"""
             QWidget {{
                 background: qlineargradient(x1:0, y1:0, x2:1, y2:1,
-                    stop:0 {lighter_main_rgba_str},
-                    stop:1 {main_rgba_str});
+                    stop:0 {main_color.lighter(120).name()},
+                    stop:1 {main_color.name()});
                 border-radius: 10px;
             }}
         """)
@@ -180,7 +173,7 @@ class NotificationWidget(QWidget):
         icon_label.setAlignment(Qt.AlignCenter)
         icon_layout.addWidget(icon_label)
 
-        main_h_layout.addWidget(icon_widget)
+        main_h_layout.addWidget(icon_widget, 0, Qt.AlignTop)
 
         # 文本区域
         text_widget = QWidget()
@@ -220,6 +213,12 @@ class NotificationWidget(QWidget):
 
         main_layout.addWidget(self.content_widget)
 
+        # 如果有进度条，添加底部空间
+        if self.duration > 0:
+            spacer = QWidget()
+            spacer.setFixedHeight(8)
+            main_layout.addWidget(spacer)
+
         # 保存颜色
         self.main_color = main_color
         self.light_color = light_color
@@ -227,51 +226,28 @@ class NotificationWidget(QWidget):
 
     def paintEvent(self, event):
         """自定义绘制"""
-        super().paintEvent(event)
-
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
-        # 首先绘制一个完整的圆角矩形作为裁剪区域，确保内容不会超出圆角
-        painter.setPen(Qt.NoPen)
-        painter.setBrush(Qt.NoBrush)
-        path = QPainterPath()
-        path.addRoundedRect(QRectF(self.content_widget.rect()), 12, 12)
-        painter.setClipPath(path)
-
-        # 绘制发光效果
-        if self._glow_opacity > 0:
-            glow_color = QColor(self.main_color)
-            glow_color.setAlpha(int(30 * self._glow_opacity))
-
-            # 外发光
-            for i in range(3):
-                pen = QPen(glow_color, 2 - i * 0.5)
-                painter.setPen(pen)
-                painter.setBrush(Qt.NoBrush)
-                painter.drawRoundedRect(self.rect().adjusted(i, i, -i, -i), 12, 12)
-
-        # 重置裁剪
-        painter.setClipping(False)
-
         # 绘制进度条
         if self.duration > 0 and not self._is_closing:
-            # 进度条背景 - 更深的颜色
+            progress_y = self.height() - 12
+
+            # 进度条背景
             painter.setPen(Qt.NoPen)
-            bg_color = QColor(0, 0, 0, 80)  # 增加不透明度
+            bg_color = QColor(0, 0, 0, 80)
             painter.setBrush(QBrush(bg_color))
-            painter.drawRoundedRect(12, 65, 236, 4, 2, 2)
+            painter.drawRoundedRect(12, progress_y, self.width() - 24, 4, 2, 2)
 
             # 进度条前景
             if self._progress > 0:
-                # 渐变进度条
-                progress_width = int(236 * self._progress / 100)
-                gradient = QLinearGradient(12, 67, 12 + progress_width, 67)
+                progress_width = int((self.width() - 24) * self._progress / 100)
+                gradient = QLinearGradient(12, progress_y + 2, 12 + progress_width, progress_y + 2)
                 gradient.setColorAt(0, self.light_color)
                 gradient.setColorAt(0.5, self.main_color)
                 gradient.setColorAt(1, self.dark_color)
                 painter.setBrush(QBrush(gradient))
-                painter.drawRoundedRect(12, 65, progress_width, 4, 2, 2)
+                painter.drawRoundedRect(12, progress_y, progress_width, 4, 2, 2)
 
     def setupShadow(self):
         """设置阴影效果"""
@@ -296,7 +272,7 @@ class NotificationWidget(QWidget):
         self.fade_in_animation.setEndValue(1.0)
         self.fade_in_animation.setEasingCurve(QEasingCurve.OutCubic)
 
-        # 滑入动画 - 带弹性效果
+        # 滑入动画
         self.slide_in_animation = QPropertyAnimation(self, b"pos")
         self.slide_in_animation.setDuration(600)
         self.slide_in_animation.setEasingCurve(QEasingCurve.OutBack)
@@ -312,31 +288,6 @@ class NotificationWidget(QWidget):
         self.fade_out_animation.setStartValue(1.0)
         self.fade_out_animation.setEndValue(0.0)
         self.fade_out_animation.finished.connect(self.onFadeOutFinished)
-
-    def startGlowAnimation(self):
-        """启动呼吸灯动画"""
-        self.glow_timer = QTimer(self)
-        self.glow_timer.timeout.connect(self.updateGlow)
-        self.glow_timer.start(50)
-        self._glow_increasing = True
-
-    def updateGlow(self):
-        """更新发光效果"""
-        if self._is_hovered:
-            # 悬停时保持最亮
-            self._glow_opacity = 1.0
-        else:
-            # 呼吸效果
-            if self._glow_increasing:
-                self._glow_opacity += 0.03
-                if self._glow_opacity >= 0.6:
-                    self._glow_increasing = False
-            else:
-                self._glow_opacity -= 0.03
-                if self._glow_opacity <= 0:
-                    self._glow_increasing = True
-
-        self.update()
 
     def startTimer(self):
         """启动定时器"""
@@ -400,8 +351,6 @@ class NotificationWidget(QWidget):
             self.timer.stop()
         if hasattr(self, 'progress_timer'):
             self.progress_timer.stop()
-        if hasattr(self, 'glow_timer'):
-            self.glow_timer.stop()
 
         # 启动淡出动画
         self.fade_out_animation.start()
@@ -444,23 +393,13 @@ class NotificationWidget(QWidget):
         if hasattr(self, 'progress_timer'):
             self.progress_timer.stop()
 
-        # 增强阴影
+        # 增强阴影（不改变位置）
         shadow = QGraphicsDropShadowEffect()
         shadow.setBlurRadius(35)
         shadow.setXOffset(0)
         shadow.setYOffset(8)
         shadow.setColor(QColor(0, 0, 0, 50))
         self.content_widget.setGraphicsEffect(shadow)
-
-        # 轻微放大效果
-        self.hover_scale = QPropertyAnimation(self, b"geometry")
-        self.hover_scale.setDuration(200)
-        self.hover_scale.setEasingCurve(QEasingCurve.OutCubic)
-        current_geo = self.geometry()
-        expanded_geo = current_geo.adjusted(-2, -2, 2, 2)
-        self.hover_scale.setStartValue(current_geo)
-        self.hover_scale.setEndValue(expanded_geo)
-        self.hover_scale.start()
 
         super().enterEvent(event)
 
@@ -483,18 +422,6 @@ class NotificationWidget(QWidget):
         shadow.setYOffset(5)
         shadow.setColor(QColor(0, 0, 0, 40))
         self.content_widget.setGraphicsEffect(shadow)
-
-        # 恢复大小
-        if hasattr(self, 'hover_scale'):
-            self.hover_scale.stop()
-            restore_scale = QPropertyAnimation(self, b"geometry")
-            restore_scale.setDuration(200)
-            restore_scale.setEasingCurve(QEasingCurve.OutCubic)
-            current_geo = self.geometry()
-            original_geo = current_geo.adjusted(2, 2, -2, -2)
-            restore_scale.setStartValue(current_geo)
-            restore_scale.setEndValue(original_geo)
-            restore_scale.start()
 
         super().leaveEvent(event)
 
@@ -576,16 +503,24 @@ class NotificationManager(QObject):
             self.notifications.pop(0)
 
         self.notifications.append(notification)
-        self.repositionNotifications()
         self.positionNotification(notification, len(self.notifications) - 1)
 
     def positionNotification(self, notification, index):
         """定位并显示通知"""
         rect = self.get_position_reference()
 
+        # 计算通知的x坐标
         x = rect.right() - notification.width() - self.margin
-        y = rect.bottom() - (notification.height() + self.spacing) * (index + 1) - self.margin
 
+        # 计算通知的y坐标（从底部开始累积）
+        y = rect.bottom() - self.margin
+
+        # 从后往前计算每个通知的位置
+        for i in range(index + 1):
+            if i < len(self.notifications):
+                y -= self.notifications[i].height() + self.spacing
+
+        # 确保不超出屏幕
         screen = QApplication.primaryScreen()
         if screen:
             screen_rect = screen.availableGeometry()
@@ -606,6 +541,7 @@ class NotificationManager(QObject):
         """重新定位所有通知"""
         rect = self.get_position_reference()
 
+        # 清理无效通知
         valid_notifications = []
         for notification in self.notifications:
             try:
@@ -616,24 +552,30 @@ class NotificationManager(QObject):
 
         self.notifications = valid_notifications
 
-        for i, notification in enumerate(self.notifications):
-            try:
-                x = rect.right() - notification.width() - self.margin
-                y = rect.bottom() - (notification.height() + self.spacing) * (i + 1) - self.margin
+        # 从底部开始重新定位所有通知
+        y = rect.bottom() - self.margin
 
+        for notification in self.notifications:
+            try:
+                y -= notification.height() + self.spacing
+                x = rect.right() - notification.width() - self.margin
+
+                # 确保不超出屏幕
                 screen = QApplication.primaryScreen()
                 if screen:
                     screen_rect = screen.availableGeometry()
                     x = min(x, screen_rect.right() - notification.width() - self.margin)
                     y = max(y, screen_rect.top() + self.margin)
 
+                # 停止之前的动画
                 if hasattr(notification, '_move_animation') and notification._move_animation:
                     if notification._move_animation.state() == QPropertyAnimation.Running:
                         notification._move_animation.stop()
 
+                # 创建新的移动动画
                 move_animation = QPropertyAnimation(notification, b"pos")
                 move_animation.setDuration(400)
-                move_animation.setEasingCurve(QEasingCurve.OutBack)
+                move_animation.setEasingCurve(QEasingCurve.OutCubic)
                 move_animation.setStartValue(notification.pos())
                 move_animation.setEndValue(QPoint(x, y))
                 move_animation.start()

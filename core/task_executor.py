@@ -275,6 +275,7 @@ class TaskExecutor(QObject):
         self.scheduled_task_removed.connect(self._handle_scheduled_task_removed)
     def on_recognized(self, reco_id: int, name: str, hit: bool):
         self.logger.debug(f"on_recognized: {reco_id}, {name}, {hit}")
+
     def start(self):
         """Start task executor"""
         with QMutexLocker(self._mutex):
@@ -349,7 +350,8 @@ class TaskExecutor(QObject):
             self._running_task = task
             current_dir = os.getcwd()
             Toolkit.init_option(os.path.join(current_dir, "assets"))
-            Tasker.set_debug_mode(True)
+            if global_config.app_config.debug_model:
+                Tasker.set_debug_mode(True)
             # Initialize resources and controller
             if self.resource_path != task.data.resource_path:
                 self._initialize_resources(task.data.resource_path)
@@ -387,6 +389,7 @@ class TaskExecutor(QObject):
         except Exception as e:
             self.logger.error(e)
             return False
+
     def load_custom_objects(self, custom_dir):
         if not os.path.exists(custom_dir):
             self.logger.info(f"自定义文件夹 {custom_dir} 不存在")

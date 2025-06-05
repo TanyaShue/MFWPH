@@ -3,12 +3,14 @@ import os
 import sys
 
 import psutil
+from PySide6.QtCore import QTimer
 from PySide6.QtWidgets import QApplication, QStyleFactory
 from PySide6.QtGui import QPalette, QColor
 from qasync import QEventLoop
 
 from app.models.logging.log_manager import log_manager
 from app.main_window import MainWindow
+from app.utils.notification_manager import notification_manager
 
 
 def load_light_palette() -> QPalette:
@@ -84,6 +86,8 @@ if __name__ == "__main__":
 
     # 创建并显示主窗口
     window = MainWindow()
+    notification_manager.set_reference_window(window)
     window.show()
+    QTimer.singleShot(500, lambda: notification_manager.show_success("MFWPH 启动成功!","欢迎来到MFWPH"))
 
     sys.exit(app.exec())
