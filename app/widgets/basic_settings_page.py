@@ -1,4 +1,4 @@
-from PySide6.QtCore import Qt, Signal, QMimeData, QPoint
+from PySide6.QtCore import Qt, Signal, QMimeData, QPoint, QSize
 from PySide6.QtGui import QIcon, QDrag, QPainter, QPixmap
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
@@ -58,7 +58,10 @@ class TaskItemWidget(QFrame):
         layout.addStretch()
 
         # 设置按钮
-        self.settings_btn = QPushButton("设置")
+        self.settings_btn = QPushButton()
+        self.settings_btn.setFixedSize(24, 24)  # Smaller size
+        self.settings_btn.setIcon(QIcon("assets/icons/settings.svg"))
+        self.settings_btn.setIconSize(QSize(14, 14))  # Smaller icon
         self.settings_btn.setObjectName("taskSettingsButton")
         self.settings_btn.clicked.connect(self.on_settings_clicked)
         layout.addWidget(self.settings_btn)

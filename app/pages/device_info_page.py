@@ -100,7 +100,7 @@ class DeviceInfoPage(QWidget):
         self.horizontal_splitter.addWidget(right_widget)
 
         # Set initial sizes for horizontal splitter (1:1:1 ratio)
-        self.horizontal_splitter.setSizes([300, 200, 300])
+        self.horizontal_splitter.setSizes([300, 300, 200])
 
         main_layout.addWidget(self.horizontal_splitter)
 
