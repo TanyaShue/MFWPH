@@ -71,12 +71,6 @@ class AdvancedSettingsPage(QFrame):
             description_label.setContentsMargins(10, 10, 10, 10)
             self.main_layout.addWidget(description_label)
 
-        # 添加页面标题
-        instructions = QLabel("高级设置可配置定时和通知")
-        instructions.setObjectName("instructionText")
-        instructions.setAlignment(Qt.AlignCenter)
-        self.main_layout.addWidget(instructions)
-
         # 创建滚动区域
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)  # 关键：使内容可以调整大小

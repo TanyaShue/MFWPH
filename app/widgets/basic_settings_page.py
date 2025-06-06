@@ -65,7 +65,6 @@ class TaskItemWidget(QFrame):
 
     def on_settings_clicked(self):
         """点击设置按钮时发送信号"""
-        print(f"on_settings_clicked:{self.task_name},self.task_config:{self.task_config}")
         self.settings_requested.emit(self.task_name, self.task_config, None)
 
     def mousePressEvent(self, event):
@@ -256,12 +255,6 @@ class BasicSettingsPage(QFrame):
             description_label.setContentsMargins(10, 10, 10, 10)
             self.settings_content_layout.addWidget(description_label)
 
-        # 添加任务计数标签
-        self.task_count_label = QLabel()
-        self.task_count_label.setObjectName("taskCountLabel")
-        self.update_task_count(device_resource.selected_tasks)
-        self.settings_content_layout.addWidget(self.task_count_label)
-
         # 创建任务的滚动区域
         scroll_area = QScrollArea()
         scroll_area.setWidgetResizable(True)
@@ -315,28 +308,13 @@ class BasicSettingsPage(QFrame):
 
     def on_task_settings_requested(self, task_name, task_config, device_resource):
         """处理任务设置请求"""
-        # 获取当前任务的设置
-        app_config = global_config.get_app_config()
-        if not app_config:
-            return
-
-        settings = next((s for s in app_config.resource_settings
-                         if s.name == device_resource.settings_name and
-                         s.resource_name == device_resource.resource_name), None)
-
         # 发送信号，包含完整的配置信息
         self.task_settings_requested.emit(
             self.selected_resource_name,
             task_name,
             task_config,
-            settings
+            device_resource  # Pass the Resource object, not ResourceSettings
         )
-
-    def update_task_count(self, selected_tasks):
-        """更新任务计数标签"""
-        count = len(selected_tasks) if selected_tasks else 0
-        self.task_count_label.setText(f"已选择 {count} 个任务")
-
     def on_task_order_changed(self, new_order):
         """处理任务顺序改变"""
         if not self.selected_resource_name or not self.device_config:
@@ -507,9 +485,6 @@ class BasicSettingsPage(QFrame):
 
         # 保存更新后的配置
         global_config.save_all_configs()
-
-        # 更新任务计数
-        self.update_task_count(settings.selected_tasks)
 
         # 记录变更
         status_text = "已选择" if is_selected else "已取消选择"

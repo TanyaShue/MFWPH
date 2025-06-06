@@ -1,3 +1,4 @@
+from PySide6.QtCore import Signal
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
@@ -13,7 +14,6 @@ from app.widgets.basic_settings_page import BasicSettingsPage
 
 class TaskSettingsWidget(QFrame):
     """Task settings widget for configuring resource tasks"""
-
     def __init__(self, device_config, parent=None):
         super().__init__(parent)
         self.device_config = device_config

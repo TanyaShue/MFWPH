@@ -1,6 +1,7 @@
+# device_info_page.py
 from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QSplitter, QLabel
+    QWidget, QVBoxLayout, QSplitter
 )
 
 from app.components.log_display import LogDisplay
@@ -8,10 +9,11 @@ from app.models.config.global_config import global_config
 from app.widgets.basic_info_widget import BasicInfoWidget
 from app.widgets.resource_widget import ResourceWidget
 from app.widgets.task_settings_widget import TaskSettingsWidget
+from app.widgets.task_options_widget import TaskOptionsWidget  # 新增导入
 
 
 class DeviceInfoPage(QWidget):
-    """Device information page with three-column layout, first and third columns split vertically"""
+    """Device information page with horizontal four-part layout"""
 
     def __init__(self, device_name, parent=None):
         super().__init__(parent)
@@ -30,7 +32,7 @@ class DeviceInfoPage(QWidget):
         # Set widget style
         self.setObjectName("content_widget")
 
-        # Main horizontal splitter (3 parts)
+        # Main horizontal splitter (4 parts now)
         self.horizontal_splitter = QSplitter(Qt.Horizontal)
         self.horizontal_splitter.setObjectName("horizontalSplitter")
         self.horizontal_splitter.setHandleWidth(0)
@@ -40,6 +42,7 @@ class DeviceInfoPage(QWidget):
         self.basic_info_widget = BasicInfoWidget(self.device_name, self.device_config, self)
         self.resource_widget = ResourceWidget(self.device_name, self.device_config, self)
         self.task_settings_widget = TaskSettingsWidget(self.device_config, self)
+        self.task_options_widget = TaskOptionsWidget(self)  # 新增任务选项组件
         self.log_widget = LogDisplay(enable_log_level_filter=True, show_device_selector=False)
         self.log_widget.show_device_logs(self.device_name)
 
@@ -65,21 +68,10 @@ class DeviceInfoPage(QWidget):
         self.left_splitter.addWidget(self.task_settings_widget)
 
         # Set initial sizes for left splitter (1:1 ratio)
-        self.left_splitter.setSizes([250, 250])
+        self.left_splitter.setSizes([100, 250])
 
         left_layout.addWidget(self.left_splitter)
 
-        # 2. Second Part (Middle): New Empty Container
-        self.empty_container = QWidget()
-        self.empty_container.setObjectName("emptyContainer")
-        empty_layout = QVBoxLayout(self.empty_container)
-        empty_layout.setContentsMargins(10, 10, 10, 10)
-
-        # Add a placeholder label
-        placeholder_label = QLabel("新容器\n(暂时为空)")
-        placeholder_label.setAlignment(Qt.AlignCenter)
-        placeholder_label.setStyleSheet("color: #888; font-style: italic;")
-        empty_layout.addWidget(placeholder_label)
 
         # 3. Third Part (Right): Basic Info (top) + Log (bottom)
         right_widget = QWidget()
@@ -98,13 +90,13 @@ class DeviceInfoPage(QWidget):
         self.right_splitter.addWidget(self.log_widget)
 
         # Set initial sizes for right splitter (1:2 ratio for basic info and log)
-        self.right_splitter.setSizes([150, 300])
+        self.right_splitter.setSizes([100, 300])
 
         right_layout.addWidget(self.right_splitter)
 
         # Add all three parts to horizontal splitter
         self.horizontal_splitter.addWidget(left_widget)
-        self.horizontal_splitter.addWidget(self.empty_container)
+        self.horizontal_splitter.addWidget(self.task_options_widget)
         self.horizontal_splitter.addWidget(right_widget)
 
         # Set initial sizes for horizontal splitter (1:1:1 ratio)
@@ -112,9 +104,15 @@ class DeviceInfoPage(QWidget):
 
         main_layout.addWidget(self.horizontal_splitter)
 
+        self.connect_si()
+
+    def connect_si(self):
+        self.task_settings_widget.basic_settings_page.task_settings_requested.connect(self.task_options_widget.show_task_options)
+
     def refresh_ui(self):
         """Refresh all UI components with updated device config"""
         self.device_config = global_config.get_device_config(self.device_name)
         self.basic_info_widget.refresh_ui(self.device_config)
         self.resource_widget.refresh_ui(self.device_config)
         self.task_settings_widget.clear_settings()
+        self.task_options_widget.clear()
