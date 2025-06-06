@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (
 from app.components.collapsible_widget import CollapsibleWidget
 from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager
-from app.widgets.no_wheel_ComboBox import NoWheelComboBox
+from app.components.no_wheel_ComboBox import NoWheelComboBox
 from core.tasker_manager import task_manager
 
 
@@ -70,12 +70,6 @@ class AdvancedSettingsPage(QFrame):
             description_label.setWordWrap(True)
             description_label.setContentsMargins(10, 10, 10, 10)
             self.main_layout.addWidget(description_label)
-
-        # 添加页面标题
-        instructions = QLabel("高级设置可配置定时和通知")
-        instructions.setObjectName("instructionText")
-        instructions.setAlignment(Qt.AlignCenter)
-        self.main_layout.addWidget(instructions)
 
         # 创建滚动区域
         scroll_area = QScrollArea()

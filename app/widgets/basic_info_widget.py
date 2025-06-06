@@ -1,7 +1,7 @@
 from datetime import datetime
 
-from PySide6.QtCore import QMutexLocker
-from PySide6.QtGui import QFont, QIcon
+from PySide6.QtCore import QMutexLocker, Qt
+from PySide6.QtGui import QFont, QIcon, QPalette
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame
 )
@@ -14,7 +14,7 @@ from core.tasker_manager import task_manager
 
 
 class BasicInfoWidget(QFrame):
-    """Basic device information widget"""
+    """Basic device information widget - Compact Version"""
 
     def __init__(self, device_name, device_config, parent=None):
         super().__init__(parent)
@@ -26,113 +26,96 @@ class BasicInfoWidget(QFrame):
         # 设置基本属性
         self.setObjectName("infoFrame")
         self.setFrameShape(QFrame.StyledPanel)
+        self.setMaximumHeight(90)  # 限制最大高度
+        self.setMinimumHeight(80)  # 设置最小高度
         self.init_ui()
         self.connect_signals()
+        # 初始化显示状态
+        self.update_status_display()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
-        layout.setContentsMargins(0, 0, 0, 0)
-        layout.setSpacing(12)
-
-        # Section title
-        section_title = QLabel("基本信息")
-        section_title.setFont(QFont("Segoe UI", 14, QFont.Bold))
-        section_title.setObjectName("sectionTitle")
-        layout.addWidget(section_title)
-
-        # Content container
-        content_widget = QWidget()
-        content_layout = QVBoxLayout(content_widget)
-        content_layout.setContentsMargins(0, 5, 0, 5)
-        content_layout.setSpacing(15)
+        layout.setContentsMargins(12, 8, 12, 8)
+        layout.setSpacing(10)
 
         if self.device_config:
-            # Device Name
-            name_layout = QHBoxLayout()
-            name_label = QLabel("设备名称:")
-            name_label.setObjectName("infoLabel")
-            name_value = QLabel(self.device_config.device_name)
-            name_value.setObjectName("infoLabel")
-            name_value.setFont(QFont("Segoe UI", 13, QFont.Medium))
-            name_layout.addWidget(name_label)
-            name_layout.addWidget(name_value)
-            name_layout.addStretch()
-            content_layout.addLayout(name_layout)
+            # 第一行：所有信息在一行
+            info_layout = QHBoxLayout()
+            info_layout.setSpacing(12)
 
-            # Device Type
-            type_layout = QHBoxLayout()
-            type_label = QLabel("设备类型:")
-            type_label.setObjectName("infoLabel")
+            # 设备名称
+            name_label = QLabel(self.device_config.device_name)
+            name_label.setObjectName("deviceTitle")
+            name_label.setFont(QFont("Segoe UI", 14, QFont.Bold))
+            info_layout.addWidget(name_label)
 
-            # 获取设备类型文本
-            device_type_text = getattr(self.device_config.device_type, "value", str(self.device_config.device_type))
+            # 状态指示器（圆点）
+            self.status_indicator = QLabel()
+            self.status_indicator.setFixedSize(10, 10)
+            self.status_indicator.setStyleSheet("""
+                QLabel {
+                    background-color: #999999;
+                    border-radius: 5px;
+                }
+            """)
+            info_layout.addWidget(self.status_indicator)
 
-            # 转换为用户友好的显示文本
-            display_text = {
-                "adb": "ADB设备",
-                "win32": "Win32窗口"
-            }.get(device_type_text, device_type_text)
+            # 添加弹性空间
+            info_layout.addStretch()
 
-            type_value = QLabel(display_text)
-            type_value.setObjectName("infoLabel")
-            type_layout.addWidget(type_label)
-            type_layout.addWidget(type_value)
-            type_layout.addStretch()
-            content_layout.addLayout(type_layout)
+            # 时钟图标
+            self.clock_icon = QLabel()
+            self.clock_icon.setFixedSize(14, 14)
+            self.clock_icon.setPixmap(QIcon("assets/icons/add-time.svg").pixmap(14, 14))
+            info_layout.addWidget(self.clock_icon)
 
-            # Status
-            status_layout = QHBoxLayout()
-            status_label = QLabel("状态:")
-            status_label.setObjectName("infoLabel")
-            self.status_value = QLabel()
-            self.status_value.setObjectName("infoLabel")
-            self.status_value.setWordWrap(True)
-            status_layout.addWidget(status_label)
-            status_layout.addWidget(self.status_value)
-            status_layout.addStretch()
-            content_layout.addLayout(status_layout)
+            # 定时任务时间
+            self.schedule_value = QLabel("检查中...")
+            self.schedule_value.setObjectName("scheduleText")
+            self.schedule_value.setStyleSheet("""
+                QLabel#scheduleText {
+                    color: #666666;
+                    font-size: 13px;
+                }
+            """)
+            info_layout.addWidget(self.schedule_value)
 
-            # 定时任务信息
-            schedule_layout = QHBoxLayout()
-            schedule_label = QLabel("定时任务:")
-            schedule_label.setObjectName("infoLabel")
-            self.schedule_value = QLabel()
-            self.schedule_value.setObjectName("infoLabel")
-            self.schedule_value.setWordWrap(True)
-            schedule_layout.addWidget(schedule_label)
-            schedule_layout.addWidget(self.schedule_value)
-            schedule_layout.addStretch()
-            content_layout.addLayout(schedule_layout)
+            layout.addLayout(info_layout)
+
+            # 第二行：按钮
+            button_layout = QHBoxLayout()
+            button_layout.setSpacing(10)
+
+            # 运行/停止按钮
+            self.run_btn = QPushButton("运行")
+            self.run_btn.setIcon(QIcon("assets/icons/play.svg"))
+            self.run_btn.setObjectName("primaryButton")
+            self.run_btn.setMinimumWidth(90)
+            self.run_btn.setMaximumWidth(120)
+            self.run_btn.setFixedHeight(32)
+            self.run_btn.clicked.connect(self.handle_run_stop_action)
+
+            # 设置按钮
+            settings_btn = QPushButton("设置")
+            settings_btn.setObjectName("secondaryButton")
+            settings_btn.setIcon(QIcon("assets/icons/settings.svg"))
+            settings_btn.setFixedSize(32, 32)
+            settings_btn.setMinimumWidth(90)
+            settings_btn.setMaximumWidth(120)
+            settings_btn.setToolTip("设备设置")
+            settings_btn.clicked.connect(self.open_settings_dialog)
+
+            button_layout.addStretch()
+            button_layout.addWidget(self.run_btn)
+            button_layout.addWidget(settings_btn)
+            button_layout.addStretch()
+            layout.addLayout(button_layout)
 
         else:
-            error_label = QLabel("未找到设备配置信息")
+            error_label = QLabel("未找到设备配置")
             error_label.setObjectName("errorText")
-            content_layout.addWidget(error_label)
-
-        layout.addWidget(content_widget)
-        layout.addStretch()
-
-        # Action buttons
-        button_layout = QHBoxLayout()
-        button_layout.setContentsMargins(0, 10, 0, 0)
-        button_layout.setSpacing(10)
-        button_layout.addStretch()
-
-        # Run/Stop button
-        self.run_btn = QPushButton("运行任务")
-        self.run_btn.setObjectName("primaryButton")
-        self.run_btn.setIcon(QIcon("assets/icons/play.svg"))
-        self.run_btn.clicked.connect(self.handle_run_stop_action)
-
-        settings_btn = QPushButton("设备设置")
-        settings_btn.setObjectName("secondaryButton")
-        settings_btn.setIcon(QIcon("assets/icons/settings.svg"))
-        settings_btn.clicked.connect(self.open_settings_dialog)
-
-        button_layout.addWidget(self.run_btn)
-        button_layout.addWidget(settings_btn)
-        button_layout.addStretch()
-        layout.addLayout(button_layout)
+            error_label.setStyleSheet("color: #ff4444; font-size: 12px;")
+            layout.addWidget(error_label)
 
     def connect_signals(self):
         """连接信号到状态更新函数"""
@@ -191,70 +174,126 @@ class BasicInfoWidget(QFrame):
         )
 
         if has_enabled_schedules:
-            # 获取设备的定时任务信息
             device_tasks = [task for task in task_manager.get_scheduled_tasks_info()
                             if task['device_name'] == self.device_name]
 
             if device_tasks:
-                # 找出最近的下次执行时间
                 next_run_times = [datetime.strptime(task['next_run'], '%Y-%m-%d %H:%M:%S')
                                   for task in device_tasks if task.get('next_run') != 'Unknown']
-                schedule_text = next_run_times and f"{min(next_run_times).strftime('%H:%M:%S')}" or "已启用，但未设置具体执行时间"
+                if next_run_times:
+                    next_time = min(next_run_times)
+                    schedule_text = next_time.strftime('%H:%M')
+                    self.schedule_value.setToolTip(f"下次执行时间: {next_time.strftime('%Y-%m-%d %H:%M:%S')}")
+                else:
+                    schedule_text = "已启用"
+                    self.schedule_value.setToolTip("定时任务已启用，等待计划执行")
             else:
-                schedule_text = "已启用，但未设置具体执行时间"
+                schedule_text = "已启用"
+                self.schedule_value.setToolTip("定时任务已启用，等待计划执行")
+            if hasattr(self, 'clock_icon'):
+                self.clock_icon.setVisible(True)
         else:
             schedule_text = "未启用"
+            self.schedule_value.setToolTip("未设置定时任务")
+            if hasattr(self, 'clock_icon'):
+                self.clock_icon.setVisible(False)
 
-        self.schedule_value.setText(schedule_text)
+        if hasattr(self, 'schedule_value'):
+            self.schedule_value.setText(schedule_text)
 
         # 更新任务运行状态
         is_active = task_manager.is_device_active(self.device_name)
         is_running = False
+        status_color = "#999999"  # 默认灰色
+        status_tooltip = "设备离线"
 
         if is_active:
             device_state = task_manager.get_executor_state(self.device_name)
             if device_state:
                 status = device_state.status.value
 
-                # 获取状态文本
-                status_map = {
-                    "idle": "空闲",
-                    "running": "正在执行任务",
-                    "error": f"错误: {device_state.error or '未知错误'}",
-                    "stopping": "正在停止",
-                    "scheduled": "已设置定时任务",
-                    "waiting": "等待执行",
-                    "disconnected": "未连接",
-                    "connecting": "连接中"
+                # 设置状态颜色和提示
+                status_config = {
+                    "idle": ("#4CAF50", "设备就绪"),
+                    "running": ("#2196F3", "正在执行任务"),
+                    "error": ("#F44336", f"错误: {device_state.error or '未知错误'}"),
+                    "stopping": ("#FF9800", "正在停止"),
+                    "scheduled": ("#9C27B0", "已设置定时任务"),
+                    "waiting": ("#607D8B", "等待执行"),
+                    "disconnected": ("#999999", "设备未连接"),
+                    "connecting": ("#03A9F4", "正在连接")
                 }
-                status_text = status_map.get(status, status)
+
+                config = status_config.get(status, ("#999999", "未知状态"))
+                status_color = config[0]
+                status_tooltip = config[1]
 
                 # 检查是否在运行状态
                 if status == "running":
                     is_running = True
 
-                # 添加当前任务信息
-                if device_state.current_task:
-                    status_text += f"，任务ID: {device_state.current_task.id}"
-
-                # 添加队列信息
+                # 添加队列信息到提示
                 queue_length = task_manager.get_device_queue_info().get(self.device_name, 0)
                 if queue_length > 0:
-                    status_text += f"，队列中还有 {queue_length} 个任务"
-            else:
-                status_text = "未知状态"
-        else:
-            status_text = "未运行"
+                    status_tooltip += f"，队列中还有 {queue_length} 个任务"
 
-        self.status_value.setText(status_text)
+            else:
+                status_tooltip = "未知状态"
+        else:
+            status_tooltip = "设备未启动"
+
+        # 更新状态指示器
+        if hasattr(self, 'status_indicator'):
+            self.status_indicator.setStyleSheet(f"""
+                QLabel {{
+                    background-color: {status_color};
+                    border-radius: 5px;
+                }}
+            """)
+            self.status_indicator.setToolTip(status_tooltip)
 
         # 更新按钮状态
-        if is_running:
-            self.run_btn.setText("停止任务")
-            self.run_btn.setIcon(QIcon("assets/icons/stop.svg"))
-        else:
-            self.run_btn.setText("运行任务")
-            self.run_btn.setIcon(QIcon("assets/icons/play.svg"))
+        if hasattr(self, 'run_btn'):
+            if is_running:
+                self.run_btn.setText("停止")
+                self.run_btn.setIcon(QIcon("assets/icons/stop.svg"))
+                self.run_btn.setToolTip("停止当前任务")
+                self.run_btn.setStyleSheet("""
+                    QPushButton#compactPrimaryButton {
+                        background-color: #F44336;
+                        color: white;
+                        border: none;
+                        border-radius: 4px;
+                        padding: 4px 16px;
+                        font-size: 13px;
+                    }
+                    QPushButton#compactPrimaryButton:hover {
+                        background-color: #D32F2F;
+                    }
+                    QPushButton#compactPrimaryButton:disabled {
+                        background-color: #cccccc;
+                    }
+                """)
+            else:
+                self.run_btn.setText("运行")
+                self.run_btn.setIcon(QIcon("assets/icons/play.svg"))
+                self.run_btn.setToolTip("开始执行任务")
+                self.run_btn.setStyleSheet("""
+                    QPushButton#compactPrimaryButton {
+                        background-color: #4CAF50;
+                        color: white;
+                        border: none;
+                        border-radius: 4px;
+                        padding: 4px 16px;
+                        font-size: 13px;
+                    }
+                    QPushButton#compactPrimaryButton:hover {
+                        background-color: #45A049;
+                    }
+                    QPushButton#compactPrimaryButton:disabled {
+                        background-color: #cccccc;
+                    }
+                """)
 
     @asyncSlot()
     async def handle_run_stop_action(self):
@@ -287,7 +326,7 @@ class BasicInfoWidget(QFrame):
 
                 # Disable button during execution
                 self.run_btn.setEnabled(False)
-                self.run_btn.setText("运行中...")
+                self.run_btn.setText("启动中...")
 
                 success = await task_manager.run_device_all_resource_task(self.device_config)
 
@@ -358,13 +397,35 @@ class BasicInfoWidget(QFrame):
         if device_config:
             self.device_config = device_config
 
+        # 正确清除现有布局和子部件
         if self.layout():
+            # 删除所有子部件
+            while self.layout().count():
+                child = self.layout().takeAt(0)
+                if child.widget():
+                    child.widget().deleteLater()
+                elif child.layout():
+                    self._clear_layout(child.layout())
+
+            # 删除布局本身
             QWidget().setLayout(self.layout())
 
         self.init_ui()
         self.connect_signals()
+        self.update_status_display()  # 确保状态显示更新
+
+    def _clear_layout(self, layout):
+        """递归清除布局"""
+        if layout is not None:
+            while layout.count():
+                child = layout.takeAt(0)
+                if child.widget():
+                    child.widget().deleteLater()
+                elif child.layout():
+                    self._clear_layout(child.layout())
 
     def showEvent(self, event):
         """当组件显示时更新状态"""
         super().showEvent(event)
+        # 确保显示时状态是最新的
         self.update_status_display()

@@ -5,7 +5,7 @@
 /* 全局字体样式 */
 * {
     font-family: "Segoe UI", "Microsoft YaHei", "PingFang SC", "Helvetica Neue", Arial, sans-serif;
-    font-size: 13px;
+    font-size: 12px;
 }
 
 /* 选项区域背景 */
