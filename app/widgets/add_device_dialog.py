@@ -522,7 +522,7 @@ class AddDeviceDialog(QDialog):
                     device_name = f"设备 {device.address}"
                     self.name_edit.setText(self._sanitize_device_name(device_name))
                 elif controller_type == DeviceType.WIN32:
-                    window_title = getattr(device, 'title', f"窗口 {device.hwnd}")
+                    window_title = getattr(device, 'title', f"窗口 {device}")
                     # 自动生成的窗口名称也需要处理特殊符号
                     self.name_edit.setText(self._sanitize_device_name(window_title))
 
