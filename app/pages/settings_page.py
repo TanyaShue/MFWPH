@@ -693,7 +693,7 @@ class SettingsPage(QWidget):
         else:
             base_path = os.getcwd()
 
-        version_file_path = os.path.join(base_path, 'versioninfo.txt')
+        version_file_path = os.path.join(base_path, 'versioninfo_MFWPH.txtt')
 
         try:
             if os.path.exists(version_file_path):
