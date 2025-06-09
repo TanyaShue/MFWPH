@@ -632,10 +632,23 @@ class SettingsPage(QWidget):
         # 获取版本信息
         version_info = self.get_version_info()
 
-        # 应用名称及版本
-        app_info = QLabel(f"<b>MFWPH</b> - MaaFramework Project Helper<br>版本 {version_info}")
-        app_info.setObjectName("infoLabel")
-        app_info_row.addWidget(app_info)
+        # 应用名称及版本（主副标题+版本，各自分行显示）
+        app_info_layout = QVBoxLayout()
+
+        app_name_main = QLabel("<b>MFWPH</b>")
+        app_name_main.setObjectName("infoLabel")
+
+        app_name_sub = QLabel("MaaFramework Project Helper")
+        app_name_sub.setObjectName("infoText")
+
+        version_label = QLabel(f"版本 {version_info}")
+        version_label.setObjectName("infoText")
+
+        app_info_layout.addWidget(app_name_main)
+        app_info_layout.addWidget(app_name_sub)
+        app_info_layout.addWidget(version_label)
+
+        app_info_row.addLayout(app_info_layout)
         app_info_row.addStretch()
 
         # GitHub链接
@@ -647,6 +660,7 @@ class SettingsPage(QWidget):
         layout.addLayout(app_info_row)
         layout.addSpacing(10)
 
+        # 项目信息
         proj_info_label = QLabel("<b>项目信息</b>")
         proj_info_label.setObjectName("infoLabel")
         layout.addWidget(proj_info_label)
@@ -660,6 +674,7 @@ class SettingsPage(QWidget):
         layout.addWidget(proj_info_desc)
         layout.addSpacing(15)
 
+        # 鸣谢
         thanks_label = QLabel("<b>开源组件与鸣谢</b>")
         thanks_label.setObjectName("infoLabel")
         layout.addWidget(thanks_label)
@@ -675,6 +690,7 @@ class SettingsPage(QWidget):
         layout.addWidget(thanks_text)
         layout.addSpacing(15)
 
+        # 版权信息
         copyright_label = QLabel(
             "© 2025 MFWPH 团队<br>"
             "本软件遵循 <a href='https://opensource.org/licenses/MIT'>MIT 许可证</a> 进行发布。"
