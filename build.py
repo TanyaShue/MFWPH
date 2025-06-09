@@ -120,14 +120,28 @@ def create_file_with_content(content: str, suffix: str = '.txt') -> str:
         return f.name
 
 
-def create_version_info_files(version: str, build_time: str, ctx: BuildContext, app_name: str = APP_NAME):
-    """创建版本相关的信息文件"""
-    # 创建版本信息文件 - 使用固定名称 versioninfo.txt
-    version_content = f"version={version}\nbuild_time={build_time}\n"
-    version_file = os.path.join(tempfile.gettempdir(), "versioninfo.txt")  # 使用固定文件名
-    with open(version_file, 'w', encoding='utf-8') as f:
-        f.write(version_content)
-    ctx.add_temp_file(version_file)
+def create_version_info_files(version: str, build_time: str, ctx: BuildContext, app_name: str = APP_NAME,
+                              create_version_txt: bool = True):
+    """创建版本相关的信息文件
+
+    Args:
+        version: 版本号
+        build_time: 构建时间
+        ctx: 构建上下文
+        app_name: 应用名称
+        create_version_txt: 是否创建versioninfo.txt文件（只有主程序需要）
+    """
+    version_file = None
+
+    # 只为主程序创建版本信息文件
+    if create_version_txt:
+        version_content = f"version={version}\nbuild_time={build_time}\n"
+        # 使用唯一的文件名，避免被覆盖
+        version_file = os.path.join(tempfile.gettempdir(), f"versioninfo_{app_name}.txt")
+        with open(version_file, 'w', encoding='utf-8') as f:
+            f.write(version_content)
+        ctx.add_temp_file(version_file)
+        logger.info(f"创建版本信息文件: {version_file}")
 
     # 创建Windows文件版本信息
     ver_info = semver.VersionInfo.parse(version)
@@ -183,11 +197,12 @@ def run_pyinstaller(version_file: str, win_version_file: str):
         '--uac-admin',
         f'--add-data={maa_bin_path}{os.pathsep}maa/bin',
         f'--add-data={maa_agent_path}{os.pathsep}MaaAgentBinary',
-        f'--add-data={version_file}{os.pathsep}.',
+        f'--add-data={version_file}{os.pathsep}.',  # 打包版本信息文件到根目录
         f'--version-file={win_version_file}'
     ]
 
     logger.info("正在运行PyInstaller构建主程序...")
+    logger.info(f"版本信息文件: {version_file}")
     PyInstaller.__main__.run(args)
     logger.info("PyInstaller构建主程序成功")
 
@@ -290,16 +305,20 @@ def main():
         zip_path = os.path.join(dist_dir, f"{zip_name}.zip")
 
         with BuildContext(args.keep_files) as ctx:
-            # 创建主程序版本信息文件
-            version_file, win_version_file = create_version_info_files(version, build_time, ctx, APP_NAME)
+            # 创建主程序版本信息文件 - 包含versioninfo.txt
+            version_file, win_version_file = create_version_info_files(
+                version, build_time, ctx, APP_NAME, create_version_txt=True
+            )
 
             # 运行PyInstaller构建主程序
             run_pyinstaller(version_file, win_version_file)
 
             # 构建更新程序
             if not args.skip_updater:
-                # 创建更新程序版本信息文件
-                _, updater_win_version_file = create_version_info_files(version, build_time, ctx, UPDATER_NAME)
+                # 创建更新程序版本信息文件 - 不创建versioninfo.txt
+                _, updater_win_version_file = create_version_info_files(
+                    version, build_time, ctx, UPDATER_NAME, create_version_txt=False
+                )
                 run_pyinstaller_updater(updater_win_version_file)
 
             # 复制assets并创建ZIP包
