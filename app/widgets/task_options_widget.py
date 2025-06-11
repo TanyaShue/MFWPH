@@ -197,7 +197,7 @@ class TaskOptionsWidget(QFrame):
             option_layout.addWidget(info_icon)
 
         option_layout.addWidget(option_label)
-
+        option_layout.addStretch()
         # 根据选项类型创建控件
         if isinstance(option, SelectOption):
             widget = NoWheelComboBox()
