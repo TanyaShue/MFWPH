@@ -2,11 +2,16 @@ import json
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Literal, Optional
 
+__all__ = ['Choice', 'Option', 'SelectOption', 'BoolOption', 'InputOption', 'SettingsGroupOption', 'Task',
+           'ResourceConfig']
+
+
 @dataclass
 class Choice:
     """Choice option for select type."""
     name: str
     value: str
+
 
 @dataclass
 class Option:
@@ -14,7 +19,9 @@ class Option:
     name: str
     type: str
     default: Any
-    pipeline_override: Dict[str, Dict[str, Any]] = field(default_factory=dict)  # PipelineOverride 直接使用 Dict[str, Dict[str, Any]]
+    pipeline_override: Dict[str, Dict[str, Any]] = field(
+        default_factory=dict)  # PipelineOverride 直接使用 Dict[str, Dict[str, Any]]
+
 
 @dataclass
 class SelectOption(Option):
@@ -23,17 +30,29 @@ class SelectOption(Option):
     default: str = ""
     choices: List[Choice] = field(default_factory=list)
 
+
 @dataclass
 class BoolOption(Option):
     """Boolean option dataclass."""
     type: Literal["boole"] = "boole"
     default: bool = False
 
+
 @dataclass
 class InputOption(Option):
     """Input option dataclass."""
     type: Literal["input"] = "input"
     default: str = ""
+
+
+@dataclass
+class SettingsGroupOption(Option):
+    """Settings group option dataclass."""
+    type: Literal["settings_group"] = "settings_group"
+    default: bool = True  # 默认是否启用整个组
+    description: str = ""  # 组的描述
+    settings: List[Option] = field(default_factory=list)  # 组内的设置项
+
 
 @dataclass
 class Task:
@@ -42,6 +61,7 @@ class Task:
     task_entry: str
     option: List[str] = field(default_factory=list)
 
+
 @dataclass
 class ResourceConfig:
     """Main resource configuration dataclass."""
@@ -49,12 +69,12 @@ class ResourceConfig:
     resource_version: str
     resource_author: str
     resource_description: str
-    resource_update_service_id:str
-    resource_rep_url:str
+    resource_update_service_id: str
+    resource_rep_url: str
     resource_icon: str
-    custom_path:str
-    custom_prams:str
-    custom_dir:str
+    custom_path: str
+    custom_prams: str
+    custom_dir: str
     resource_tasks: List[Task] = field(default_factory=list)
     options: List[Option] = field(default_factory=list)
     source_file: str = ""  # 用于记录加载的文件路径，但不保存到输出 JSON 中
@@ -102,6 +122,33 @@ class ResourceConfig:
                 options.append(BoolOption(**option_data))
             elif option_type == 'input':
                 options.append(InputOption(**option_data))
+            elif option_type == 'settings_group':
+                # 处理设置组
+                settings_data = option_data.get('settings', [])
+                # 递归处理组内的设置
+                sub_options = []
+                for sub_option_data in settings_data:
+                    sub_type = sub_option_data.get('type')
+                    if sub_type == 'select':
+                        sub_choices_data = sub_option_data.get('choices', [])
+                        sub_choices = [Choice(**choice_data) for choice_data in sub_choices_data]
+                        sub_options.append(
+                            SelectOption(**{k: v for k, v in sub_option_data.items() if k != 'choices'},
+                                         choices=sub_choices)
+                        )
+                    elif sub_type == 'boole':
+                        sub_options.append(BoolOption(**sub_option_data))
+                    elif sub_type == 'input':
+                        sub_options.append(InputOption(**sub_option_data))
+                    else:
+                        sub_options.append(Option(**sub_option_data))
+
+                options.append(
+                    SettingsGroupOption(
+                        **{k: v for k, v in option_data.items() if k != 'settings'},
+                        settings=sub_options
+                    )
+                )
             else:
                 options.append(Option(**option_data))  # Fallback to base Option if type is unknown
 
@@ -137,9 +184,12 @@ class ResourceConfig:
             "options": [option_to_dict(option) for option in self.options],
         }
 
+
 def option_to_dict(option: Option) -> Dict[str, Any]:
     """Helper function to convert Option and its subclasses to dictionary."""
     option_dict = option.__dict__.copy()
     if isinstance(option, SelectOption):
         option_dict['choices'] = [choice.__dict__ for choice in option.choices]
+    elif isinstance(option, SettingsGroupOption):
+        option_dict['settings'] = [option_to_dict(setting) for setting in option.settings]
     return option_dict

@@ -9,8 +9,9 @@ from PySide6.QtWidgets import (
 from app.components.no_wheel_ComboBox import NoWheelComboBox
 from app.models.config.app_config import OptionConfig
 from app.models.config.global_config import global_config
-from app.models.config.resource_config import SelectOption, BoolOption, InputOption
+from app.models.config.resource_config import SelectOption, BoolOption, InputOption, SettingsGroupOption
 from app.models.logging.log_manager import log_manager
+from app.widgets.collapsible_group_widget import CollapsibleGroupWidget
 
 
 class TaskOptionsWidget(QFrame):
@@ -30,6 +31,7 @@ class TaskOptionsWidget(QFrame):
         self.init_ui()
         self.setObjectName("taskSettingsFrame")
         self.setFrameShape(QFrame.StyledPanel)
+
     def init_ui(self):
         """初始化UI"""
         self.layout = QVBoxLayout(self)
@@ -94,7 +96,6 @@ class TaskOptionsWidget(QFrame):
         # 设置日志
         if hasattr(device_resource, '_device_config') and device_resource._device_config:
             self.logger = log_manager.get_device_logger(device_resource._device_config.device_name)
-
 
         # 清除当前内容
         self._clear_content()
@@ -175,6 +176,10 @@ class TaskOptionsWidget(QFrame):
 
     def _create_option_widget(self, option, option_name, current_options):
         """创建选项控件"""
+        # 处理设置组特殊情况
+        if isinstance(option, SettingsGroupOption):
+            return self._create_settings_group_widget(option, option_name, current_options)
+
         option_widget = QWidget()
         option_widget.setObjectName("optionWidget")
         option_widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Preferred)
@@ -198,6 +203,7 @@ class TaskOptionsWidget(QFrame):
 
         option_layout.addWidget(option_label)
         option_layout.addStretch()
+
         # 根据选项类型创建控件
         if isinstance(option, SelectOption):
             widget = NoWheelComboBox()
@@ -261,6 +267,162 @@ class TaskOptionsWidget(QFrame):
         self.option_widgets[option_name] = widget
 
         return option_widget
+
+    def _create_settings_group_widget(self, option, option_name, current_options):
+        """创建设置组控件"""
+        # 创建可折叠组控件
+        group_widget = CollapsibleGroupWidget(option.name)
+
+        # 设置描述
+        if hasattr(option, 'description') and option.description:
+            group_widget.set_description(option.description)
+
+        # 获取当前组的启用状态
+        group_enabled = option.default
+        if option_name in current_options:
+            group_enabled = current_options[option_name].value
+
+        group_widget.set_group_enabled(group_enabled)
+
+        # 处理组内的每个设置
+        for sub_option in option.settings:
+            sub_option_name = f"{option_name}.{sub_option.name}"
+
+            # 创建子选项控件容器
+            sub_widget_container = QWidget()
+            sub_layout = QHBoxLayout(sub_widget_container)
+            sub_layout.setContentsMargins(0, 0, 0, 0)
+            sub_layout.setSpacing(8)
+
+            # 子选项标签
+            sub_label = QLabel(sub_option.name)
+            sub_label.setObjectName("subOptionLabel")
+            sub_label.setMinimumWidth(100)
+
+            if hasattr(sub_option, 'description') and sub_option.description:
+                sub_label.setToolTip(sub_option.description)
+
+            sub_layout.addWidget(sub_label)
+            sub_layout.addStretch()
+
+            # 根据子选项类型创建控件
+            if isinstance(sub_option, SelectOption):
+                widget = NoWheelComboBox()
+                widget.setMinimumWidth(120)
+
+                for choice in sub_option.choices:
+                    widget.addItem(choice.name, choice.value)
+
+                if sub_option_name in current_options:
+                    index = widget.findData(current_options[sub_option_name].value)
+                    if index >= 0:
+                        widget.setCurrentIndex(index)
+                else:
+                    # 设置默认值
+                    index = widget.findData(sub_option.default)
+                    if index >= 0:
+                        widget.setCurrentIndex(index)
+
+                widget.currentIndexChanged.connect(
+                    lambda index, w=widget, o_name=sub_option_name:
+                    self._on_option_changed(o_name, w.currentData())
+                )
+
+            elif isinstance(sub_option, BoolOption):
+                widget = QCheckBox()
+                widget.setObjectName("subOptionCheckBox")
+
+                if sub_option_name in current_options:
+                    widget.setChecked(current_options[sub_option_name].value)
+                else:
+                    widget.setChecked(sub_option.default)
+
+                widget.stateChanged.connect(
+                    lambda state, o_name=sub_option_name, cb=widget:
+                    self._on_option_changed(o_name, cb.isChecked())
+                )
+
+            elif isinstance(sub_option, InputOption):
+                widget = QLineEdit()
+                widget.setObjectName("subOptionLineEdit")
+                widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
+                widget.setMinimumWidth(120)
+
+                if sub_option_name in current_options:
+                    widget.setText(str(current_options[sub_option_name].value))
+                else:
+                    widget.setText(str(sub_option.default))
+
+                widget.editingFinished.connect(
+                    lambda o_name=sub_option_name, le=widget:
+                    self._on_option_changed(o_name, le.text())
+                )
+            else:
+                widget = QLabel("不支持的选项类型")
+                widget.setObjectName("notSupportedLabel")
+
+            sub_layout.addWidget(widget)
+
+            # 【重要修改】不再根据组的启用状态来设置子控件的启用状态
+            # widget.setEnabled(group_enabled)  # 移除这行
+
+            # 添加到组控件（传入容器和实际控件）
+            group_widget.add_sub_widget(sub_option.name, sub_widget_container, widget)
+
+            # 存储实际的控件引用（而不是容器）
+            self.option_widgets[sub_option_name] = widget
+
+        # 连接组启用状态改变信号
+        group_widget.group_enabled_changed.connect(
+            lambda enabled: self._on_settings_group_changed(option_name, enabled)
+        )
+
+        # 存储组控件引用
+        self.option_widgets[option_name] = group_widget
+
+        return group_widget
+
+    def _on_settings_group_changed(self, group_name, enabled):
+        """处理设置组启用状态改变"""
+        # 更新组本身的状态
+        self._on_option_changed(group_name, enabled)
+
+        # 记录日志
+        if self.logger:
+            if enabled:
+                self.logger.info(f"设置组 [{group_name}] 已启用")
+            else:
+                self.logger.info(f"设置组 [{group_name}] 已禁用")
+
+    def _get_sub_option_default_value(self, group_name, sub_option_name):
+        """获取子选项的默认值"""
+        if not self.current_resource_name:
+            return None
+
+        # 获取资源配置
+        full_resource_config = global_config.get_resource_config(self.current_resource_name)
+        if not full_resource_config:
+            return None
+
+        # 查找设置组
+        group_option = next(
+            (opt for opt in full_resource_config.options if opt.name == group_name),
+            None
+        )
+
+        if not group_option or not hasattr(group_option, 'settings'):
+            return None
+
+        # 查找子选项
+        sub_option = next(
+            (opt for opt in group_option.settings if opt.name == sub_option_name),
+            None
+        )
+
+        if sub_option:
+            return sub_option.default
+
+        return None
 
     def _on_option_changed(self, option_name, value):
         """处理选项值改变"""
@@ -342,17 +504,38 @@ class TaskOptionsWidget(QFrame):
         if not full_resource_config:
             return value
 
-        # 查找选项配置
-        original_option = next(
-            (opt for opt in full_resource_config.options if opt.name == option_name),
-            None
-        )
+        # 处理子选项的情况（格式：组名.选项名）
+        if '.' in option_name:
+            group_name, sub_option_name = option_name.split('.', 1)
+            # 查找设置组
+            group_option = next(
+                (opt for opt in full_resource_config.options if opt.name == group_name),
+                None
+            )
+            if group_option and isinstance(group_option, SettingsGroupOption):
+                # 在设置组中查找子选项
+                original_option = next(
+                    (opt for opt in group_option.settings if opt.name == sub_option_name),
+                    None
+                )
+            else:
+                return value
+        else:
+            # 查找选项配置
+            original_option = next(
+                (opt for opt in full_resource_config.options if opt.name == option_name),
+                None
+            )
 
         if not original_option:
             return value
 
         # 根据选项类型转换值
         if isinstance(original_option, BoolOption):
+            if not isinstance(value, bool):
+                value = str(value).lower() in ['true', '1', 'yes', 'y']
+        elif isinstance(original_option, SettingsGroupOption):
+            # 设置组的值应该是布尔类型
             if not isinstance(value, bool):
                 value = str(value).lower() in ['true', '1', 'yes', 'y']
         elif hasattr(original_option, 'option_type'):
