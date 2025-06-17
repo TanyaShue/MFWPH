@@ -6,7 +6,63 @@
 * {
     color: #333333;
 }
+/* 滚动条美化 */
+QScrollBar:vertical {
+    background: rgba(0,0,0,0.05);
+    width: 8px;
+}
 
+/* 按钮动画效果 */
+QPushButton {
+    transition: all 0.3s ease;
+}
+
+/* 资源项选中效果 */
+ResourceListItem[selected="true"] {
+    box-shadow: 0 4px 12px rgba(33, 150, 243, 0.3);
+}
+/* 左侧面板样式 */
+#leftPanel {
+    background-color: #f5f5f5;
+    border-right: 1px solid #e0e0e0;
+}
+
+#leftHeader {
+    background-color: white;
+    border-bottom: 1px solid #e0e0e0;
+}
+
+/* 资源列表项悬停效果 */
+ResourceListItem:hover {
+    background-color: #f0f0f0;
+    border-radius: 8px;
+}
+
+/* 圆形进度条样式 */
+#circularProgress {
+    background-color: transparent;
+    border: 3px solid #e0e0e0;
+    border-radius: 20px;
+}
+
+#circularProgress::chunk {
+    background-color: #4CAF50;
+    border-radius: 20px;
+}
+
+/* 资源信息卡片 */
+#resourceInfoCard {
+    background-color: white;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+}
+
+/* 详情标签页 */
+#detailTabs {
+    background-color: white;
+    border: 1px solid #e0e0e0;
+    border-radius: 8px;
+}
 /* 主要背景色 */
 QMainWindow  {
     background-color: #f5f5f5;

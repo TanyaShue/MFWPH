@@ -8,11 +8,13 @@ from PySide6.QtWidgets import QApplication, QStyleFactory
 from PySide6.QtGui import QPalette, QColor
 from qasync import QEventLoop
 
+from app.models.config.app_config import Resource
 from app.models.logging.log_manager import log_manager
 from app.main_window import MainWindow
 from app.utils.notification_manager import notification_manager
 from app.models.config.global_config import global_config
 from app.pages.settings_page import AppUpdateChecker
+from app.utils.update_check import UpdateChecker
 
 # 获取应用程序日志记录器
 logger = log_manager.get_app_logger()
@@ -73,16 +75,16 @@ def kill_processes():
 
     app_logger.info("Process cleanup completed")
 
-
-class StartupUpdateChecker:
-    """启动时的更新检查器"""
+class StartupResourceUpdateChecker:
+    """启动时的资源更新检查器"""
 
     def __init__(self, main_window):
         self.main_window = main_window
         self.update_checker_thread = None
+        self.resources_with_updates = []
 
     def check_for_updates(self):
-        """检查是否需要自动检查更新"""
+        """检查是否需要自动检查资源更新"""
         try:
             # 获取自动检查更新配置
             auto_check = global_config.get_app_config().auto_check_update
@@ -90,18 +92,27 @@ class StartupUpdateChecker:
                 auto_check = False
 
             if auto_check:
-                logger.info("自动检查更新已启用，开始检查...")
+                logger.info("自动检查资源更新已启用，开始检查...")
+
+                # 获取所有已安装的资源
+                resources = self._get_installed_resources()
+
+                if not resources:
+                    logger.info("没有已安装的资源需要检查更新")
+                    return
+
                 # 显示正在检查更新的通知
                 notification_manager.show_info(
-                    "正在后台检查应用更新...",
+                    f"正在后台检查 {len(resources)} 个资源的更新...",
                     "自动更新检查"
                 )
 
-                # 创建并启动更新检查线程
-                self.update_checker_thread = AppUpdateChecker()
-                self.update_checker_thread.update_found.connect(self._handle_update_found)
-                self.update_checker_thread.update_not_found.connect(self._handle_update_not_found)
-                self.update_checker_thread.check_failed.connect(self._handle_check_failed)
+                # 创建并启动资源更新检查线程
+                self.update_checker_thread = UpdateChecker(resources, single_mode=False)
+                self.update_checker_thread.update_found.connect(self._handle_resource_update_found)
+                self.update_checker_thread.update_not_found.connect(self._handle_resource_update_not_found)
+                self.update_checker_thread.check_failed.connect(self._handle_resource_check_failed)
+                self.update_checker_thread.check_completed.connect(self._handle_check_completed)
                 self.update_checker_thread.start()
             else:
                 logger.info("自动检查更新未启用")
@@ -109,30 +120,65 @@ class StartupUpdateChecker:
         except Exception as e:
             logger.error(f"启动时检查更新配置失败: {e}")
 
-    def _handle_update_found(self, latest_version, current_version, download_url):
-        """处理发现更新的情况"""
-        logger.info(f"发现新版本: {latest_version} (当前版本: {current_version})")
+    def _get_installed_resources(self):
+        """获取所有已安装的资源"""
+        try:
+            resources=global_config.resource_configs.values()
+            return resources
 
-        # 使用通知管理器显示更新可用的通知
-        notification_manager.show_warning(
-            f"发现新版本 {latest_version} 可用！\n当前版本：{current_version}\n请前往设置页面更新。",
-            "有可用更新",
-            duration=10000  # 显示10秒
-        )
+        except Exception as e:
+            logger.error(f"获取已安装资源列表失败: {e}")
+            return []
 
-        # 可选：存储更新信息供后续使用
-        if hasattr(self.main_window, 'set_update_available'):
-            self.main_window.set_update_available(True, latest_version)
+    def _handle_resource_update_found(self, resource_name, latest_version, current_version, download_url, update_type):
+        """处理发现资源更新的情况"""
+        logger.info(f"资源 {resource_name} 发现新版本: {latest_version} (当前版本: {current_version})")
 
-    def _handle_update_not_found(self):
-        """处理未发现更新的情况"""
-        logger.info("当前已是最新版本")
-        # 启动时如果没有更新，不显示通知，避免打扰用户
+        # 收集有更新的资源
+        self.resources_with_updates.append({
+            'name': resource_name,
+            'latest_version': latest_version,
+            'current_version': current_version,
+            'download_url': download_url,
+            'update_type': update_type
+        })
 
-    def _handle_check_failed(self, error_message):
-        """处理检查失败的情况"""
-        logger.error(f"自动检查更新失败: {error_message}")
-        # 只在日志中记录，不显示通知，避免启动时的错误提示打扰用户
+    def _handle_resource_update_not_found(self, resource_name):
+        """处理资源未发现更新的情况"""
+        logger.info(f"资源 {resource_name} 已是最新版本")
+
+    def _handle_resource_check_failed(self, resource_name, error_message):
+        """处理资源检查失败的情况"""
+        logger.error(f"资源 {resource_name} 检查更新失败: {error_message}")
+
+    def _handle_check_completed(self, total_checked, updates_found):
+        """处理所有资源检查完成"""
+        logger.info(f"资源更新检查完成: 共检查 {total_checked} 个资源，发现 {updates_found} 个更新")
+
+        if updates_found > 0:
+            # 构建更新通知消息
+            update_list = []
+            for update in self.resources_with_updates[:3]:  # 最多显示3个
+                update_list.append(f"• {update['name']} → {update['latest_version']}")
+
+            if updates_found > 3:
+                update_list.append(f"• ... 以及其他 {updates_found - 3} 个资源")
+
+            message = f"发现 {updates_found} 个资源有可用更新：\n" + "\n".join(update_list)
+
+            # 显示更新通知
+            notification_manager.show_warning(
+                message + "\n\n请前往资源管理页面查看详情",
+                "资源更新可用",
+                duration=10000  # 显示10秒
+            )
+
+            # 可选：通知主窗口有资源更新
+            if hasattr(self.main_window, 'set_resource_updates_available'):
+                self.main_window.set_resource_updates_available(True, self.resources_with_updates)
+        else:
+            # 所有资源都是最新的，不显示通知（避免打扰用户）
+            logger.info("所有资源均为最新版本")
 
 
 if __name__ == "__main__":
@@ -155,11 +201,8 @@ if __name__ == "__main__":
     notification_manager.set_reference_window(window)
     window.show()
 
-    # 显示启动成功通知
-    QTimer.singleShot(500, lambda: notification_manager.show_success("MFWPH 启动成功!", "欢迎来到MFWPH"))
-
-    # 创建启动更新检查器
-    startup_checker = StartupUpdateChecker(window)
+    # 创建启动资源更新检查器（修改：使用资源更新检查器而不是应用更新检查器）
+    startup_checker = StartupResourceUpdateChecker(window)
 
     # 延迟1秒后检查更新，确保主窗口完全加载
     QTimer.singleShot(1000, startup_checker.check_for_updates)
