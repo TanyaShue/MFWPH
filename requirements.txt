@@ -7,3 +7,4 @@ asyncify
 qasync
 cryptography
 semver
+pandas
