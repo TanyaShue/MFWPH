@@ -1,5 +1,6 @@
 # -*- coding: UTF-8 -*-
 import importlib.util
+import json
 import os
 import subprocess
 import sys
@@ -220,7 +221,6 @@ class TaskExecutor(QObject):
 
     def __init__(self, device_config: DeviceConfig, parent=None):
         super().__init__(parent)
-        self.agent_identifier = None
         self.agent = None
         self.device_name = device_config.device_name
         self.logger = log_manager.get_device_logs(self.device_name)
@@ -366,8 +366,8 @@ class TaskExecutor(QObject):
 
             if self.create_agent():
                 self.logger.info(f"agent 初始化成功")
-            elif self.register_custom(task.data):
-                self.logger.info(f"使用内置自定义方法")
+            # elif self.register_custom(task.data):
+            #     self.logger.info(f"使用内置自定义方法")
 
             # Create and start the task runner
             runner = TaskRunner(task, self)
@@ -448,10 +448,10 @@ class TaskExecutor(QObject):
     def create_agent(self) -> bool:
         """Create and start MAA Agent process"""
         # Try with system Python first, then fallback to current executable if needed
-        return self._try_create_agent_with_system_python()
+        return self._try_create_agent_with_runtime_python()
 
-    def _try_create_agent_with_system_python(self) -> bool:
-        """Try to create and start MAA Agent with system Python"""
+    def _try_create_agent_with_runtime_python(self) -> bool:
+        """Try to create and start MAA Agent with bundled runtime Python"""
         try:
             # Ensure we have a running task
             if not self._running_task:
@@ -473,29 +473,31 @@ class TaskExecutor(QObject):
                 self.agent = AgentClient()
                 self.agent.bind(self.resource)
 
-            # Create socket identifier if not exists
-            if not self.agent_identifier:
-                self.agent_identifier = self.agent.identifier()
-                if not self.agent_identifier:
-                    self.logger.error("Failed to create agent socket")
-                    return False
 
             # Resource path is the directory containing the resource files
             resource_dir = self._running_task.data.resource_path
 
-            # Build the command with parameters (using system Python)
-            cmd = ["python", custom_path]
+            # Try to find Python executable using multiple strategies
+            python_executable = self._find_runtime_python(resource_dir)
+
+            if not python_executable:
+                # If no bundled Python found, fall back to system Python
+                self.logger.warning("Runtime Python not found, falling back to system Python")
+                python_executable = "python"
+
+            # Build the command with parameters
+            cmd = [python_executable, custom_path]
 
             # Add custom parameters if provided
             if custom_params:
                 cmd.extend(custom_params.split())
 
             # Add socket ID parameter
-            cmd.extend(["-id", self.agent_identifier])
+            cmd.extend(["-id", self.agent.identifier])
 
-            self.logger.debug(f"Starting Agent process with system Python: {' '.join(cmd)} in directory {resource_dir}")
+            self.logger.debug(f"Starting Agent process with Python: {' '.join(cmd)} in directory {resource_dir}")
 
-            # Start the Agent process with pipe redirection - removed bufsize parameter
+            # Start the Agent process with pipe redirection
             # Prepare creation flags based on the platform
             creation_flags = subprocess.CREATE_NO_WINDOW
 
@@ -516,115 +518,77 @@ class TaskExecutor(QObject):
             # Check if process started correctly
             if self.agent_process.poll() is not None:
                 # Process terminated prematurely
-                w = f"Agent process failed to start with system Python with exit code: {self.agent_process.returncode}"
+                w = f"Agent process failed to start with exit code: {self.agent_process.returncode}"
                 self.logger.warning(w)
                 return False
 
             # Now connect to the agent
             connection_result = self.agent.connect()
             if not connection_result:
-                self.logger.warning("Failed to connect to agent with system Python")
+                self.logger.warning("Failed to connect to agent")
                 self._terminate_agent_process()
                 return False
 
-            self.logger.debug("Agent connected successfully with system Python")
+            self.logger.debug("Agent connected successfully")
             return self.agent._api_properties_initialized
 
         except Exception as e:
-            error_msg = f"Agent initialization with system Python error: {str(e)}"
+            error_msg = f"Agent initialization error: {str(e)}"
             self.logger.warning(error_msg)
             self._terminate_agent_process()
             self.agent.disconnect()
             return False
 
-    # def _try_create_agent_with_current_python(self) -> bool:
-    #     """Try to create and start MAA Agent using the current Python interpreter (from exe)"""
-    #     try:
-    #         self.logger.info("Attempting to create agent with current Python interpreter (fallback method)")
-    #
-    #         # Ensure we have a running task
-    #         if not self._running_task:
-    #             self.logger.error("Cannot create agent: No running task")
-    #             return False
-    #
-    #         # Get resource configuration
-    #         resource_config = global_config.get_resource_config(self._running_task.data.resource_name)
-    #
-    #         if not resource_config:
-    #             self.logger.error(f"Resource config not found for {self._running_task.data.resource_name}")
-    #             return False
-    #
-    #         custom_path = resource_config.custom_path
-    #         custom_params = resource_config.custom_prams  # Note: This field has a typo in the original code
-    #
-    #         # Create agent client if not exists
-    #         if not self.agent:
-    #             self.agent = AgentClient()
-    #             self.agent.bind(self.resource)
-    #
-    #         # Create socket identifier if not exists
-    #         if not self.agent_identifier:
-    #             self.agent_identifier = self.agent.identifier()
-    #             if not self.agent_identifier:
-    #                 self.logger.error("Failed to create agent socket")
-    #                 return False
-    #
-    #         # Resource path is the directory containing the resource files
-    #         resource_dir = self._running_task.data.resource_path
-    #
-    #         # Build the command with parameters (using current Python interpreter)
-    #         cmd = [sys.executable, custom_path]
-    #
-    #         # Add custom parameters if provided
-    #         if custom_params:
-    #             cmd.extend(custom_params.split())
-    #
-    #         # Add socket ID parameter
-    #         cmd.extend(["-id", self.agent_identifier])
-    #
-    #         self.logger.debug(
-    #             f"Starting Agent process with current Python interpreter: {' '.join(cmd)} in directory {resource_dir}")
-    #
-    #         # Start the Agent process with pipe redirection
-    #         creation_flags = subprocess.CREATE_NO_WINDOW
-    #
-    #         self.agent_process = subprocess.Popen(
-    #             cmd,
-    #             cwd=resource_dir,  # Set working directory to resource path
-    #             stdout=subprocess.PIPE,
-    #             stderr=subprocess.PIPE,
-    #             text=False,  # Binary mode for output handling
-    #             creationflags=creation_flags  # Hide console window on Windows
-    #         )
-    #
-    #         # Start threads to capture and log output
-    #         self._start_output_capture_threads()
-    #
-    #         # Wait briefly for the process to start
-    #         time.sleep(1)
-    #
-    #         # Check if process started correctly
-    #         if self.agent_process.poll() is not None:
-    #             # Process terminated prematurely
-    #             error_msg = f"Agent process failed to start with current Python interpreter with exit code: {self.agent_process.returncode}"
-    #             self.logger.error(error_msg)
-    #             return False
-    #
-    #         # Now connect to the agent
-    #         connection_result = self.agent.connect()
-    #         if not connection_result:
-    #             self.logger.error("Failed to connect to agent with current Python interpreter")
-    #             self._terminate_agent_process()
-    #             return False
-    #
-    #         self.logger.debug("Agent connected successfully with current Python interpreter")
-    #         return self.agent._api_properties_initialized
-    #
-    #     except Exception as e:
-    #         error_msg = f"Agent initialization with current Python interpreter error: {str(e)}"
-    #         self.logger.error(error_msg)
-    #         self._terminate_agent_process()
-    #         return False
+    def _find_runtime_python(self, base_dir: str) -> str:
+        """Find the runtime Python executable
+
+        Args:
+            base_dir: Base directory to search from
+
+        Returns:
+            Path to Python executable or None if not found
+        """
+        # Strategy 1: Try to read python_config.json
+        config_paths = [
+            os.path.join(base_dir, "runtime", "python_config.json"),
+            os.path.join(os.path.dirname(base_dir), "runtime", "python_config.json"),
+        ]
+
+        for config_path in config_paths:
+            if os.path.exists(config_path):
+                try:
+                    with open(config_path, 'r', encoding='utf-8') as f:
+                        config = json.load(f)
+                        python_path = config.get('python_path')
+                        if python_path:
+                            # Convert relative path to absolute path
+                            abs_path = os.path.join(os.path.dirname(config_path), "..", python_path)
+                            abs_path = os.path.abspath(abs_path)
+                            if os.path.exists(abs_path):
+                                self.logger.debug(f"Found runtime Python from config: {abs_path}")
+                                return abs_path
+                except Exception as e:
+                    self.logger.warning(f"Failed to read python_config.json: {e}")
+
+        # Strategy 2: Check common locations
+        python_paths = [
+            # Direct paths
+            os.path.join(base_dir, "runtime", "python", "python.exe"),
+            os.path.join(base_dir, "runtime", "python", "python.bat"),
+            # Parent directory paths
+            os.path.join(os.path.dirname(base_dir), "runtime", "python", "python.exe"),
+            os.path.join(os.path.dirname(base_dir), "runtime", "python", "python.bat"),
+            # Two levels up (in case we're in a subdirectory)
+            os.path.join(os.path.dirname(os.path.dirname(base_dir)), "runtime", "python", "python.exe"),
+            os.path.join(os.path.dirname(os.path.dirname(base_dir)), "runtime", "python", "python.bat"),
+        ]
+
+        for path in python_paths:
+            if os.path.exists(path):
+                self.logger.debug(f"Found runtime Python at: {path}")
+                return path
+
+        return None
 
     def _start_output_capture_threads(self):
         """Start threads to capture and log subprocess output"""

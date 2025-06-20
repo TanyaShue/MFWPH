@@ -475,3 +475,4 @@ tools/ImageCropper/**/*.png
 */__pycache__/
 MFWPH_*.spec
 /assets/pending_updates/
+/assets/resource/MaaYYs/runtime/
