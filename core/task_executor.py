@@ -273,6 +273,7 @@ class TaskExecutor(QObject):
         self.process_next_task_signal.connect(self._process_next_task, Qt.QueuedConnection)
         self.scheduled_task_added.connect(self._handle_scheduled_task_added)
         self.scheduled_task_removed.connect(self._handle_scheduled_task_removed)
+
     def on_recognized(self, reco_id: int, name: str, hit: bool):
         self.logger.debug(f"当前识别id: {reco_id},节点名称: {name},,结果: {hit}")
 

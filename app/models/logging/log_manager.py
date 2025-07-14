@@ -339,3 +339,4 @@ class ContextLogger:
 
 # Create a singleton instance
 log_manager = LogManager()
+app_logger = log_manager.get_app_logger()

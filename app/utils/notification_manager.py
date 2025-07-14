@@ -110,8 +110,6 @@ class AnimatedProgressBar(QWidget):
             path.addRoundedRect(0, 0, progress_width, self.height(), 3, 3)
             painter.drawPath(path)
 
-            # 移除光泽效果
-
 
 class NotificationWidget(QWidget):
     """优化的通知弹窗组件"""
@@ -126,12 +124,12 @@ class NotificationWidget(QWidget):
         self._is_hovered = False
         self._opacity = 0.0
 
-        # 设置窗口属性
+        # 设置窗口属性 - 移除 WindowStaysOnTopHint
         self.setWindowFlags(
             Qt.Window |
             Qt.FramelessWindowHint |
-            Qt.WindowStaysOnTopHint |
-            Qt.Tool
+            Qt.Tool |
+            Qt.WindowDoesNotAcceptFocus  # 不接受焦点，避免干扰主窗口
         )
         self.setAttribute(Qt.WA_TranslucentBackground, True)
         self.setAttribute(Qt.WA_ShowWithoutActivating, True)
@@ -273,7 +271,7 @@ class NotificationWidget(QWidget):
 
         main_layout.addWidget(self.content_widget)
 
-        # 设置样式 - 移除阴影效果
+        # 设置样式
         self.setStyleSheet(f"""
             QWidget#content {{
                 background: rgba(255, 255, 255, 0.95);
@@ -283,14 +281,12 @@ class NotificationWidget(QWidget):
         """)
 
     def paintEvent(self, event):
-        """自定义绘制 - 移除阴影"""
+        """自定义绘制"""
         painter = QPainter(self)
         painter.setRenderHint(QPainter.Antialiasing)
 
         # 设置整体透明度
         painter.setOpacity(self._opacity)
-
-        # 不再绘制阴影
 
     @Property(float)
     def opacity(self):
@@ -302,7 +298,7 @@ class NotificationWidget(QWidget):
         self.update()
 
     def setupAnimations(self):
-        """设置动画效果 - 移除阴影相关动画"""
+        """设置动画效果"""
         # 淡入动画组
         self.show_animation = QParallelAnimationGroup()
 
@@ -486,6 +482,7 @@ class NotificationManager(QObject):
             self.margin = 20
             self.reference_window = None
             self._event_filter_installed = False
+            self._window_state_timer = None
 
     def set_reference_window(self, window):
         """设置参考窗口"""
@@ -498,6 +495,40 @@ class NotificationManager(QObject):
             window.installEventFilter(self)
             self._event_filter_installed = True
 
+            # 设置定时器检查窗口状态
+            if not self._window_state_timer:
+                self._window_state_timer = QTimer()
+                self._window_state_timer.timeout.connect(self._check_window_state)
+                self._window_state_timer.start(100)  # 每100ms检查一次
+
+    def _check_window_state(self):
+        """检查主窗口状态并更新通知窗口"""
+        if not self.reference_window:
+            return
+
+        # 检查主窗口是否被激活
+        is_active = self.reference_window.isActiveWindow()
+
+        # 检查主窗口是否最小化
+        is_minimized = self.reference_window.isMinimized()
+
+        for notification in self.notifications:
+            try:
+                if is_minimized:
+                    # 如果主窗口最小化，隐藏通知
+                    notification.hide()
+                elif is_active:
+                    # 如果主窗口激活，显示通知并提升到前面
+                    notification.show()
+                    notification.raise_()
+                    notification.activateWindow()
+                else:
+                    # 如果主窗口不是活动窗口，只显示通知但不提升
+                    notification.show()
+            except RuntimeError:
+                # 通知已被删除
+                continue
+
     def eventFilter(self, obj, event):
         """事件过滤器"""
         if obj == self.reference_window:
@@ -505,10 +536,29 @@ class NotificationManager(QObject):
                 self.repositionNotifications()
             elif event.type() == QEvent.Close:
                 self.closeAllNotifications()
+            elif event.type() == QEvent.WindowActivate:
+                # 主窗口被激活时，将通知提到前面
+                self._bring_notifications_to_front()
+            elif event.type() == QEvent.WindowStateChange:
+                # 窗口状态改变时更新通知显示
+                self._check_window_state()
         return super().eventFilter(obj, event)
+
+    def _bring_notifications_to_front(self):
+        """将所有通知提到前面"""
+        for notification in self.notifications:
+            try:
+                notification.raise_()
+                notification.activateWindow()
+            except RuntimeError:
+                continue
 
     def closeAllNotifications(self):
         """关闭所有通知"""
+        if self._window_state_timer:
+            self._window_state_timer.stop()
+            self._window_state_timer = None
+
         for notification in self.notifications.copy():
             try:
                 notification.close()
@@ -538,11 +588,17 @@ class NotificationManager(QObject):
             oldest = self.notifications[0]
             oldest.close()
 
+        # 创建通知，设置父窗口以确保层级关系
         notification = NotificationWidget(title, message, level, duration)
         notification.closed.connect(self.onNotificationClosed)
 
         self.notifications.append(notification)
         self.positionNotification(notification, len(self.notifications) - 1)
+
+        # 如果主窗口是活动窗口，将通知提到前面
+        if self.reference_window and self.reference_window.isActiveWindow():
+            notification.raise_()
+            notification.activateWindow()
 
     def positionNotification(self, notification, index):
         """定位通知"""
@@ -639,4 +695,3 @@ class NotificationManager(QObject):
 
 # 创建全局通知管理器实例
 notification_manager = NotificationManager()
-
