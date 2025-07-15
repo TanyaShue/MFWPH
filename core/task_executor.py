@@ -632,20 +632,12 @@ class TaskExecutor(QObject):
 
         # 取消当前任务
         async with self._task_lock:
-            if self._current_task:
-                self._current_task.cancel()
-                if self._tasker:
-                    loop = asyncio.get_event_loop()
-                    try:
-                        await loop.run_in_executor(None, self._tasker.post_stop)
-                    except Exception as e:
-                        self.logger.error(f"停止当前任务时出错: {e}")
-
             # 取消队列中的任务
             for task in self._task_queue:
                 task.cancel()
                 self.task_canceled.emit(task.id)
             self._task_queue.clear()
+        self._tasker.post_stop().wait()
 
         # 终止Agent
         await self._terminate_agent()

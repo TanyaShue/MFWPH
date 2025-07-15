@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from PySide6.QtCore import QMutexLocker, Qt
+from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QIcon, QPalette
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel, QPushButton, QFrame
@@ -12,6 +12,7 @@ from app.models.logging.log_manager import log_manager
 from app.widgets.add_device_dialog import AddDeviceDialog
 from core.scheduled_task_manager import scheduled_task_manager
 from core.tasker_manager import task_manager
+from core.device_status_manager import device_status_manager, DeviceStatusInfo, DeviceStatus
 
 
 class BasicInfoWidget(QFrame):
@@ -29,10 +30,15 @@ class BasicInfoWidget(QFrame):
         self.setFrameShape(QFrame.StyledPanel)
         self.setMaximumHeight(90)  # 限制最大高度
         self.setMinimumHeight(80)  # 设置最小高度
+
+        # 注册设备到状态管理器
+        device_status_manager.register_device(device_name)
+
         self.init_ui()
-        # self.connect_signals()
-        # 初始化显示状态
-        # self.update_status_display()
+        self.connect_signals()
+
+        # 初始化显示
+        self.refresh_display()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -119,148 +125,55 @@ class BasicInfoWidget(QFrame):
             layout.addWidget(error_label)
 
     def connect_signals(self):
-        """连接信号到状态更新函数"""
-        # 连接TaskerManager的全局信号
-        task_manager.device_added.connect(self.on_device_changed)
-        task_manager.device_removed.connect(self.on_device_changed)
-        # task_manager.device_status_changed.connect(self.update_status_display)
-        # task_manager.scheduled_task_modified.connect(self.update_status_display)
+        """连接信号"""
+        # 只监听状态变化信号
+        device_status_manager.status_changed.connect(self.on_status_changed)
 
-        # 如果设备执行器已存在，连接其信号
-        if task_manager.is_device_active(self.device_name):
-            self.connect_executor_signals()
-
-    def connect_executor_signals(self):
-        """连接设备执行器的信号"""
-        with QMutexLocker(task_manager._mutex):
-            executor = task_manager._executors.get(self.device_name)
-            if not executor:
-                return
-
-            # 连接执行器信号
-            executor.task_started.connect(self.update_status_display)
-            executor.task_completed.connect(self.update_status_display)
-            executor.task_failed.connect(self.update_status_display)
-            executor.task_canceled.connect(self.update_status_display)
-            executor.progress_updated.connect(lambda *args: self.update_status_display())
-            executor.executor_started.connect(self.update_status_display)
-            executor.executor_stopped.connect(self.update_status_display)
-            executor.task_queued.connect(self.update_status_display)
-
-            # 连接设备状态信号
-            state = executor.get_state()
-            if state:
-                state.status_changed.connect(lambda *args: self.update_status_display())
-                state.error_occurred.connect(lambda *args: self.update_status_display())
-
-    def on_device_changed(self, device_name):
-        """设备添加/移除时的处理函数"""
+    def on_status_changed(self, device_name: str, status_info: DeviceStatusInfo):
+        """当状态变化时更新显示"""
         if device_name != self.device_name:
             return
 
-        self.update_status_display()
+        self.update_display(status_info)
 
-        if task_manager.is_device_active(self.device_name):
-            self.connect_executor_signals()
+    def refresh_display(self):
+        """刷新显示（从状态管理器获取最新状态）"""
+        status_info = device_status_manager.get_device_status(self.device_name)
+        if status_info:
+            self.update_display(status_info)
 
-    def update_status_display(self, *args, **kwargs):
-        """更新任务状态和定时任务信息显示"""
-        if not self.device_config:
-            return
-
-        # 更新定时任务信息
-        has_enabled_schedules = any(
-            r.schedules_enable and r.schedules and any(s.enabled for s in r.schedules)
-            for r in self.device_config.resources
-        )
-
-        if has_enabled_schedules:
-            device_tasks = [task for task in scheduled_task_manager.get_scheduled_tasks_info()
-                            if task['device_name'] == self.device_name]
-
-            if device_tasks:
-                next_run_times = [datetime.strptime(task['next_run'], '%Y-%m-%d %H:%M:%S')
-                                  for task in device_tasks if task.get('next_run') != 'Unknown']
-                if next_run_times:
-                    next_time = min(next_run_times)
-                    schedule_text = next_time.strftime('%H:%M')
-                    self.schedule_value.setToolTip(f"下次执行时间: {next_time.strftime('%Y-%m-%d %H:%M:%S')}")
-                else:
-                    schedule_text = "已启用"
-                    self.schedule_value.setToolTip("定时任务已启用，等待计划执行")
-            else:
-                schedule_text = "已启用"
-                self.schedule_value.setToolTip("定时任务已启用，等待计划执行")
-            if hasattr(self, 'clock_icon'):
-                self.clock_icon.setVisible(True)
-        else:
-            schedule_text = "未启用"
-            self.schedule_value.setToolTip("未设置定时任务")
-            if hasattr(self, 'clock_icon'):
-                self.clock_icon.setVisible(False)
-
-        if hasattr(self, 'schedule_value'):
-            self.schedule_value.setText(schedule_text)
-
-        # 更新任务运行状态
-        is_active = task_manager.is_device_active(self.device_name)
-        is_running = False
-        status_color = "#999999"  # 默认灰色
-        status_tooltip = "设备离线"
-
-        # if is_active:
-        #     device_state = task_manager.get_executor_state(self.device_name)
-        #     if device_state:
-        #         status = device_state.status.value
-        #
-        #         # 设置状态颜色和提示
-        #         status_config = {
-        #             "idle": ("#4CAF50", "设备就绪"),
-        #             "running": ("#2196F3", "正在执行任务"),
-        #             "error": ("#F44336", f"错误: {device_state.error or '未知错误'}"),
-        #             "stopping": ("#FF9800", "正在停止"),
-        #             "scheduled": ("#9C27B0", "已设置定时任务"),
-        #             "waiting": ("#607D8B", "等待执行"),
-        #             "disconnected": ("#999999", "设备未连接"),
-        #             "connecting": ("#03A9F4", "正在连接")
-        #         }
-        #
-        #         config = status_config.get(status, ("#999999", "未知状态"))
-        #         status_color = config[0]
-        #         status_tooltip = config[1]
-        #
-        #         # 检查是否在运行状态
-        #         if status == "running":
-        #             is_running = True
-        #
-        #         # 添加队列信息到提示
-        #         queue_length = task_manager.get_device_queue_info().get(self.device_name, 0)
-        #         if queue_length > 0:
-        #             status_tooltip += f"，队列中还有 {queue_length} 个任务"
-        #
-        #     else:
-        #         status_tooltip = "未知状态"
-        # else:
-        #     status_tooltip = "设备未启动"
+    def update_display(self, status_info: DeviceStatusInfo):
+        """根据状态信息更新UI显示"""
+        # 获取UI配置
+        ui_config = device_status_manager.get_ui_config(status_info.status)
 
         # 更新状态指示器
         if hasattr(self, 'status_indicator'):
             self.status_indicator.setStyleSheet(f"""
                 QLabel {{
-                    background-color: {status_color};
+                    background-color: {ui_config['color']};
                     border-radius: 5px;
                 }}
             """)
-            self.status_indicator.setToolTip(status_tooltip)
 
-        # 更新按钮状态
+            # 构建提示文本
+            tooltip = ui_config['tooltip']
+            if status_info.error_message:
+                tooltip += f": {status_info.error_message}"
+            if status_info.queue_length > 0:
+                tooltip += f"，队列中还有 {status_info.queue_length} 个任务"
+            self.status_indicator.setToolTip(tooltip)
+
+        # 更新按钮
         if hasattr(self, 'run_btn'):
-            if is_running:
-                self.run_btn.setText("停止")
+            self.run_btn.setText(ui_config['button_text'])
+            self.run_btn.setEnabled(ui_config['button_enabled'])
+
+            if status_info.is_running:
                 self.run_btn.setIcon(QIcon("assets/icons/stop.svg"))
                 self.run_btn.setToolTip("停止当前任务")
                 self.run_btn.setStyleSheet("""
-                    QPushButton#compactPrimaryButton {
+                    QPushButton#primaryButton {
                         background-color: #F44336;
                         color: white;
                         border: none;
@@ -268,19 +181,18 @@ class BasicInfoWidget(QFrame):
                         padding: 4px 16px;
                         font-size: 13px;
                     }
-                    QPushButton#compactPrimaryButton:hover {
+                    QPushButton#primaryButton:hover {
                         background-color: #D32F2F;
                     }
-                    QPushButton#compactPrimaryButton:disabled {
+                    QPushButton#primaryButton:disabled {
                         background-color: #cccccc;
                     }
                 """)
             else:
-                self.run_btn.setText("运行")
                 self.run_btn.setIcon(QIcon("assets/icons/play.svg"))
                 self.run_btn.setToolTip("开始执行任务")
                 self.run_btn.setStyleSheet("""
-                    QPushButton#compactPrimaryButton {
+                    QPushButton#primaryButton {
                         background-color: #4CAF50;
                         color: white;
                         border: none;
@@ -288,13 +200,33 @@ class BasicInfoWidget(QFrame):
                         padding: 4px 16px;
                         font-size: 13px;
                     }
-                    QPushButton#compactPrimaryButton:hover {
+                    QPushButton#primaryButton:hover {
                         background-color: #45A049;
                     }
-                    QPushButton#compactPrimaryButton:disabled {
+                    QPushButton#primaryButton:disabled {
                         background-color: #cccccc;
                     }
                 """)
+
+            # 刷新样式
+            self.run_btn.style().unpolish(self.run_btn)
+            self.run_btn.style().polish(self.run_btn)
+
+        # 更新定时任务显示
+        if hasattr(self, 'schedule_value'):
+            self.schedule_value.setText(status_info.scheduled_time_text)
+
+            if status_info.has_scheduled_tasks:
+                self.clock_icon.setVisible(True)
+                if status_info.next_scheduled_time:
+                    self.schedule_value.setToolTip(
+                        f"下次执行时间: {status_info.next_scheduled_time.strftime('%Y-%m-%d %H:%M:%S')}"
+                    )
+                else:
+                    self.schedule_value.setToolTip("定时任务已启用，等待计划执行")
+            else:
+                self.clock_icon.setVisible(False)
+                self.schedule_value.setToolTip("未设置定时任务")
 
     @asyncSlot()
     async def handle_run_stop_action(self):
@@ -302,16 +234,12 @@ class BasicInfoWidget(QFrame):
         if not self.device_config:
             return
 
-        # Check if device is running
-        is_active = task_manager.is_device_active(self.device_name)
-        is_running = False
+        # 从状态管理器获取当前状态
+        status_info = device_status_manager.get_device_status(self.device_name)
+        if not status_info:
+            return
 
-        if is_active:
-            device_state = task_manager.get_executor_state(self.device_name)
-            if device_state and device_state.status.value == "running":
-                is_running = True
-
-        if is_running:
+        if status_info.is_running:
             # Stop the device
             await self.stop_device_tasks()
         else:
@@ -325,24 +253,16 @@ class BasicInfoWidget(QFrame):
             if self.device_config:
                 self.logger.info("开始执行设备任务")
 
-                # Disable button during execution
+                # 禁用按钮
                 self.run_btn.setEnabled(False)
-                self.run_btn.setText("启动中...")
 
                 success = await task_manager.run_device_all_resource_task(self.device_config)
 
                 if success:
                     self.logger.info("设备任务执行完成")
 
-                self.run_btn.setEnabled(True)
-                self.update_status_display()
-
-                if task_manager.is_device_active(self.device_name):
-                    self.connect_executor_signals()
         except Exception as e:
             self.logger.error(f"运行任务时出错: {str(e)}")
-            self.run_btn.setEnabled(True)
-            self.update_status_display()
 
     @asyncSlot()
     async def stop_device_tasks(self):
@@ -351,9 +271,8 @@ class BasicInfoWidget(QFrame):
             if self.device_config:
                 self.logger.info("停止设备任务")
 
-                # Disable button during stopping
+                # 禁用按钮
                 self.run_btn.setEnabled(False)
-                self.run_btn.setText("停止中...")
 
                 # Stop the device executor
                 success = await task_manager.stop_executor(self.device_name)
@@ -361,12 +280,8 @@ class BasicInfoWidget(QFrame):
                 if success:
                     self.logger.info("设备任务已停止")
 
-                self.run_btn.setEnabled(True)
-                self.update_status_display()
         except Exception as e:
             self.logger.error(f"停止任务时出错: {str(e)}")
-            self.run_btn.setEnabled(True)
-            self.update_status_display()
 
     def open_settings_dialog(self):
         """Open device settings dialog"""
@@ -380,7 +295,6 @@ class BasicInfoWidget(QFrame):
             if updated_device_config:
                 self.logger.info("设备配置已更新")
                 self.device_config = updated_device_config
-                self.update_status_display()
 
                 if hasattr(self.parent_widget, 'refresh_ui'):
                     self.parent_widget.refresh_ui()
@@ -411,7 +325,9 @@ class BasicInfoWidget(QFrame):
 
         self.init_ui()
         self.connect_signals()
-        self.update_status_display()  # 确保状态显示更新
+
+        # 刷新显示
+        self.refresh_display()
 
     def _clear_layout(self, layout):
         """递归清除布局"""
@@ -426,5 +342,13 @@ class BasicInfoWidget(QFrame):
     def showEvent(self, event):
         """当组件显示时更新状态"""
         super().showEvent(event)
-        # 确保显示时状态是最新的
-        self.update_status_display()
+        self.refresh_display()
+
+    def closeEvent(self, event):
+        """清理资源"""
+        # 断开信号连接
+        try:
+            device_status_manager.status_changed.disconnect(self.on_status_changed)
+        except:
+            pass
+        super().closeEvent(event)

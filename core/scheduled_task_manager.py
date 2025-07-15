@@ -410,4 +410,133 @@ class ScheduledTaskManager(QObject):
         except Exception as e:
             self.logger.error(f"运行定时任务时出错: {e}", exc_info=True)
 
-scheduled_task_manager=ScheduledTaskManager(task_manager)
+
+# -*- coding: UTF-8 -*-
+from datetime import datetime
+from typing import Dict, List
+from PySide6.QtCore import QObject, Slot
+from app.models.config.global_config import global_config
+from app.models.logging.log_manager import log_manager
+from core.device_status_manager import device_status_manager
+
+
+class ScheduledInfoUpdater(QObject):
+    """
+    定时任务信息更新器
+    负责监听定时任务变化并更新设备状态管理器中的定时任务信息
+    """
+
+    def __init__(self, scheduled_task_manager, parent=None):
+        super().__init__(parent)
+        self.scheduled_task_manager = scheduled_task_manager
+        self.logger = log_manager.get_app_logger()
+
+        # 连接信号
+        self._connect_signals()
+
+        # 初始化时更新所有设备的定时任务信息
+        self.update_all_devices()
+
+    def _connect_signals(self):
+        """连接定时任务管理器的信号"""
+        self.scheduled_task_manager.scheduled_task_added.connect(self.on_task_changed)
+        self.scheduled_task_manager.scheduled_task_removed.connect(self.on_task_changed)
+        self.scheduled_task_manager.scheduled_task_modified.connect(self.on_task_changed)
+
+    @Slot(str, str)
+    def on_task_changed(self, device_name: str, task_id: str):
+        """当定时任务发生变化时更新对应设备的信息"""
+        self.update_device_scheduled_info(device_name)
+
+    def update_device_scheduled_info(self, device_name: str):
+        """更新指定设备的定时任务信息"""
+        try:
+            # 获取设备配置
+            device_config = global_config.get_device_config(device_name)
+            if not device_config:
+                return
+
+            # 检查是否有启用的定时任务
+            has_enabled_schedules = any(
+                r.schedules_enable and r.schedules and any(s.enabled for s in r.schedules)
+                for r in device_config.resources
+            )
+
+            if has_enabled_schedules:
+                # 获取设备的定时任务信息
+                tasks_info = self.scheduled_task_manager.get_scheduled_tasks_info()
+                device_tasks = [task for task in tasks_info if task['device_name'] == device_name]
+
+                if device_tasks:
+                    # 解析下次运行时间
+                    next_run_times = []
+                    for task in device_tasks:
+                        if task.get('next_run') and task.get('next_run') != 'Unknown':
+                            try:
+                                next_time = datetime.strptime(task['next_run'], '%Y-%m-%d %H:%M:%S')
+                                next_run_times.append(next_time)
+                            except Exception as e:
+                                self.logger.warning(f"解析定时任务时间失败: {e}")
+
+                    if next_run_times:
+                        next_time = min(next_run_times)
+                        schedule_text = next_time.strftime('%H:%M')
+                        device_status_manager.update_scheduled_info(
+                            device_name,
+                            True,
+                            next_time,
+                            schedule_text
+                        )
+                    else:
+                        device_status_manager.update_scheduled_info(
+                            device_name,
+                            True,
+                            None,
+                            "已启用"
+                        )
+                else:
+                    device_status_manager.update_scheduled_info(
+                        device_name,
+                        True,
+                        None,
+                        "已启用"
+                    )
+            else:
+                device_status_manager.update_scheduled_info(
+                    device_name,
+                    False,
+                    None,
+                    "未启用"
+                )
+
+        except Exception as e:
+            self.logger.error(f"更新设备 {device_name} 定时任务信息时出错: {e}")
+            device_status_manager.update_scheduled_info(
+                device_name,
+                False,
+                None,
+                "更新失败"
+            )
+
+    def update_all_devices(self):
+        """更新所有设备的定时任务信息"""
+        try:
+            all_devices = global_config.get_app_config().devices
+            for device in all_devices:
+                self.update_device_scheduled_info(device.device_name)
+        except Exception as e:
+            self.logger.error(f"更新所有设备定时任务信息时出错: {e}")
+
+
+
+
+def init_scheduled_info_updater(scheduled_task_manager):
+    """初始化定时任务信息更新器"""
+    global scheduled_info_updater
+    scheduled_info_updater = ScheduledInfoUpdater(scheduled_task_manager)
+    return scheduled_info_updater
+
+scheduled_task_manager = ScheduledTaskManager(task_manager)
+
+# 初始化定时任务信息更新器
+scheduled_info_updater = init_scheduled_info_updater(scheduled_task_manager)
