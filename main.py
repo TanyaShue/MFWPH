@@ -3,6 +3,7 @@ import os
 import sys
 
 import psutil
+import qasync
 from PySide6.QtCore import QTimer, QThread, Signal
 from PySide6.QtWidgets import QApplication, QStyleFactory
 from PySide6.QtGui import QPalette, QColor
@@ -181,7 +182,8 @@ class StartupResourceUpdateChecker:
             logger.info("所有资源均为最新版本")
 
 
-if __name__ == "__main__":
+def main():
+    """修复后的主函数"""
     # ---------- 强制浅色主题设置开始 ----------
     app = QApplication(sys.argv)
 
@@ -192,19 +194,27 @@ if __name__ == "__main__":
     app.setPalette(load_light_palette())
 
     # 设置异步事件循环
-    loop = QEventLoop(app)
+    loop = qasync.QEventLoop(app)
     asyncio.set_event_loop(loop)
-    app.aboutToQuit.connect(kill_processes)
 
     # 创建并显示主窗口
     window = MainWindow()
     notification_manager.set_reference_window(window)
     window.show()
 
-    # 创建启动资源更新检查器（修改：使用资源更新检查器而不是应用更新检查器）
+    # 创建启动资源更新检查器
     startup_checker = StartupResourceUpdateChecker(window)
 
     # 延迟1秒后检查更新，确保主窗口完全加载
     QTimer.singleShot(1000, startup_checker.check_for_updates)
 
-    sys.exit(app.exec())
+    # 设置退出时的清理
+    app.aboutToQuit.connect(kill_processes)
+
+    # 关键修改：使用 qasync 的方式运行事件循环
+    with loop:
+        loop.run_forever()
+
+
+if __name__ == "__main__":
+    main()

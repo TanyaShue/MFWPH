@@ -14,6 +14,7 @@ from app.pages.home_page import HomePage
 from app.pages.settings_page import SettingsPage
 from app.utils.theme_manager import theme_manager
 from app.widgets.add_device_dialog import AddDeviceDialog
+from core.scheduled_task_manager import scheduled_task_manager
 from core.tasker_manager import task_manager
 
 
@@ -401,8 +402,8 @@ class MainWindow(QMainWindow):
             os.makedirs(resource_dir)
 
         global_config.load_all_resources_from_directory(resource_dir)
-
-        task_manager.setup_all_device_scheduled_tasks()
+        scheduled_task_manager.setup_all_device_scheduled_tasks()
+        # task_manager.setup_all_device_scheduled_tasks()
 
     def show_previous_device_or_home(self, deleted_device_name):
         """

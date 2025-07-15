@@ -103,8 +103,8 @@ class AddDeviceDialog(QDialog):
         # 创建控制器类型下拉框并设置固定宽度
         self.controller_type_combo = NoWheelComboBox()
         self.controller_type_combo.setFixedWidth(FIELD_WIDTH)
-        self.controller_type_combo.addItem("ADB设备", DeviceType.ADB)
-        self.controller_type_combo.addItem("Win32窗口", DeviceType.WIN32)
+        self.controller_type_combo.addItem("ADB设备(模拟器或手机连接)", DeviceType.ADB)
+        self.controller_type_combo.addItem("Win32窗口(window窗口)", DeviceType.WIN32)
         self.controller_type_combo.currentIndexChanged.connect(self.controller_type_changed)
 
         device_type_layout.addRow(type_label, self.controller_type_combo)

@@ -4,6 +4,7 @@ from PySide6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushBut
 from qasync import asyncSlot
 
 from app.models.logging.log_manager import log_manager
+from core.scheduled_task_manager import scheduled_task_manager
 from core.tasker_manager import task_manager
 
 
@@ -24,13 +25,13 @@ class DeviceCard(QFrame):
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
         self.init_ui()
-        self.update_status()
+        # self.update_status()
 
         # Connect to task manager signals
         task_manager.device_added.connect(self.on_device_changed)
         task_manager.device_removed.connect(self.on_device_changed)
-        task_manager.scheduled_task_modified.connect(self.update_status)
-        task_manager.device_status_changed.connect(self.update_status)
+        # task_manager.scheduled_task_modified.connect(self.update_status)
+        # task_manager.device_status_changed.connect(self.update_status)
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -190,7 +191,7 @@ class DeviceCard(QFrame):
                 break
 
         if has_enabled_schedules:
-            tasks_info = task_manager.get_scheduled_tasks_info()
+            tasks_info = scheduled_task_manager.get_scheduled_tasks_info()
             device_tasks = [task for task in tasks_info if task['device_name'] == self.device_config.device_name]
 
             if device_tasks and any(task.get('next_run') for task in device_tasks):
@@ -218,7 +219,8 @@ class DeviceCard(QFrame):
     def on_device_changed(self, device_name):
         """Handle device state changes"""
         if device_name == self.device_config.device_name:
-            self.update_status()
+            # self.update_status()
+            pass
 
     @asyncSlot()
     async def handle_run_stop_action(self):

@@ -10,6 +10,7 @@ from qasync import asyncSlot
 from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager
 from app.widgets.add_device_dialog import AddDeviceDialog
+from core.scheduled_task_manager import scheduled_task_manager
 from core.tasker_manager import task_manager
 
 
@@ -29,9 +30,9 @@ class BasicInfoWidget(QFrame):
         self.setMaximumHeight(90)  # 限制最大高度
         self.setMinimumHeight(80)  # 设置最小高度
         self.init_ui()
-        self.connect_signals()
+        # self.connect_signals()
         # 初始化显示状态
-        self.update_status_display()
+        # self.update_status_display()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -122,8 +123,8 @@ class BasicInfoWidget(QFrame):
         # 连接TaskerManager的全局信号
         task_manager.device_added.connect(self.on_device_changed)
         task_manager.device_removed.connect(self.on_device_changed)
-        task_manager.device_status_changed.connect(self.update_status_display)
-        task_manager.scheduled_task_modified.connect(self.update_status_display)
+        # task_manager.device_status_changed.connect(self.update_status_display)
+        # task_manager.scheduled_task_modified.connect(self.update_status_display)
 
         # 如果设备执行器已存在，连接其信号
         if task_manager.is_device_active(self.device_name):
@@ -174,7 +175,7 @@ class BasicInfoWidget(QFrame):
         )
 
         if has_enabled_schedules:
-            device_tasks = [task for task in task_manager.get_scheduled_tasks_info()
+            device_tasks = [task for task in scheduled_task_manager.get_scheduled_tasks_info()
                             if task['device_name'] == self.device_name]
 
             if device_tasks:
@@ -207,40 +208,40 @@ class BasicInfoWidget(QFrame):
         status_color = "#999999"  # 默认灰色
         status_tooltip = "设备离线"
 
-        if is_active:
-            device_state = task_manager.get_executor_state(self.device_name)
-            if device_state:
-                status = device_state.status.value
-
-                # 设置状态颜色和提示
-                status_config = {
-                    "idle": ("#4CAF50", "设备就绪"),
-                    "running": ("#2196F3", "正在执行任务"),
-                    "error": ("#F44336", f"错误: {device_state.error or '未知错误'}"),
-                    "stopping": ("#FF9800", "正在停止"),
-                    "scheduled": ("#9C27B0", "已设置定时任务"),
-                    "waiting": ("#607D8B", "等待执行"),
-                    "disconnected": ("#999999", "设备未连接"),
-                    "connecting": ("#03A9F4", "正在连接")
-                }
-
-                config = status_config.get(status, ("#999999", "未知状态"))
-                status_color = config[0]
-                status_tooltip = config[1]
-
-                # 检查是否在运行状态
-                if status == "running":
-                    is_running = True
-
-                # 添加队列信息到提示
-                queue_length = task_manager.get_device_queue_info().get(self.device_name, 0)
-                if queue_length > 0:
-                    status_tooltip += f"，队列中还有 {queue_length} 个任务"
-
-            else:
-                status_tooltip = "未知状态"
-        else:
-            status_tooltip = "设备未启动"
+        # if is_active:
+        #     device_state = task_manager.get_executor_state(self.device_name)
+        #     if device_state:
+        #         status = device_state.status.value
+        #
+        #         # 设置状态颜色和提示
+        #         status_config = {
+        #             "idle": ("#4CAF50", "设备就绪"),
+        #             "running": ("#2196F3", "正在执行任务"),
+        #             "error": ("#F44336", f"错误: {device_state.error or '未知错误'}"),
+        #             "stopping": ("#FF9800", "正在停止"),
+        #             "scheduled": ("#9C27B0", "已设置定时任务"),
+        #             "waiting": ("#607D8B", "等待执行"),
+        #             "disconnected": ("#999999", "设备未连接"),
+        #             "connecting": ("#03A9F4", "正在连接")
+        #         }
+        #
+        #         config = status_config.get(status, ("#999999", "未知状态"))
+        #         status_color = config[0]
+        #         status_tooltip = config[1]
+        #
+        #         # 检查是否在运行状态
+        #         if status == "running":
+        #             is_running = True
+        #
+        #         # 添加队列信息到提示
+        #         queue_length = task_manager.get_device_queue_info().get(self.device_name, 0)
+        #         if queue_length > 0:
+        #             status_tooltip += f"，队列中还有 {queue_length} 个任务"
+        #
+        #     else:
+        #         status_tooltip = "未知状态"
+        # else:
+        #     status_tooltip = "设备未启动"
 
         # 更新状态指示器
         if hasattr(self, 'status_indicator'):
@@ -378,8 +379,6 @@ class BasicInfoWidget(QFrame):
 
             if updated_device_config:
                 self.logger.info("设备配置已更新")
-                task_manager.update_device_scheduled_tasks(updated_device_config)
-                self.logger.info("设备定时任务已更新")
                 self.device_config = updated_device_config
                 self.update_status_display()
 

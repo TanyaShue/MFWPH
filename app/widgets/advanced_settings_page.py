@@ -9,6 +9,7 @@ from app.components.collapsible_widget import CollapsibleWidget
 from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager
 from app.components.no_wheel_ComboBox import NoWheelComboBox
+from core.scheduled_task_manager import scheduled_task_manager
 from core.tasker_manager import task_manager
 
 
@@ -242,7 +243,7 @@ class AdvancedSettingsPage(QFrame):
 
                 # 保存配置
                 global_config.save_all_configs()
-                task_manager.update_device_scheduled_tasks(self.device_config)
+                scheduled_task_manager.update_device_scheduled_tasks(self.device_config)
                 self.logger.debug(f"已自动保存定时配置")
 
             # 连接控件事件到自动保存函数
