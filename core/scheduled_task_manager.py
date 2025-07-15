@@ -11,10 +11,6 @@ from app.models.logging.log_manager import log_manager
 from core.tasker_manager import task_manager, TaskerManager
 
 
-#
-# if TYPE_CHECKING:
-#     from .tasker_manager import TaskerManager, task_manager
-
 
 class ScheduledTaskManager(QObject):
     """

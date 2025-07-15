@@ -896,3 +896,4 @@ QComboBox QAbstractItemView {
     background-color: #e5e7eb;
     max-height: 1px;
 }
+
