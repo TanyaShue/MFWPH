@@ -119,7 +119,6 @@ class TaskExecutor(QObject):
         self._task_lock = asyncio.Lock()
 
         # 连接标志
-        self._controller_connected = False
         self._controller_lock = asyncio.Lock()
 
         # 任务处理循环
@@ -178,9 +177,12 @@ class TaskExecutor(QObject):
                 # 创建Tasker
                 self._tasker = Tasker(notification_handler=self.notification_handler)
 
-                self._initialized = True
-                self.logger.info("任务执行器初始化成功")
-                return True
+                if self._tasker.inited:
+                    self.logger.info("任务执行器初始化成功")
+                    self._initialized = True
+                    return True
+                else:
+                    return False
 
             except Exception as e:
                 self.logger.error(f"初始化失败: {e}")
@@ -232,17 +234,17 @@ class TaskExecutor(QObject):
     async def _connect_controller(self):
         """异步连接控制器"""
         async with self._controller_lock:
-            if self._controller_connected:
-                return
-
             self.logger.info("正在连接控制器...")
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
                 None,
                 lambda: self._controller.post_connection().wait()
             )
-            self._controller_connected = True
-            self.logger.info("控制器连接成功")
+            if self._controller.connected:
+
+                self.logger.info("控制器连接成功")
+            else:
+                self.logger.error("控制器连接失败")
 
     async def _get_or_create_resource(self, resource_path: str) -> Resource:
         """获取或创建资源（带缓存）"""
