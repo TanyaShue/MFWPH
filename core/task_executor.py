@@ -119,6 +119,7 @@ class TaskExecutor(QObject):
         self._task_lock = asyncio.Lock()
 
         # 连接标志
+        self._controller_connected = False
         self._controller_lock = asyncio.Lock()
 
         # 任务处理循环
@@ -177,7 +178,7 @@ class TaskExecutor(QObject):
                 # 创建Tasker
                 self._tasker = Tasker(notification_handler=self.notification_handler)
 
-                if self._tasker.inited:
+                if self._tasker:
                     self.logger.info("任务执行器初始化成功")
                     self._initialized = True
                     return True
@@ -234,6 +235,9 @@ class TaskExecutor(QObject):
     async def _connect_controller(self):
         """异步连接控制器"""
         async with self._controller_lock:
+            if self._controller_connected:
+                return
+
             self.logger.info("正在连接控制器...")
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
@@ -241,7 +245,7 @@ class TaskExecutor(QObject):
                 lambda: self._controller.post_connection().wait()
             )
             if self._controller.connected:
-
+                self._controller_connected = True
                 self.logger.info("控制器连接成功")
             else:
                 self.logger.error("控制器连接失败")
