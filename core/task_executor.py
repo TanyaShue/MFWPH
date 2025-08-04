@@ -142,8 +142,7 @@ class TaskExecutor(QObject):
                 adb_config.address,
                 adb_config.screencap_methods,
                 input_methods=adb_config.input_methods,
-                config=adb_config.config,
-                agent_path = adb_config.agent_path
+                config=adb_config.config
             )
         elif self.device_config.device_type == DeviceType.WIN32:
             win32_config = self.device_config.controller_config
@@ -176,8 +175,8 @@ class TaskExecutor(QObject):
                 await self._connect_controller()
                 if not self._controller.connected:
                     return False
-                self.logger.error(f"控制器创建成功")
-
+                self.logger.info(f"控制器创建成功")
+                return True
             except Exception as e:
                 self.logger.error(f"控制器初始化失败: {e}")
                 return False
