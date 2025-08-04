@@ -286,6 +286,7 @@ class TaskExecutor(QObject):
 
         if not self._tasker.inited:
             print("任务执行器初始化失败")
+            return
         print("任务执行器创建成功")
         self._current_resource_path = resource_path
 
