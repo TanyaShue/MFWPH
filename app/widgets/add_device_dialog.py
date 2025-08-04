@@ -565,9 +565,9 @@ class AddDeviceDialog(QDialog):
                     QMessageBox.warning(self, "输入错误", "ADB地址不能为空")
                     return
 
-                if self.adb_address_exists(adb_address):
-                    QMessageBox.warning(self, "设备已存在", "该设备已被加入，请勿重复添加")
-                    return
+                # if self.adb_address_exists(adb_address):
+                #     QMessageBox.warning(self, "设备已存在", "该设备已被加入，请勿重复添加")
+                #     return
 
                 # 尝试解析配置文本为字典，如果解析失败则使用空字典
                 try:

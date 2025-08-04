@@ -10,6 +10,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 
 from PySide6.QtCore import QObject, Signal, Slot, Qt
+from maa.define import MaaAdbInputMethodEnum
 from qasync import asyncSlot
 from maa.agent_client import AgentClient
 from maa.controller import AdbController, Win32Controller
@@ -141,9 +142,8 @@ class TaskExecutor(QObject):
                 adb_config.adb_path,
                 adb_config.address,
                 adb_config.screencap_methods,
-                adb_config.input_methods,
-                adb_config.config,
-                agent_path=adb_config.agent_path
+                input_methods=adb_config.input_methods,
+                config=adb_config.config
             )
         elif self.device_config.device_type == DeviceType.WIN32:
             win32_config = self.device_config.controller_config
@@ -237,7 +237,7 @@ class TaskExecutor(QObject):
         async with self._controller_lock:
             if self._controller_connected:
                 return
-
+            print(f"{self._controller}")
             self.logger.info("正在连接控制器...")
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
