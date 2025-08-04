@@ -120,7 +120,6 @@ class TaskExecutor(QObject):
         self._task_lock = asyncio.Lock()
 
         # 连接标志
-        self._controller_connected = False
         self._controller_lock = asyncio.Lock()
 
         # 任务处理循环
@@ -143,7 +142,8 @@ class TaskExecutor(QObject):
                 adb_config.address,
                 adb_config.screencap_methods,
                 input_methods=adb_config.input_methods,
-                config=adb_config.config
+                config=adb_config.config,
+                agent_path = adb_config.agent_path
             )
         elif self.device_config.device_type == DeviceType.WIN32:
             win32_config = self.device_config.controller_config
@@ -174,19 +174,12 @@ class TaskExecutor(QObject):
 
                 # 连接控制器
                 await self._connect_controller()
-
-                # 创建Tasker
-                self._tasker = Tasker(notification_handler=self.notification_handler)
-
-                if self._tasker:
-                    self.logger.info("任务执行器初始化成功")
-                    self._initialized = True
-                    return True
-                else:
+                if not self._controller.connected:
                     return False
+                self.logger.error(f"控制器创建成功")
 
             except Exception as e:
-                self.logger.error(f"初始化失败: {e}")
+                self.logger.error(f"控制器初始化失败: {e}")
                 return False
 
     @asyncSlot()
@@ -235,9 +228,8 @@ class TaskExecutor(QObject):
     async def _connect_controller(self):
         """异步连接控制器"""
         async with self._controller_lock:
-            if self._controller_connected:
+            if self._controller.connected:
                 return
-            print(f"{self._controller}")
             self.logger.info("正在连接控制器...")
             loop = asyncio.get_event_loop()
             await loop.run_in_executor(
@@ -245,7 +237,6 @@ class TaskExecutor(QObject):
                 lambda: self._controller.post_connection().wait()
             )
             if self._controller.connected:
-                self._controller_connected = True
                 self.logger.info("控制器连接成功")
             else:
                 self.logger.error("控制器连接失败")
@@ -266,7 +257,6 @@ class TaskExecutor(QObject):
                 None,
                 lambda: resource.post_bundle(resource_path).wait()
             )
-
             # 缓存资源
             self._resources[resource_path] = resource
 
@@ -290,9 +280,14 @@ class TaskExecutor(QObject):
         # 清理自定义动作和识别
         resource.clear_custom_action()
         resource.clear_custom_recognition()
-
+        # 创建Tasker
+        self._tasker = Tasker(notification_handler=self.notification_handler)
         # 绑定到Tasker
         self._tasker.bind(resource=resource, controller=self._controller)
+
+        if not self._tasker.inited:
+            print("任务执行器初始化失败")
+        print("任务执行器创建成功")
         self._current_resource_path = resource_path
 
     async def _task_processing_loop(self):
