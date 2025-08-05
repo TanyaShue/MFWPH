@@ -3,6 +3,7 @@ from PySide6.QtWidgets import (
     QVBoxLayout, QHBoxLayout, QTextEdit,
     QLabel, QFrame
 )
+from datetime import datetime
 
 from app.models.logging.log_manager import log_manager
 from app.components.no_wheel_ComboBox import NoWheelComboBox
@@ -11,12 +12,16 @@ from app.components.no_wheel_ComboBox import NoWheelComboBox
 class LogDisplay(QFrame):
     """
     Component to display application and device logs with real-time updates
+    Only shows logs from the current program session
     """
 
     def __init__(self, parent=None, enable_log_level_filter=False, show_device_selector=True):
         super().__init__(parent)
         self.setObjectName("logDisplay")
         self.setFrameShape(QFrame.StyledPanel)
+
+        # Store the program start time to filter logs
+        self.session_start_time = datetime.now()
 
         # Flag to control device selector visibility
         self.show_device_selector = show_device_selector
@@ -37,6 +42,9 @@ class LogDisplay(QFrame):
         self.handle_to_device = {}
         # Dictionary to map device names to handles
         self.device_to_handle = {}
+
+        # Store logs from current session only
+        self.session_logs = []
 
         # Configure colors for different log levels
         self.log_colors = {
@@ -69,14 +77,13 @@ class LogDisplay(QFrame):
 
         # Add log level selector
         self.log_level_selector = NoWheelComboBox()
-        # 注意：不再添加"全部级别"选项
         self.log_level_selector.addItem("INFO", "INFO")
         self.log_level_selector.addItem("DEBUG", "DEBUG")
         self.log_level_selector.addItem("WARNING", "WARNING")
         self.log_level_selector.addItem("ERROR", "ERROR")
         self.log_level_selector.currentIndexChanged.connect(self.on_log_level_changed)
 
-        # 显示log_level_selector，但只在enable_log_level_filter为True时可交互
+        # Show log_level_selector, but only interactive if enable_log_level_filter is True
         if not self.enable_log_level_filter:
             self.log_level_selector.setEnabled(False)
 
@@ -115,6 +122,40 @@ class LogDisplay(QFrame):
 
         main_layout.addWidget(self.log_text)
 
+    def parse_log_timestamp(self, log_line):
+        """Parse timestamp from log line"""
+        try:
+            # Extract timestamp from log format: "YYYY-MM-DD HH:MM:SS,SSS - LEVEL - Message"
+            # or "YYYY-MM-DD HH:MM:SS - LEVEL - Message"
+            timestamp_str = log_line.split(' - ')[0].strip()
+
+            # Handle milliseconds if present
+            if ',' in timestamp_str:
+                timestamp_str = timestamp_str.split(',')[0]
+
+            # Parse the timestamp
+            return datetime.strptime(timestamp_str, "%Y-%m-%d %H:%M:%S")
+        except:
+            # If parsing fails, return None
+            return None
+
+    def is_log_from_current_session(self, log_line):
+        """Check if a log line is from the current program session"""
+        timestamp = self.parse_log_timestamp(log_line)
+        if timestamp:
+            return timestamp >= self.session_start_time
+        # If we can't parse timestamp, exclude the log
+        return False
+
+    def add_session_log(self, log_entry, device_name=None):
+        """Add a log entry to the current session logs"""
+        # Store log with device information
+        self.session_logs.append({
+            'log': log_entry,
+            'device': device_name,
+            'timestamp': datetime.now()
+        })
+
     def update_device_list(self, devices):
         """Update the device dropdown list"""
         if not self.show_device_selector:
@@ -139,31 +180,32 @@ class LogDisplay(QFrame):
             self.device_selector.setCurrentIndex(0)
 
         # Refresh logs for current selection
-        self.request_logs_update()
+        self.refresh_display()
 
     def on_device_changed(self, index):
         """Handle device selection change"""
         if index >= 0:
             self.current_device = self.device_selector.currentData()
-            self.request_logs_update()
+            self.refresh_display()
 
     def on_log_level_changed(self, index):
         """Handle log level selection change"""
         if index >= 0:
             self.current_log_level = self.log_level_selector.currentData()
-            self.request_logs_update()
+            self.refresh_display()
 
-    def request_logs_update(self):
-        """Request a log update for the current device"""
-        if self.current_device == "all":
-            logs = log_manager.get_all_logs()
-        else:
-            logs = log_manager.get_device_logs(self.current_device)
-
-        # Apply log level filtering
+    def refresh_display(self):
+        """Refresh the log display based on current filters"""
+        # Filter logs based on device selection
         filtered_logs = []
 
-        for log in logs:
+        for log_entry in self.session_logs:
+            # Check device filter
+            if self.current_device != "all" and log_entry['device'] != self.current_device:
+                continue
+
+            log = log_entry['log']
+
             # Determine the log level
             log_level = None
             for level in self.log_level_hierarchy:
@@ -179,19 +221,19 @@ class LogDisplay(QFrame):
             log_level_index = self.log_level_hierarchy.index(log_level)
 
             if self.enable_log_level_filter:
-                # 获取选定日志级别的索引
+                # Get selected log level index
                 selected_level_index = self.log_level_hierarchy.index(self.current_log_level)
 
-                # 只显示选定级别及以上的日志
+                # Only show logs at or above selected level
                 if log_level_index >= selected_level_index:
                     filtered_logs.append(log)
             else:
-                # 如果禁用过滤，默认显示INFO及以上级别（不显示DEBUG）
+                # If filtering disabled, default to showing INFO and above (no DEBUG)
                 info_level_index = self.log_level_hierarchy.index("INFO")
                 if log_level_index >= info_level_index:
                     filtered_logs.append(log)
 
-        # Update logs with filtered list
+        # Update display with filtered logs
         self.display_logs(filtered_logs)
 
     def display_logs(self, logs):
@@ -267,7 +309,7 @@ class LogDisplay(QFrame):
         # Set the current device directly when device selector is not shown
         if not self.show_device_selector:
             self.current_device = device_name
-            self.request_logs_update()
+            self.refresh_display()
             return
 
         # Find and select the device in the dropdown
@@ -281,13 +323,34 @@ class LogDisplay(QFrame):
 
     def on_app_log_updated(self):
         """Handle app log update signal"""
+        # Get the latest logs from log manager
+        all_logs = log_manager.get_all_logs()
+
+        # Only process new logs from current session
+        for log in all_logs:
+            if self.is_log_from_current_session(log):
+                # Check if this log is already in our session logs
+                if not any(entry['log'] == log for entry in self.session_logs):
+                    self.add_session_log(log, None)
+
         if self.current_device == "all":
-            self.request_logs_update()
+            self.refresh_display()
 
     def on_device_log_updated(self, device_name):
         """Handle device log update signal"""
+        # Get device logs from log manager
+        device_logs = log_manager.get_device_logs(device_name)
+
+        # Only process new logs from current session
+        for log in device_logs:
+            if self.is_log_from_current_session(log):
+                # Check if this log is already in our session logs
+                if not any(entry['log'] == log and entry['device'] == device_name
+                           for entry in self.session_logs):
+                    self.add_session_log(log, device_name)
+
         if self.current_device == device_name or self.current_device == "all":
-            self.request_logs_update()
+            self.refresh_display()
 
     def set_device_handle(self, device_name, handle):
         """Set a handle for a device name"""
@@ -300,13 +363,20 @@ class LogDisplay(QFrame):
         """Add a log entry to a device identified by its handle"""
         if handle in self.handle_to_device:
             device_name = self.handle_to_device[handle]
-            # Use log_manager to add the log
-            import datetime
-            timestamp = datetime.datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+            # Create log entry with current timestamp
+            timestamp = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
             log_entry = f"{timestamp} - {level} - {message}"
 
-            # Add log to device logs
+            # Add to session logs
+            self.add_session_log(log_entry, device_name)
+
+            # Also add to log manager for persistence
             log_manager.add_device_log(device_name, log_entry)
+
+            # Refresh display if needed
+            if self.current_device == device_name or self.current_device == "all":
+                self.refresh_display()
+
             return True
         else:
             # Handle not found
