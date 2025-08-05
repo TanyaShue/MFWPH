@@ -95,6 +95,9 @@ class SettingsPage(QWidget):
         self.update_checker_thread = None
         self.download_thread = None
         self.installer = UpdateInstaller()
+        self.latest_version = None
+        self.download_url = None
+        self.download_notification_id = "app_update_download"
         self.initUI()
 
     def initUI(self):
@@ -242,7 +245,6 @@ class SettingsPage(QWidget):
         """创建更新设置的界面区域"""
         layout = self.create_section("更新设置")
 
-
         # 第一行：自动检查更新、测试版更新及立即检查按钮
         update_row = QHBoxLayout()
 
@@ -253,6 +255,12 @@ class SettingsPage(QWidget):
         self.check_button = QPushButton("立即检查更新")
         self.check_button.setObjectName("primaryButton")
         self.check_button.clicked.connect(self.check_app_update)
+
+        # 立即更新按钮（默认隐藏）
+        self.update_button = QPushButton("立即更新")
+        self.update_button.setObjectName("primaryButton")
+        self.update_button.clicked.connect(self.start_update)
+        self.update_button.hide()  # 默认隐藏
 
         # 从配置初始化复选框状态
         try:
@@ -313,6 +321,7 @@ class SettingsPage(QWidget):
         update_row.addWidget(beta_updates)
         update_row.addStretch()
         update_row.addWidget(self.check_button)
+        update_row.addWidget(self.update_button)
 
         layout.addLayout(update_row)
 
@@ -425,9 +434,20 @@ class SettingsPage(QWidget):
 
     def check_app_update(self):
         """检查主程序更新"""
+        # 如果正在下载，不允许重新检查
+        if self.download_thread and self.download_thread.isRunning():
+            notification_manager.show_warning(
+                "正在下载更新，请等待下载完成",
+                "操作进行中"
+            )
+            return
+
         # 禁用按钮并更改文本
         self.check_button.setEnabled(False)
         self.check_button.setText("检查中...")
+
+        # 隐藏立即更新按钮
+        self.update_button.hide()
 
         # 显示检查中的通知
         notification_manager.show_info(
@@ -448,36 +468,32 @@ class SettingsPage(QWidget):
         self.check_button.setEnabled(True)
         self.check_button.setText("立即检查更新")
 
+        # 保存更新信息
+        self.latest_version = latest_version
+        self.download_url = download_url
+
+        # 显示立即更新按钮
+        self.update_button.show()
+
         # 显示发现新版本的通知
         notification_manager.show_success(
             f"发现新版本 {latest_version}！当前版本：{current_version}",
-            "有可用更新"
+            "有可用更新",
+            duration=0  # 不自动关闭
         )
-
-        # 显示更新对话框（保留用户确认）
-        reply = QMessageBox.question(
-            self,
-            "发现新版本",
-            f"发现新版本 {latest_version}！\n"
-            f"当前版本：{current_version}\n\n"
-            f"是否立即下载并安装更新？\n"
-            f"注意：更新将需要重启应用程序。",
-            QMessageBox.Yes | QMessageBox.No,
-            QMessageBox.Yes
-        )
-
-        if reply == QMessageBox.Yes:
-            self.download_and_install_update(download_url, latest_version)
 
     def handle_update_not_found(self):
         """处理未发现更新"""
         self.check_button.setEnabled(True)
         self.check_button.setText("立即检查更新")
 
+        # 隐藏立即更新按钮
+        self.update_button.hide()
+
         # 获取当前版本
         current_version = get_version_info()
 
-        # 显示通知而不是对话框
+        # 显示通知
         notification_manager.show_info(
             f"您的应用程序已是最新版本（{current_version}）",
             "无可用更新"
@@ -488,25 +504,41 @@ class SettingsPage(QWidget):
         self.check_button.setEnabled(True)
         self.check_button.setText("立即检查更新")
 
-        # 显示错误通知而不是对话框
+        # 隐藏立即更新按钮
+        self.update_button.hide()
+
+        # 显示错误通知
         notification_manager.show_error(
             f"无法检查更新：{error_message}",
             "检查更新失败"
         )
 
+    def start_update(self):
+        """开始更新"""
+        # 检查是否正在下载
+        if self.download_thread and self.download_thread.isRunning():
+            notification_manager.show_warning(
+                "更新正在下载中，请稍候",
+                "下载进行中"
+            )
+            return
+
+        if self.latest_version and self.download_url:
+            self.download_and_install_update(self.download_url, self.latest_version)
+
     def download_and_install_update(self, download_url, version):
         """下载并安装更新"""
-        # 显示开始下载的通知
-        notification_manager.show_info(
-            f"正在下载版本 {version}...",
-            "开始下载"
-        )
+        # 禁用立即更新按钮，防止重复点击
+        self.update_button.setEnabled(False)
+        self.update_button.setText("下载中...")
 
-        # 创建进度对话框
-        self.progress_dialog = QProgressDialog("正在下载更新...", "取消", 0, 100, self)
-        self.progress_dialog.setWindowTitle("下载更新")
-        self.progress_dialog.setWindowModality(Qt.WindowModal)
-        self.progress_dialog.show()
+        # 显示开始下载的通知
+        notification_manager.show_progress(
+            self.download_notification_id,
+            f"正在下载版本 {version}...",
+            "下载更新",
+            0.0
+        )
 
         # 创建临时目录
         temp_dir = Path("assets/temp")
@@ -525,20 +557,29 @@ class SettingsPage(QWidget):
         self.download_thread.download_completed.connect(self.handle_download_completed)
         self.download_thread.download_failed.connect(self.handle_download_failed)
 
-        # 连接取消按钮
-        self.progress_dialog.canceled.connect(self.download_thread.cancel)
-
         # 启动下载
         self.download_thread.start()
 
     def update_download_progress(self, resource_name, progress, speed):
         """更新下载进度"""
-        self.progress_dialog.setValue(int(progress))
-        self.progress_dialog.setLabelText(f"正在下载更新... {int(progress)}% ({speed:.2f} MB/s)")
+        # 将进度转换为0-1的小数
+        progress_decimal = progress / 100.0
+
+        # 更新进度通知
+        notification_manager.update_progress(
+            self.download_notification_id,
+            progress_decimal,
+            f"正在更新 {int(progress)}% ({speed:.2f} MB/s)"
+        )
 
     def handle_download_completed(self, resource_name, file_path, data):
         """处理下载完成"""
-        self.progress_dialog.close()
+        # 关闭进度通知
+        notification_manager.close_progress(self.download_notification_id)
+
+        # 恢复立即更新按钮状态
+        self.update_button.setEnabled(True)
+        self.update_button.setText("立即更新")
 
         # 显示下载完成通知
         notification_manager.show_success(
@@ -572,10 +613,21 @@ class SettingsPage(QWidget):
                     f"无法启动更新程序：{str(e)}",
                     "更新失败"
                 )
+        else:
+            # 用户选择不安装，显示提示
+            notification_manager.show_info(
+                "更新已下载但未安装，您可以稍后点击立即更新重新下载,更新已推迟"
+            )
 
     def handle_download_failed(self, resource_name, error):
         """处理下载失败"""
-        self.progress_dialog.close()
+        # 关闭进度通知
+        notification_manager.close_progress(self.download_notification_id)
+
+        # 恢复立即更新按钮状态
+        self.update_button.setEnabled(True)
+        self.update_button.setText("立即更新")
+
         notification_manager.show_error(
             f"更新下载失败：{error}",
             "下载失败"

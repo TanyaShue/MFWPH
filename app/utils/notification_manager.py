@@ -7,8 +7,6 @@ from PySide6.QtWidgets import (QWidget, QLabel, QVBoxLayout, QHBoxLayout,
                                QGraphicsDropShadowEffect, QGraphicsBlurEffect)
 from PySide6.QtGui import (QPainter, QBrush, QColor, QPen, QLinearGradient,
                            QRadialGradient, QPainterPath, QFont, QFontDatabase)
-import sys
-import math
 
 
 class NotificationLevel(Enum):
@@ -37,10 +35,16 @@ class NotificationLevel(Enum):
              QColor(220, 38, 38),  # 深色
              QColor(254, 226, 226),  # 背景色
              "✕")
+    PROGRESS = ("progress",
+                QColor(139, 92, 246),  # 主色 - 紫色
+                QColor(167, 139, 250),  # 浅色
+                QColor(109, 40, 217),  # 深色
+                QColor(237, 233, 254),  # 背景色
+                "◐")  # 进度图标
 
 
 class AnimatedProgressBar(QWidget):
-    """自定义动画进度条"""
+    """自定义动画进度条（从右往左）"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -97,6 +101,75 @@ class AnimatedProgressBar(QWidget):
                 color1 = QColor(96, 165, 250)
                 color2 = QColor(59, 130, 246)
                 color3 = QColor(37, 99, 235)
+
+            # 添加波浪效果
+            for i in range(5):
+                pos = (i / 4.0 + self._wave_offset / 100.0) % 1.0
+                gradient.setColorAt(pos, color1 if i % 2 == 0 else color2)
+
+            painter.setBrush(QBrush(gradient))
+
+            # 绘制进度条
+            path = QPainterPath()
+            path.addRoundedRect(0, 0, progress_width, self.height(), 3, 3)
+            painter.drawPath(path)
+
+
+class ProgressBar(QWidget):
+    """进度条组件（从左往右）"""
+
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self._progress = 0.0
+        self._wave_offset = 0
+        self.setFixedHeight(6)
+
+        # 波浪动画定时器
+        self.wave_timer = QTimer(self)
+        self.wave_timer.timeout.connect(self.update_wave)
+        self.wave_timer.start(30)
+
+    def update_wave(self):
+        """更新波浪动画"""
+        self._wave_offset = (self._wave_offset + 2) % 100
+        self.update()
+
+    @Property(float)
+    def progress(self):
+        return self._progress
+
+    @progress.setter
+    def progress(self, value):
+        self._progress = max(0.0, min(1.0, value))
+        self.update()
+
+    def paintEvent(self, event):
+        """绘制进度条"""
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.Antialiasing)
+
+        # 背景
+        painter.setPen(Qt.NoPen)
+        painter.setBrush(QBrush(QColor(0, 0, 0, 30)))
+        painter.drawRoundedRect(0, 0, self.width(), self.height(), 3, 3)
+
+        # 进度条宽度
+        progress_width = int(self.width() * self._progress)
+
+        if progress_width > 0:
+            # 创建渐变
+            gradient = QLinearGradient(0, 0, progress_width, 0)
+
+            # 获取父级的颜色
+            parent_widget = self.parent()
+            if hasattr(parent_widget, 'main_color'):
+                color1 = parent_widget.light_color
+                color2 = parent_widget.main_color
+                color3 = parent_widget.dark_color
+            else:
+                color1 = QColor(167, 139, 250)
+                color2 = QColor(139, 92, 246)
+                color3 = QColor(109, 40, 217)
 
             # 添加波浪效果
             for i in range(5):
@@ -462,6 +535,167 @@ class NotificationWidget(QWidget):
             feedback.start()
 
 
+class ProgressNotificationWidget(NotificationWidget):
+    """进度通知组件"""
+
+    def __init__(self, title, message, parent=None):
+        # 不设置duration，永不自动关闭
+        super().__init__(title, message, NotificationLevel.PROGRESS, 0, parent)
+        self._progress = 0.0
+        self._auto_close_timer = None
+
+    def setupUI(self, title, message):
+        """设置UI - 进度通知版本"""
+        _, main_color, light_color, dark_color, bg_color, icon = self.level.value
+
+        self.main_color = main_color
+        self.light_color = light_color
+        self.dark_color = dark_color
+        self.bg_color = bg_color
+
+        # 主布局
+        main_layout = QVBoxLayout(self)
+        main_layout.setContentsMargins(12, 12, 12, 12)
+        main_layout.setSpacing(0)
+
+        # 内容容器
+        self.content_widget = QWidget()
+        self.content_widget.setObjectName("content")
+
+        # 内容布局
+        content_layout = QVBoxLayout(self.content_widget)
+        content_layout.setContentsMargins(16, 16, 16, 12)
+        content_layout.setSpacing(0)
+
+        # 顶部区域
+        top_layout = QHBoxLayout()
+        top_layout.setSpacing(12)
+
+        # 图标容器
+        icon_container = QWidget()
+        icon_container.setFixedSize(42, 42)
+        icon_layout = QVBoxLayout(icon_container)
+        icon_layout.setContentsMargins(0, 0, 0, 0)
+
+        # 图标
+        self.icon_label = QLabel(icon)
+        self.icon_label.setAlignment(Qt.AlignCenter)
+        self.icon_label.setStyleSheet(f"""
+            QLabel {{
+                color: {main_color.name()};
+                font-size: 20px;
+                font-weight: bold;
+                background: {bg_color.name()};
+                border-radius: 21px;
+                padding: 10px;
+            }}
+        """)
+        icon_layout.addWidget(self.icon_label)
+
+        top_layout.addWidget(icon_container)
+
+        # 文本区域
+        text_layout = QVBoxLayout()
+        text_layout.setSpacing(4)
+
+        # 标题
+        if title:
+            self.title_label = QLabel(title)
+            self.title_label.setStyleSheet("""
+                QLabel {
+                    color: #1f2937;
+                    font-size: 14px;
+                    font-weight: 600;
+                    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                }
+            """)
+            text_layout.addWidget(self.title_label)
+
+        # 消息
+        self.message_label = QLabel(message)
+        self.message_label.setWordWrap(True)
+        self.message_label.setStyleSheet("""
+            QLabel {
+                color: #6b7280;
+                font-size: 13px;
+                font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+                line-height: 1.5;
+            }
+        """)
+        text_layout.addWidget(self.message_label)
+
+        top_layout.addLayout(text_layout, 1)
+
+        # 关闭按钮
+        self.close_btn = QPushButton("×")
+        self.close_btn.setFixedSize(24, 24)
+        self.close_btn.setCursor(Qt.PointingHandCursor)
+        self.close_btn.clicked.connect(self.close)
+        self.close_btn.setStyleSheet(f"""
+            QPushButton {{
+                background: transparent;
+                border: none;
+                color: #9ca3af;
+                font-size: 18px;
+                font-weight: normal;
+                border-radius: 12px;
+            }}
+            QPushButton:hover {{
+                background: {QColor(0, 0, 0, 20).name()};
+                color: #6b7280;
+            }}
+        """)
+        top_layout.addWidget(self.close_btn, 0, Qt.AlignTop)
+
+        content_layout.addLayout(top_layout)
+
+        # 进度条（从左往右）
+        content_layout.addSpacing(8)
+        self.progress_bar = ProgressBar()
+        content_layout.addWidget(self.progress_bar)
+
+        main_layout.addWidget(self.content_widget)
+
+        # 设置样式
+        self.setStyleSheet(f"""
+            QWidget#content {{
+                background: rgba(255, 255, 255, 0.95);
+                border: 1px solid rgba(0, 0, 0, 0.08);
+                border-radius: 16px;
+            }}
+        """)
+
+    def updateProgress(self, progress, message=None):
+        """更新进度和消息"""
+        self._progress = max(0.0, min(1.0, progress))
+
+        # 更新进度条
+        if hasattr(self, 'progress_bar'):
+            self.progress_bar.progress = self._progress
+
+        # 更新消息
+        if message is not None and hasattr(self, 'message_label'):
+            self.message_label.setText(message)
+
+        # 如果进度达到1，1秒后自动关闭
+        if self._progress >= 1.0:
+            if self._auto_close_timer is None:
+                self._auto_close_timer = QTimer(self)
+                self._auto_close_timer.setSingleShot(True)
+                self._auto_close_timer.timeout.connect(self.close)
+                self._auto_close_timer.start(1000)
+        else:
+            # 如果进度回退，取消自动关闭
+            if self._auto_close_timer is not None:
+                self._auto_close_timer.stop()
+                self._auto_close_timer = None
+
+    def startTimer(self):
+        """覆盖父类方法，进度通知不需要自动关闭定时器"""
+        pass
+
+
+
 class NotificationManager(QObject):
     """优化的通知管理器"""
 
@@ -477,6 +711,7 @@ class NotificationManager(QObject):
             super().__init__()
             self._initialized = True
             self.notifications = []
+            self.progress_notifications = {}  # 存储进度通知的字典
             self.max_visible = 5
             self.spacing = 15
             self.margin = 20
@@ -565,6 +800,7 @@ class NotificationManager(QObject):
             except RuntimeError:
                 pass
         self.notifications.clear()
+        self.progress_notifications.clear()
 
     def get_position_reference(self):
         """获取定位参考"""
@@ -599,6 +835,55 @@ class NotificationManager(QObject):
         if self.reference_window and self.reference_window.isActiveWindow():
             notification.raise_()
             notification.activateWindow()
+
+    def show_progress(self, notification_id, message, title="进度", initial_progress=0.0):
+        """显示进度通知"""
+        # 如果已存在相同ID的进度通知，直接更新
+        if notification_id in self.progress_notifications:
+            notification = self.progress_notifications[notification_id]
+            if hasattr(notification, 'updateProgress'):
+                notification.updateProgress(initial_progress, message)
+            return notification
+
+        # 如果超过最大数量，关闭最旧的
+        if len(self.notifications) >= self.max_visible:
+            oldest = self.notifications[0]
+            oldest.close()
+
+        # 创建进度通知
+        notification = ProgressNotificationWidget(title, message)
+        notification.closed.connect(lambda: self.onProgressNotificationClosed(notification_id))
+        notification.updateProgress(initial_progress)
+
+        self.notifications.append(notification)
+        self.progress_notifications[notification_id] = notification
+        self.positionNotification(notification, len(self.notifications) - 1)
+
+        # 如果主窗口是活动窗口，将通知提到前面
+        if self.reference_window and self.reference_window.isActiveWindow():
+            notification.raise_()
+            notification.activateWindow()
+
+        return notification
+
+    def update_progress(self, notification_id, progress, message=None):
+        """更新进度通知"""
+        if notification_id in self.progress_notifications:
+            notification = self.progress_notifications[notification_id]
+            if hasattr(notification, 'updateProgress'):
+                notification.updateProgress(progress, message)
+
+    def close_progress(self, notification_id):
+        """关闭指定的进度通知"""
+        if notification_id in self.progress_notifications:
+            notification = self.progress_notifications[notification_id]
+            notification.close()
+
+    def onProgressNotificationClosed(self, notification_id):
+        """进度通知关闭处理"""
+        if notification_id in self.progress_notifications:
+            notification = self.progress_notifications.pop(notification_id)
+            self.onNotificationClosed(notification)
 
     def positionNotification(self, notification, index):
         """定位通知"""
