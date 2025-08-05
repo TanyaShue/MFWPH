@@ -1,11 +1,10 @@
 import os
 import sys
-import tempfile
 from pathlib import Path
 
 import requests
-from PySide6.QtCore import QTimer, QThread, Signal, QCoreApplication, Qt
-from PySide6.QtGui import QFont, QPixmap
+from PySide6.QtCore import QTimer, QThread, Signal, QCoreApplication, Qt, QUrl
+from PySide6.QtGui import QFont, QPixmap, QDesktopServices
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QScrollArea, QFrame, QCheckBox,
@@ -801,6 +800,18 @@ class SettingsPage(QWidget):
         debug_row.addWidget(self.debug_checkbox)
         debug_row.addStretch()
 
+        # 添加按钮 - 打开软件日志文件夹
+        log_btn = QPushButton("打开软件日志文件夹")
+        log_btn.setObjectName("primaryButton")
+        log_btn.clicked.connect(self.open_log_folder)
+        debug_row.addWidget(log_btn)
+
+        # 添加按钮 - 打开调试日志文件夹
+        debug_btn = QPushButton("打开调试日志文件夹")
+        debug_btn.setObjectName("primaryButton")
+        debug_btn.clicked.connect(self.open_debug_folder)
+        debug_row.addWidget(debug_btn)
+
         layout.addLayout(debug_row)
 
         # 警告文本 - 现在仅作为静态提示
@@ -812,6 +823,16 @@ class SettingsPage(QWidget):
 
         # 添加间距
         layout.addSpacing(10)
+
+    def open_log_folder(self):
+        log_path = os.path.abspath(os.path.join(os.getcwd(), "logs"))
+        if os.path.exists(log_path):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(log_path))
+
+    def open_debug_folder(self):
+        debug_path = os.path.abspath(os.path.join(os.getcwd(), "assets", "debug"))
+        if os.path.exists(debug_path):
+            QDesktopServices.openUrl(QUrl.fromLocalFile(debug_path))
 
     def on_debug_changed(self, state):
         """处理调试模式切换"""
