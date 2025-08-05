@@ -476,3 +476,4 @@ tools/ImageCropper/**/*.png
 MFWPH_*.spec
 /assets/pending_updates/
 /assets/resource/MaaYYs/runtime/
+/runtime/
