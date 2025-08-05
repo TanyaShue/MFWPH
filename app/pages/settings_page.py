@@ -57,7 +57,7 @@ class AppUpdateChecker(QThread):
             latest_version = release_info.get('tag_name', '').lstrip('v')
 
             # 获取当前版本
-            current_version = self.get_current_version()
+            current_version = get_version_info()
 
             # 查找特定的安装包
             download_url = None
@@ -82,28 +82,6 @@ class AppUpdateChecker(QThread):
             self.check_failed.emit("网络连接失败")
         except Exception as e:
             self.check_failed.emit(f"检查更新时出错: {str(e)}")
-
-    def get_current_version(self):
-        """获取当前版本"""
-        # 检查是否是打包后的可执行文件
-        if getattr(sys, 'frozen', False):
-            base_path = sys._MEIPASS if hasattr(sys, '_MEIPASS') else os.path.dirname(sys.executable)
-        else:
-            base_path = os.getcwd()
-
-        version_file_path = os.path.join(base_path, 'versioninfo.txt')
-
-        try:
-            if os.path.exists(version_file_path):
-                with open(version_file_path, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        line = line.strip()
-                        if line.startswith('version='):
-                            return line.split('=', 1)[1]
-        except Exception as e:
-            logger.error(f"读取版本信息失败: {e}")
-
-        return "未知版本"
 
 
 class SettingsPage(QWidget):
@@ -497,7 +475,7 @@ class SettingsPage(QWidget):
         self.check_button.setText("立即检查更新")
 
         # 获取当前版本
-        current_version = self.update_checker_thread.get_current_version()
+        current_version = get_version_info()
 
         # 显示通知而不是对话框
         notification_manager.show_info(
@@ -629,7 +607,7 @@ class SettingsPage(QWidget):
         app_info_row.addWidget(logo_label)
 
         # 获取版本信息
-        version_info = self.get_version_info()
+        version_info = get_version_info()
 
         # 应用名称及版本（主副标题+版本，各自分行显示）
         app_info_layout = QVBoxLayout()
@@ -700,28 +678,6 @@ class SettingsPage(QWidget):
         layout.addWidget(copyright_label)
 
         return layout
-
-    def get_version_info(self):
-        """从versioninfo.txt文件中获取版本信息"""
-        if getattr(sys, 'frozen', False):
-            base_path = sys._MEIPASS if hasattr(sys, '_MEIPASS') else os.path.dirname(sys.executable)
-        else:
-            base_path = os.getcwd()
-
-        version_file_path = os.path.join(base_path, 'versioninfo_MFWPH.txt')
-
-        try:
-            if os.path.exists(version_file_path):
-                with open(version_file_path, 'r', encoding='utf-8') as f:
-                    for line in f:
-                        line = line.strip()
-                        if line.startswith('version='):
-                            version = line.split('=', 1)[1]
-                            return version
-        except Exception as e:
-            print(f"读取版本信息失败: {e}")
-
-        return "未知版本"
 
     def scroll_to_section(self, index):
         """Scroll to the selected section"""
@@ -869,3 +825,25 @@ class SettingsPage(QWidget):
                 "调试模式切换失败，请重试",
                 "操作失败"
             )
+
+def get_version_info():
+    """从versioninfo.txt文件中获取版本信息"""
+    if getattr(sys, 'frozen', False):
+        base_path = sys._MEIPASS if hasattr(sys, '_MEIPASS') else os.path.dirname(sys.executable)
+    else:
+        base_path = os.getcwd()
+
+    version_file_path = os.path.join(base_path, 'versioninfo_MFWPH.txt')
+
+    try:
+        if os.path.exists(version_file_path):
+            with open(version_file_path, 'r', encoding='utf-8') as f:
+                for line in f:
+                    line = line.strip()
+                    if line.startswith('version='):
+                        version = line.split('=', 1)[1]
+                        return version
+    except Exception as e:
+        print(f"读取版本信息失败: {e}")
+
+    return "未知版本"
