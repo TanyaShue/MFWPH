@@ -3,7 +3,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Literal, Optional
 
 __all__ = ['Choice', 'Option', 'SelectOption', 'BoolOption', 'InputOption', 'SettingsGroupOption', 'Task',
-           'ResourceConfig']
+           'Agent', 'ResourceConfig']
 
 
 @dataclass
@@ -63,6 +63,18 @@ class Task:
 
 
 @dataclass
+class Agent:
+    """Agent configuration dataclass."""
+    type: str = "python"
+    version: str = "3.12"
+    agent_path: str = ""
+    agent_params: str = ""
+    requirements_path: str = ""
+    use_venv: bool = True
+    pip_index_url: Optional[str] = None
+
+
+@dataclass
 class ResourceConfig:
     """Main resource configuration dataclass."""
     resource_name: str
@@ -72,9 +84,7 @@ class ResourceConfig:
     resource_update_service_id: str
     resource_rep_url: str
     resource_icon: str
-    agent_path: str
-    custom_prams: str
-    custom_dir: str
+    agent: Agent
     resource_tasks: List[Task] = field(default_factory=list)
     options: List[Option] = field(default_factory=list)
     source_file: str = ""  # 用于记录加载的文件路径，但不保存到输出 JSON 中
@@ -106,8 +116,11 @@ class ResourceConfig:
         """Create ResourceConfig object from a dictionary."""
         tasks_data = data.get('resource_tasks', [])
         options_data = data.get('options', [])
+        agent_data = data.get('agent', {})
 
         tasks = [Task(**task_data) for task_data in tasks_data]
+        agent = Agent(**agent_data) if agent_data else Agent()
+
         options = []
         for option_data in options_data:
             option_type = option_data.get('type')
@@ -160,9 +173,7 @@ class ResourceConfig:
             resource_rep_url=data.get('resource_rep_url', ''),
             resource_description=data.get('resource_description', ''),
             resource_icon=data.get('resource_icon', ''),
-            agent_path=data.get('agent_path', ''),
-            custom_prams=data.get('custom_prams', ''),
-            custom_dir=data.get('custom_dir', ''),
+            agent=agent,
             resource_tasks=tasks,
             options=options
         )
@@ -177,9 +188,15 @@ class ResourceConfig:
             "resource_rep_url": self.resource_rep_url,
             "resource_description": self.resource_description,
             "resource_icon": self.resource_icon,
-            "agent_path": self.agent_path,
-            "custom_prams": self.custom_prams,
-            "custom_dir": self.custom_dir,
+            "agent": {
+                "type": self.agent.type,
+                "version": self.agent.version,
+                "agent_path": self.agent.agent_path,
+                "agent_params": self.agent.agent_params,
+                "requirements_path":self.agent.requirements_path,
+                "use_venv": self.agent.use_venv,
+                "pip_index_url": self.agent.pip_index_url,
+            },
             "resource_tasks": [task.__dict__ for task in self.resource_tasks],
             "options": [option_to_dict(option) for option in self.options],
         }

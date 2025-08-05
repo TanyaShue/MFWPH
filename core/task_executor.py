@@ -1,14 +1,17 @@
 # -*- coding: UTF-8 -*-
 import asyncio
+import hashlib
 import json
 import os
 import subprocess
 import threading
 from datetime import datetime
+from pathlib import Path
 from typing import Optional, Dict, List, Union
 from dataclasses import dataclass, field
 from enum import Enum
 
+import filelock
 from PySide6.QtCore import QObject, Signal, Slot
 from maa.define import MaaAdbInputMethodEnum
 from qasync import asyncSlot
@@ -22,6 +25,7 @@ from maa.toolkit import Toolkit
 from app.models.config.app_config import DeviceConfig, DeviceType
 from app.models.config.global_config import RunTimeConfigs, global_config
 from app.models.logging.log_manager import log_manager
+from core.python_runtime_manager import PythonRuntimeManager
 
 
 class TaskStatus(Enum):
@@ -99,6 +103,7 @@ class TaskExecutor(QObject):
 
         # 通知处理器
         self._notification_handler = self._create_notification_handler()
+        self.runtime_manager = PythonRuntimeManager("./runtime", self.logger)
 
     def _create_notification_handler(self):
         """创建通知处理器"""
@@ -292,7 +297,8 @@ class TaskExecutor(QObject):
             # 初始化Agent（如果需要）
             if await self._setup_agent(task):
                 self.logger.info("Agent初始化成功")
-
+            else:
+                return
             # 执行任务列表
             result = await self._run_tasks(task)
 
@@ -367,7 +373,7 @@ class TaskExecutor(QObject):
     async def _setup_agent(self, task: Task) -> bool:
         """设置Agent"""
         resource_config = global_config.get_resource_config(task.data.resource_name)
-        if not resource_config or not resource_config.agent_path:
+        if not resource_config or not resource_config.agent.agent_path:
             return False
 
         try:
@@ -380,24 +386,89 @@ class TaskExecutor(QObject):
                 self._agent = AgentClient()
                 self._agent.bind(self._current_resource)
 
-            # 启动Agent进程
-            python_exe = self._find_python(task.data.resource_path) or "python"
-            cmd = [python_exe, resource_config.agent_path]
-            if resource_config.custom_prams:
-                cmd.extend(resource_config.custom_prams.split())
+            # 获取agent配置
+            agent_config = resource_config.agent
+            python_version = agent_config.version
+            use_venv = agent_config.use_venv
+            requirements_path = agent_config.requirements_path
+            pip_index_url = agent_config.pip_index_url
+
+            self.logger.debug(f"Agent配置: version={python_version}, use_venv={use_venv}")
+            self.logger.debug(f"Requirements: {requirements_path}, pip源: {pip_index_url}")
+
+            # 确保Python已安装
+            if not await self.runtime_manager.ensure_python_installed(python_version):
+                raise Exception(f"无法安装Python {python_version}")
+
+            # 准备Python环境
+            if use_venv:
+                print("使用虚拟环境python")
+                python_exe = await self._setup_venv_environment(
+                    task.data.resource_name,
+                    task.data.resource_path,
+                    python_version,
+                    requirements_path,
+                    pip_index_url
+                )
+            else:
+                python_exe = str(self.runtime_manager.get_python_executable(python_version))
+                print("使用系统python")
+                # 直接使用系统Python时也要安装依赖
+                await self._install_requirements(
+                    python_exe,
+                    task.data.resource_path,
+                    requirements_path,
+                    pip_index_url
+                )
+
+            # 构建启动命令 - 使用绝对路径
+            agent_full_path = Path(task.data.resource_path) / agent_config.agent_path
+
+            # 方案1：使用项目根目录作为工作目录（推荐）
+            cmd = [python_exe, str(agent_full_path)]
+            if agent_config.agent_params:
+                cmd.extend(agent_config.agent_params.split())
             cmd.extend(["-id", self._agent.identifier])
 
+            # 使用项目根目录作为工作目录
+            working_dir = os.getcwd()
+
+            # 方案2：如果必须在资源目录下运行，需要设置PYTHONPATH
+            # working_dir = task.data.resource_path
+            # 需要在环境变量中添加项目根目录到PYTHONPATH
+
+            self.logger.debug(f"Agent启动命令: {' '.join(cmd)}")
+            self.logger.debug(f"工作目录: {working_dir}")
+
+            # 启动Agent进程
             loop = asyncio.get_event_loop()
+
+            # 准备环境变量
+            env = os.environ.copy()
+
+            # 如果需要在资源目录下运行，添加PYTHONPATH
+            if working_dir == task.data.resource_path:
+                # 添加项目根目录到PYTHONPATH，确保能找到maa模块
+                project_root = os.getcwd()
+                if 'PYTHONPATH' in env:
+                    env['PYTHONPATH'] = f"{project_root}{os.pathsep}{env['PYTHONPATH']}"
+                else:
+                    env['PYTHONPATH'] = project_root
+                self.logger.debug(f"PYTHONPATH: {env['PYTHONPATH']}")
+
             self._agent_process = await loop.run_in_executor(
                 None,
                 lambda: subprocess.Popen(
                     cmd,
-                    cwd=task.data.resource_path,
+                    cwd=working_dir,  # 使用项目根目录
                     stdout=subprocess.PIPE,
                     stderr=subprocess.PIPE,
+                    env=env,  # 传入环境变量
                     creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
                 )
             )
+
+            self.logger.info(f"Agent进程已启动，PID: {self._agent_process.pid}")
 
             # 启动日志线程
             self._start_log_threads()
@@ -407,13 +478,18 @@ class TaskExecutor(QObject):
 
             # 检查进程状态
             if self._agent_process.poll() is not None:
+                # 读取错误输出
+                stderr = self._agent_process.stderr.read().decode('utf-8', errors='ignore')
+                self.logger.error(f"Agent启动失败，错误输出: {stderr}")
                 raise Exception(f"Agent启动失败: {self._agent_process.returncode}")
 
             # 连接Agent
+            self.logger.debug("尝试连接Agent...")
             connected = await loop.run_in_executor(None, self._agent.connect)
             if not connected:
                 raise Exception("无法连接到Agent")
 
+            self.logger.info("Agent连接成功")
             return True
 
         except Exception as e:
@@ -421,31 +497,187 @@ class TaskExecutor(QObject):
             await self._cleanup_agent()
             return False
 
-    def _find_python(self, base_dir: str) -> Optional[str]:
-        """查找Python可执行文件"""
-        # 尝试从配置文件读取
-        config_path = os.path.join(base_dir, "runtime", "python_config.json")
-        if os.path.exists(config_path):
-            try:
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    config = json.load(f)
-                    python_path = config.get('python_path')
-                    if python_path:
-                        abs_path = os.path.abspath(
-                            os.path.join(os.path.dirname(config_path), "..", python_path)
-                        )
-                        if os.path.exists(abs_path):
-                            return abs_path
-            except Exception:
-                pass
+    async def _setup_venv_environment(
+            self,
+            resource_name: str,
+            resource_path: str,
+            python_version: str,
+            requirements_path: str,
+            pip_index_url: str
+    ) -> str:
+        """设置虚拟环境"""
+        venv_dir = self.runtime_manager.get_venv_dir(python_version, resource_name)
+        venv_python = self.runtime_manager.get_venv_python(python_version, resource_name)
 
-        # 检查常见位置
-        for exe in ["python.exe", "python"]:
-            path = os.path.join(base_dir, "runtime", "python", exe)
-            if os.path.exists(path):
-                return path
+        self.logger.debug(f"虚拟环境路径: {venv_dir}")
 
-        return None
+        # 检查是否需要创建虚拟环境
+        if not venv_python.exists():
+            self.logger.info(f"创建新的虚拟环境: {resource_name}")
+            await self.runtime_manager.create_venv(python_version, resource_name)
+        else:
+            self.logger.debug(f"使用已存在的虚拟环境: {venv_python}")
+
+        # 检查并安装依赖
+        await self._check_and_install_deps(
+            str(venv_python),
+            resource_path,
+            requirements_path,
+            pip_index_url,
+            venv_dir
+        )
+
+        return str(venv_python)
+
+    async def _create_venv(self, python_version: str, resource_name: str):
+        """创建虚拟环境"""
+        python_exe = self.runtime_manager.get_python_executable(python_version)
+        venv_dir = self.runtime_manager.get_venv_dir(python_version, resource_name)
+
+        self.logger.info(f"创建虚拟环境: {venv_dir}")
+
+        # 使用文件锁避免并发创建
+        lock_file = venv_dir.parent / f".venv_lock_{resource_name}"
+        lock = filelock.FileLock(str(lock_file))
+
+        with lock:
+            if venv_dir.exists():
+                return
+
+            venv_dir.parent.mkdir(parents=True, exist_ok=True)
+
+            process = await asyncio.create_subprocess_exec(
+                str(python_exe), "-m", "venv", str(venv_dir),
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            stdout, stderr = await process.communicate()
+
+            if process.returncode != 0:
+                raise Exception(f"创建虚拟环境失败: {stderr.decode()}")
+
+    async def _check_and_install_deps(
+            self,
+            python_exe: str,
+            resource_path: str,
+            requirements_path: str,
+            pip_index_url: str,
+            venv_dir: Path
+    ):
+        """检查并安装依赖"""
+        req_file = Path(resource_path) / requirements_path
+
+        if not req_file.exists():
+            self.logger.info("未找到requirements.txt，跳过依赖安装")
+            return
+
+        # 计算requirements.txt的hash
+        with open(req_file, 'rb') as f:
+            req_hash = hashlib.md5(f.read()).hexdigest()
+
+        self.logger.debug(f"Requirements hash: {req_hash}")
+
+        # 检查缓存的hash
+        hash_file = venv_dir / ".deps_hash"
+        if hash_file.exists():
+            with open(hash_file, 'r') as f:
+                cached_hash = f.read().strip()
+
+            self.logger.debug(f"缓存的hash: {cached_hash}")
+
+            if cached_hash == req_hash:
+                self.logger.info("依赖未变化，跳过安装")
+                return
+
+        self.logger.info("依赖已变化或首次安装，开始安装依赖...")
+
+        # 安装依赖
+        await self._install_requirements(
+            python_exe,
+            resource_path,
+            requirements_path,
+            pip_index_url
+        )
+
+        # 保存hash
+        hash_file.parent.mkdir(parents=True, exist_ok=True)
+        with open(hash_file, 'w') as f:
+            f.write(req_hash)
+        self.logger.debug(f"已保存依赖hash到: {hash_file}")
+
+    async def _install_requirements(
+            self,
+            python_exe: str,
+            resource_path: str,
+            requirements_path: str,
+            pip_index_url: str
+    ):
+        """安装requirements.txt中的依赖"""
+        from pathlib import Path
+        req_file = Path(resource_path) / requirements_path
+
+        if not req_file.exists():
+            return
+
+        self.logger.info(f"安装依赖: {req_file}")
+
+        # 使用installing标记避免并发安装
+        installing_flag = req_file.parent / ".installing"
+
+        # 等待其他安装完成
+        wait_count = 0
+        while installing_flag.exists() and wait_count < 60:  # 最多等待60秒
+            await asyncio.sleep(1)
+            wait_count += 1
+
+        try:
+            # 创建安装标记
+            installing_flag.touch()
+
+            # 升级pip
+            self.logger.debug("升级pip...")
+            await self._run_pip(python_exe, ["-m", "pip", "install", "--upgrade", "pip"])
+
+            # 安装依赖
+            cmd = [
+                python_exe, "-m", "pip", "install",
+                "-r", str(req_file),
+                "-i", pip_index_url
+            ]
+
+            self.logger.debug(f"执行pip命令: {' '.join(cmd)}")
+
+            process = await asyncio.create_subprocess_exec(
+                *cmd,
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
+            )
+
+            stdout, stderr = await process.communicate()
+
+            if process.returncode != 0:
+                self.logger.error(f"pip输出: {stdout.decode('utf-8', errors='ignore')}")
+                self.logger.error(f"pip错误: {stderr.decode('utf-8', errors='ignore')}")
+                raise Exception(f"安装依赖失败: {stderr.decode()}")
+
+            self.logger.info("依赖安装完成")
+            self.logger.debug(f"安装结果: {stdout.decode('utf-8', errors='ignore')[:500]}...")  # 只显示前500字符
+
+        finally:
+            # 删除安装标记
+            if installing_flag.exists():
+                installing_flag.unlink()
+
+    async def _run_pip(self, python_exe: str, args: list):
+        """运行pip命令"""
+        process = await asyncio.create_subprocess_exec(
+            python_exe, *args,
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+
+        await process.communicate()
 
     def _start_log_threads(self):
         """启动日志捕获线程"""
