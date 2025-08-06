@@ -26,6 +26,7 @@ from app.models.config.app_config import DeviceConfig, DeviceType
 from app.models.config.global_config import RunTimeConfigs, global_config
 from app.models.logging.log_manager import log_manager
 from core.python_runtime_manager import PythonRuntimeManager
+from core.device_status_manager import device_status_manager
 
 
 class TaskStatus(Enum):
@@ -212,6 +213,9 @@ class TaskExecutor(QObject):
                 return True
 
             try:
+                # 通知状态管理器设备正在连接
+                device_status_manager.connect_device(self.device_name)
+
                 # 初始化Toolkit
                 current_dir = os.getcwd()
                 loop = asyncio.get_event_loop()
@@ -224,7 +228,11 @@ class TaskExecutor(QObject):
 
                 # 初始化控制器
                 if not await self._initialize_controller():
+                    device_status_manager.set_error(self.device_name, "控制器初始化失败")
                     return False
+
+                # 通知状态管理器设备连接成功
+                device_status_manager.device_connected(self.device_name)
 
                 self._active = True
 
@@ -237,6 +245,7 @@ class TaskExecutor(QObject):
 
             except Exception as e:
                 self.logger.error(f"启动失败: {e}", exc_info=True)
+                device_status_manager.set_error(self.device_name, str(e))
                 self._active = False
                 return False
 
@@ -297,6 +306,8 @@ class TaskExecutor(QObject):
             # 初始化Agent（如果需要）
             if await self._setup_agent(task):
                 self.logger.info("Agent初始化成功")
+                # 通知状态管理器任务开始
+                device_status_manager.start_task(self.device_name)
             else:
                 return
             # 执行任务列表
@@ -307,10 +318,16 @@ class TaskExecutor(QObject):
             task.status = TaskStatus.COMPLETED
             task.result = result
             self.task_completed.emit(task.id, result)
+            
+            # 通知状态管理器任务完成
+            device_status_manager.task_completed(self.device_name)
 
         except asyncio.CancelledError:
             task.status = TaskStatus.CANCELED
             self.task_canceled.emit(task.id)
+            
+            # 通知状态管理器任务被取消
+            device_status_manager.set_error(self.device_name, "任务被取消")
 
         except Exception as e:
             task.error = str(e)
@@ -318,6 +335,9 @@ class TaskExecutor(QObject):
             task.status = TaskStatus.FAILED
             self.logger.error(f"任务失败: {e}", exc_info=True)
             self.task_failed.emit(task.id, str(e))
+            
+            # 通知状态管理器任务失败
+            device_status_manager.set_error(self.device_name, str(e))
 
         finally:
             self.task_status_changed.emit(task.id, task.status.value)
@@ -367,6 +387,9 @@ class TaskExecutor(QObject):
             # 更新进度
             progress = int((i + 1) / len(task_list) * 100)
             self.progress_updated.emit(task.id, progress)
+            
+            # 通知状态管理器进度更新
+            device_status_manager.set_progress(self.device_name, progress)
 
         return {"result": "success", "data": task.data}
 
@@ -377,8 +400,13 @@ class TaskExecutor(QObject):
             return False
 
         try:
+            # 通知状态管理器开始更新资源
+            device_status_manager.start_update(self.device_name)
+            
             # 如果Agent已运行，直接返回
             if self._agent_process and self._agent_process.poll() is None:
+                # 更新完成
+                device_status_manager.update_completed(self.device_name)
                 return True
 
             # 创建Agent客户端
@@ -398,6 +426,7 @@ class TaskExecutor(QObject):
 
             # 确保Python已安装
             if not await self.runtime_manager.ensure_python_installed(python_version):
+                device_status_manager.set_error(self.device_name, f"无法安装Python {python_version}")
                 raise Exception(f"无法安装Python {python_version}")
 
             # 准备Python环境
@@ -420,6 +449,13 @@ class TaskExecutor(QObject):
                     requirements_path,
                     pip_index_url
                 )
+
+            # 通知状态管理器更新完成
+            device_status_manager.update_completed(self.device_name)
+            
+            # 通知状态管理器准备任务
+            device_status_manager.prepare_task(self.device_name)
+            device_status_manager.set_task_info(self.device_name, task.id, task.data.resource_name)
 
             # 构建启动命令 - 使用绝对路径
             agent_full_path = Path(task.data.resource_path) / agent_config.agent_path
@@ -481,12 +517,14 @@ class TaskExecutor(QObject):
                 # 读取错误输出
                 stderr = self._agent_process.stderr.read().decode('utf-8', errors='ignore')
                 self.logger.error(f"Agent启动失败，错误输出: {stderr}")
+                device_status_manager.set_error(self.device_name, f"Agent启动失败: {self._agent_process.returncode}")
                 raise Exception(f"Agent启动失败: {self._agent_process.returncode}")
 
             # 连接Agent
             self.logger.debug("尝试连接Agent...")
             connected = await loop.run_in_executor(None, self._agent.connect)
             if not connected:
+                device_status_manager.set_error(self.device_name, "无法连接到Agent")
                 raise Exception("无法连接到Agent")
 
             self.logger.info("Agent连接成功")
@@ -494,6 +532,7 @@ class TaskExecutor(QObject):
 
         except Exception as e:
             self.logger.error(f"Agent设置失败: {e}")
+            device_status_manager.set_error(self.device_name, str(e))
             await self._cleanup_agent()
             return False
 
@@ -789,6 +828,9 @@ class TaskExecutor(QObject):
 
         # 清理Agent
         await self._cleanup_agent()
+
+        # 通知状态管理器设备断开连接
+        device_status_manager.disconnect_device(self.device_name)
 
         self.logger.info("任务执行器已停止")
         self.executor_stopped.emit()

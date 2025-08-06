@@ -67,12 +67,6 @@ class TaskerManager(QObject):
         try:
             self.logger.info(f"正在为设备 {device_config.device_name} 创建任务执行器")
 
-            # 更新状态为连接中
-            device_status_manager.update_device_status(
-                device_config.device_name,
-                DeviceStatus.CONNECTING
-            )
-
             # 创建执行器
             executor = TaskExecutor(device_config, parent=self)
 
@@ -102,12 +96,6 @@ class TaskerManager(QObject):
                         created_at=datetime.now()
                     )
 
-                # 更新状态为空闲
-                device_status_manager.update_device_status(
-                    device_config.device_name,
-                    DeviceStatus.IDLE
-                )
-
                 self.device_added.emit(device_config.device_name)
                 self.device_status_changed.emit(device_config.device_name, "active")
                 self.logger.info(
@@ -115,12 +103,6 @@ class TaskerManager(QObject):
                 )
                 return True
             else:
-                # 更新状态为错误
-                device_status_manager.update_device_status(
-                    device_config.device_name,
-                    DeviceStatus.ERROR,
-                    "任务执行器启动失败"
-                )
                 self.logger.error(
                     f"设备 {device_config.device_name} 的任务执行器启动失败"
                 )
@@ -129,13 +111,6 @@ class TaskerManager(QObject):
         except Exception as e:
             error_msg = f"为设备 {device_config.device_name} 创建任务执行器失败: {e}"
             self.logger.error(error_msg, exc_info=True)
-
-            # 更新状态为错误
-            device_status_manager.update_device_status(
-                device_config.device_name,
-                DeviceStatus.ERROR,
-                str(e)
-            )
 
             self.error_occurred.emit(device_config.device_name, str(e))
             return False
@@ -176,11 +151,6 @@ class TaskerManager(QObject):
     def _on_task_started(self, device_name: str, task_id: str):
         """任务开始回调"""
         self.logger.debug(f"设备 {device_name} 的任务 {task_id} 已开始")
-        # 更新设备状态为运行中
-        device_status_manager.update_device_status(
-            device_name,
-            DeviceStatus.RUNNING
-        )
         # 更新当前任务ID
         device_status_manager.update_status(
             device_name,
@@ -215,13 +185,6 @@ class TaskerManager(QObject):
         self.logger.error(f"设备 {device_name} 的任务 {task_id} 失败: {error}")
         self.error_occurred.emit(device_name, f"任务 {task_id} 失败: {error}")
 
-        # 更新设备状态
-        device_status_manager.update_device_status(
-            device_name,
-            DeviceStatus.ERROR,
-            error
-        )
-
         # 更新队列状态
         self._update_queue_status(device_name)
 
@@ -232,18 +195,6 @@ class TaskerManager(QObject):
 
         # 更新队列状态
         self._update_queue_status(device_name)
-
-        # 如果没有其他任务在运行，更新状态为空闲
-        with QMutexLocker(self._mutex):
-            executor_info = self._executors.get(device_name)
-            if executor_info:
-                current_task = executor_info.executor._current_task
-                if not current_task or current_task.id == task_id:
-                    if executor_info.executor.get_queue_length() == 0:
-                        device_status_manager.update_device_status(
-                            device_name,
-                            DeviceStatus.IDLE
-                        )
 
     def _update_queue_status(self, device_name: str):
         """更新设备的队列状态"""
@@ -333,24 +284,12 @@ class TaskerManager(QObject):
         try:
             self.logger.info(f"正在停止设备 {device_name} 的执行器")
 
-            # 更新状态为停止中
-            device_status_manager.update_device_status(
-                device_name,
-                DeviceStatus.STOPPING
-            )
-
             # 停止执行器 - 直接调用异步方法
             await executor_info.executor.stop()
 
             # 从管理器中移除
             async with self._lock:
                 del self._executors[device_name]
-
-            # 更新状态为离线
-            device_status_manager.update_device_status(
-                device_name,
-                DeviceStatus.OFFLINE
-            )
 
             # 发送信号
             self.device_removed.emit(device_name)
@@ -365,13 +304,6 @@ class TaskerManager(QObject):
         except Exception as e:
             error_msg = f"停止设备 {device_name} 的执行器失败: {e}"
             self.logger.error(error_msg, exc_info=True)
-
-            # 更新状态为错误
-            device_status_manager.update_device_status(
-                device_name,
-                DeviceStatus.ERROR,
-                str(e)
-            )
 
             self.error_occurred.emit(device_name, str(e))
             return False

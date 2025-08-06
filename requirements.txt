@@ -9,3 +9,4 @@ cryptography
 semver
 pandas
 filelock
+transitions

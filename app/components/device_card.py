@@ -144,8 +144,10 @@ class DeviceCard(QFrame):
 
     def connect_signals(self):
         """连接信号"""
-        # 只监听状态变化信号
+        # 监听状态变化信号
         device_status_manager.status_changed.connect(self.on_status_changed)
+        # 监听状态机状态变化信号
+        device_status_manager.state_machine_changed.connect(self.on_state_machine_changed)
 
     def on_status_changed(self, device_name: str, status_info: DeviceStatusInfo):
         """当状态变化时更新显示"""
@@ -153,6 +155,16 @@ class DeviceCard(QFrame):
             return
 
         self.update_display(status_info)
+
+    def on_state_machine_changed(self, device_name: str, old_state: str, new_state: str):
+        """当状态机状态变化时更新显示"""
+        if device_name != self.device_config.device_name:
+            return
+
+        # 从状态管理器获取最新的状态信息并更新显示
+        status_info = device_status_manager.get_device_status(self.device_config.device_name)
+        if status_info:
+            self.update_display(status_info)
 
     def refresh_display(self):
         """刷新显示（从状态管理器获取最新状态）"""
