@@ -1,395 +1,333 @@
 # -*- coding: UTF-8 -*-
-from dataclasses import dataclass, field
+"""
+设备状态管理器
+作为状态机的统一管理器，提供UI数据映射
+"""
+
+from dataclasses import dataclass
 from datetime import datetime
-from enum import Enum
-from typing import Optional, Dict, List, Set
+from typing import Optional, Dict, List
 from PySide6.QtCore import QObject, Signal, QMutex, QMutexLocker
 from app.models.logging.log_manager import log_manager
-from core.device_state_machine import DeviceStateMachine, DeviceState
-
-class DeviceStatus(Enum):
-    """设备状态枚举"""
-    OFFLINE = "offline"  # 设备离线/未启动
-    IDLE = "idle"  # 设备就绪
-    RUNNING = "running"  # 正在执行任务
-    ERROR = "error"  # 错误状态
-    STOPPING = "stopping"  # 正在停止
-    SCHEDULED = "scheduled"  # 已设置定时任务
-    WAITING = "waiting"  # 等待执行
-    CONNECTING = "connecting"  # 正在连接
+from core.device_state_machine import StateMachine, DeviceState
 
 
 @dataclass
-class DeviceStatusInfo:
-    """设备状态信息 - 不可变的数据类"""
+class DeviceUIInfo:
+    """设备UI显示信息"""
     device_name: str
-    status: DeviceStatus = DeviceStatus.OFFLINE
-    is_active: bool = False
-    is_running: bool = False
+    state: DeviceState
+    state_text: str
+    state_color: str
+    button_text: str
+    button_enabled: bool
+    tooltip: str
+    progress: int = 0
     error_message: Optional[str] = None
+    task_name: Optional[str] = None
     queue_length: int = 0
-    current_task_id: Optional[str] = None
-    current_task_progress: int = 0
-
-    # 定时任务相关
-    has_scheduled_tasks: bool = False
-    next_scheduled_time: Optional[datetime] = None
-    scheduled_time_text: str = "未启用"
-
-    # 统计信息
-    total_tasks_completed: int = 0
-    last_task_time: Optional[datetime] = None
-
-    def __eq__(self, other):
-        """比较两个状态是否相等"""
-        if not isinstance(other, DeviceStatusInfo):
-            return False
-        return (self.device_name == other.device_name and
-                self.status == other.status and
-                self.is_active == other.is_active and
-                self.is_running == other.is_running and
-                self.error_message == other.error_message and
-                self.queue_length == other.queue_length and
-                self.has_scheduled_tasks == other.has_scheduled_tasks and
-                self.scheduled_time_text == other.scheduled_time_text)
+    is_connected: bool = False
+    is_busy: bool = False
 
 
 class DeviceStatusManager(QObject):
     """
-    统一的设备状态管理器
-    使用状态机管理设备状态，只负责存储和分发状态
+    设备状态管理器
+    统一管理所有设备和任务的状态机
     """
-    
-    # 状态变化信号 - 只有当状态真正改变时才发送
-    status_changed = Signal(str, DeviceStatusInfo)  # device_name, new_status_info
-    
-    # 状态机状态变化信号
-    state_machine_changed = Signal(str, str, str)  # device_name, old_state, new_state
-    
+
+    # 状态变化信号
+    state_changed = Signal(str, DeviceState, DeviceState, dict)  # name, old_state, new_state, context
+    ui_info_changed = Signal(str, DeviceUIInfo)  # device_name, ui_info
+
     def __init__(self, parent=None):
         super().__init__(parent)
-        self._device_status: Dict[str, DeviceStatusInfo] = {}
-        self._device_state_machines: Dict[str, DeviceStateMachine] = {}
+        self._state_machines: Dict[str, StateMachine] = {}
+        self._task_machines: Dict[str, StateMachine] = {}  # task_id -> StateMachine
         self._mutex = QMutex()
         self.logger = log_manager.get_app_logger()
-        
-        # 状态到UI配置的映射（纯数据，不在状态对象中）
+
+        # UI配置映射
         self._ui_config = {
-            DeviceStatus.IDLE: {
-                "color": "#4CAF50",
-                "tooltip": "设备就绪",
-                "button_text": "运行",
-                "button_enabled": True
-            },
-            DeviceStatus.RUNNING: {
-                "color": "#2196F3",
-                "tooltip": "正在执行任务",
-                "button_text": "停止",
-                "button_enabled": True
-            },
-            DeviceStatus.ERROR: {
-                "color": "#F44336",
-                "tooltip": "错误",
-                "button_text": "运行",
-                "button_enabled": True
-            },
-            DeviceStatus.STOPPING: {
-                "color": "#FF9800",
-                "tooltip": "正在停止",
-                "button_text": "停止中...",
-                "button_enabled": False
-            },
-            DeviceStatus.SCHEDULED: {
-                "color": "#9C27B0",
-                "tooltip": "已设置定时任务",
-                "button_text": "运行",
-                "button_enabled": True
-            },
-            DeviceStatus.WAITING: {
-                "color": "#607D8B",
-                "tooltip": "等待执行",
-                "button_text": "停止",
-                "button_enabled": True
-            },
-            DeviceStatus.OFFLINE: {
+            DeviceState.DISCONNECTED: {
+                "text": "离线",
                 "color": "#999999",
-                "tooltip": "设备离线",
-                "button_text": "运行",
-                "button_enabled": True
+                "button": "连接",
+                "enabled": True,
+                "tooltip": "设备未连接"
             },
-            DeviceStatus.CONNECTING: {
+            DeviceState.CONNECTING: {
+                "text": "连接中",
                 "color": "#03A9F4",
-                "tooltip": "正在连接",
-                "button_text": "连接中...",
-                "button_enabled": False
+                "button": "连接中...",
+                "enabled": False,
+                "tooltip": "正在连接设备"
             },
-        }
-        
-        # 状态机状态到设备状态的映射
-        self._state_mapping = {
-            DeviceState.DISCONNECTED.value: DeviceStatus.OFFLINE,
-            DeviceState.CONNECTING.value: DeviceStatus.CONNECTING,
-            DeviceState.CONNECTED.value: DeviceStatus.IDLE,
-            DeviceState.UPDATING.value: DeviceStatus.RUNNING,
-            DeviceState.PREPARING.value: DeviceStatus.RUNNING,
-            DeviceState.RUNNING.value: DeviceStatus.RUNNING,
-            DeviceState.PAUSED.value: DeviceStatus.RUNNING,
-            DeviceState.ERROR.value: DeviceStatus.ERROR
+            DeviceState.CONNECTED: {
+                "text": "就绪",
+                "color": "#4CAF50",
+                "button": "运行",
+                "enabled": True,
+                "tooltip": "设备就绪"
+            },
+            DeviceState.UPDATING: {
+                "text": "更新中",
+                "color": "#FF9800",
+                "button": "更新中...",
+                "enabled": False,
+                "tooltip": "正在更新资源"
+            },
+            DeviceState.PREPARING: {
+                "text": "准备中",
+                "color": "#2196F3",
+                "button": "准备中...",
+                "enabled": False,
+                "tooltip": "准备运行任务"
+            },
+            DeviceState.QUEUED: {
+                "text": "排队中",
+                "color": "#9C27B0",
+                "button": "取消",
+                "enabled": True,
+                "tooltip": "任务排队中"
+            },
+            DeviceState.RUNNING: {
+                "text": "运行中",
+                "color": "#2196F3",
+                "button": "停止",
+                "enabled": True,
+                "tooltip": "正在执行任务"
+            },
+            DeviceState.PAUSED: {
+                "text": "已暂停",
+                "color": "#607D8B",
+                "button": "恢复",
+                "enabled": True,
+                "tooltip": "任务已暂停"
+            },
+            DeviceState.COMPLETED: {
+                "text": "已完成",
+                "color": "#4CAF50",
+                "button": "运行",
+                "enabled": True,
+                "tooltip": "任务成功完成"
+            },
+            DeviceState.FAILED: {
+                "text": "失败",
+                "color": "#F44336",
+                "button": "重试",
+                "enabled": True,
+                "tooltip": "任务执行失败"
+            },
+            DeviceState.CANCELED: {
+                "text": "已取消",
+                "color": "#FF9800",
+                "button": "运行",
+                "enabled": True,
+                "tooltip": "任务已取消"
+            },
+            DeviceState.ERROR: {
+                "text": "错误",
+                "color": "#F44336",
+                "button": "重连",
+                "enabled": True,
+                "tooltip": "设备错误"
+            }
         }
 
-    def get_ui_config(self, status: DeviceStatus) -> dict:
-        """获取状态对应的UI配置"""
-        return self._ui_config.get(status, self._ui_config[DeviceStatus.OFFLINE])
+    # === 设备状态机管理 ===
 
-    def _get_or_create_state_machine(self, device_name: str) -> DeviceStateMachine:
+    def get_or_create_device_machine(self, device_name: str) -> StateMachine:
         """获取或创建设备状态机"""
-        if device_name not in self._device_state_machines:
-            self._device_state_machines[device_name] = DeviceStateMachine(device_name)
-            # 连接状态机的信号
-            self._device_state_machines[device_name].state_changed.connect(self._on_state_machine_changed)
-        return self._device_state_machines[device_name]
-
-    def _on_state_machine_changed(self, device_name: str, old_state: str, new_state: str):
-        """状态机状态变化回调"""
-        self.logger.debug(f"状态机状态变化: {device_name} {old_state} -> {new_state}")
-        
-        # 发送状态机状态变化信号
-        self.state_machine_changed.emit(device_name, old_state, new_state)
-        
-        # 更新设备状态信息
-        self._update_status_from_state_machine(device_name, new_state)
-
-    def _update_status_from_state_machine(self, device_name: str, state_machine_state: str):
-        """根据状态机状态更新设备状态"""
-        # 映射状态机状态到设备状态
-        device_status = self._state_mapping.get(state_machine_state, DeviceStatus.OFFLINE)
-        
-        # 获取状态机的完整状态信息
-        state_machine = self._get_or_create_state_machine(device_name)
-        state_info = state_machine.get_state_info()
-        
-        # 检查是否处于运行状态（包括准备、更新、运行、暂停等状态）
-        is_running = state_machine_state in [
-            DeviceState.UPDATING.value,
-            DeviceState.PREPARING.value,
-            DeviceState.RUNNING.value,
-            DeviceState.PAUSED.value
-        ]
-        
-        # 更新设备状态
-        updates = {
-            "status": device_status,
-            "is_active": (device_status != DeviceStatus.OFFLINE),
-            "is_running": is_running,  # 使用正确的运行状态判断
-            "error_message": state_info.get('error_message')
-        }
-        
-        # 如果有任务信息，也更新
-        if state_info.get('task_id'):
-            updates["current_task_id"] = state_info.get('task_id')
-            
-        if state_info.get('progress') is not None:
-            updates["current_task_progress"] = state_info.get('progress')
-        
-        self.update_status(device_name, **updates)
-
-    def register_device(self, device_name: str) -> DeviceStatusInfo:
-        """注册设备并返回初始状态"""
         with QMutexLocker(self._mutex):
-            # 创建状态机
-            self._get_or_create_state_machine(device_name)
-            
-            if device_name not in self._device_status:
-                self._device_status[device_name] = DeviceStatusInfo(device_name=device_name)
-                self.logger.debug(f"注册设备状态: {device_name}")
-            return self._device_status[device_name]
+            if device_name not in self._state_machines:
+                machine = StateMachine(device_name, DeviceState.DISCONNECTED)
+                machine.state_changed.connect(self._on_device_state_changed)
+                self._state_machines[device_name] = machine
+                self.logger.info(f"创建设备状态机: {device_name}")
+            return self._state_machines[device_name]
 
-    def get_device_status(self, device_name: str) -> Optional[DeviceStatusInfo]:
-        """获取设备状态信息（返回副本，保证不可变）"""
+    def get_device_machine(self, device_name: str) -> Optional[StateMachine]:
+        """获取设备状态机"""
         with QMutexLocker(self._mutex):
-            status = self._device_status.get(device_name)
-            if status:
-                # 返回数据类的副本，确保外部无法修改内部状态
-                import dataclasses
-                return dataclasses.replace(status)
-            return None
+            return self._state_machines.get(device_name)
 
-    def update_status(self, device_name: str, **kwargs) -> bool:
-        """
-        更新设备状态
-        返回 True 如果状态发生了变化
-        """
+    def remove_device_machine(self, device_name: str):
+        """移除设备状态机"""
         with QMutexLocker(self._mutex):
-            current_status = self._device_status.get(device_name)
-            if not current_status:
-                current_status = DeviceStatusInfo(device_name=device_name)
-                self._device_status[device_name] = current_status
+            if device_name in self._state_machines:
+                machine = self._state_machines[device_name]
+                machine.state_changed.disconnect(self._on_device_state_changed)
+                del self._state_machines[device_name]
+                self.logger.info(f"移除设备状态机: {device_name}")
 
-            # 创建新的状态对象（不可变）
-            import dataclasses
-            new_status = dataclasses.replace(current_status, **kwargs)
+    # === 任务状态机管理 ===
 
-            # 只有当状态真正改变时才更新和发送信号
-            if new_status != current_status:
-                self._device_status[device_name] = new_status
-                self.logger.debug(f"设备 {device_name} 状态已更新")
-                # 发送信号（在锁外面）
-                self.status_changed.emit(device_name, new_status)
-                return True
+    def create_task_machine(self, task_id: str, device_name: str) -> StateMachine:
+        """为任务创建状态机"""
+        with QMutexLocker(self._mutex):
+            if task_id in self._task_machines:
+                self.logger.warning(f"任务状态机已存在: {task_id}")
+                return self._task_machines[task_id]
 
-            return False
+            machine = StateMachine(f"task_{task_id}", DeviceState.QUEUED)
+            machine.update_context(device_name=device_name, task_id=task_id)
+            machine.state_changed.connect(self._on_task_state_changed)
+            self._task_machines[task_id] = machine
+            self.logger.debug(f"创建任务状态机: {task_id}")
+            return machine
 
-    def update_device_status(self, device_name: str, status: DeviceStatus,
-                             error_message: Optional[str] = None):
-        """便捷方法：更新设备基本状态"""
-        self.update_status(
-            device_name,
-            status=status,
-            error_message=error_message,
-            is_active=(status != DeviceStatus.OFFLINE),
-            is_running=(status == DeviceStatus.RUNNING)
-        )
+    def get_task_machine(self, task_id: str) -> Optional[StateMachine]:
+        """获取任务状态机"""
+        with QMutexLocker(self._mutex):
+            return self._task_machines.get(task_id)
 
-    def update_scheduled_info(self, device_name: str, has_scheduled: bool,
-                              next_time: Optional[datetime] = None, time_text: str = "未启用"):
-        """更新定时任务信息"""
-        updates = {
-            "has_scheduled_tasks": has_scheduled,
-            "next_scheduled_time": next_time,
-            "scheduled_time_text": time_text
-        }
+    def remove_task_machine(self, task_id: str):
+        """移除任务状态机"""
+        with QMutexLocker(self._mutex):
+            if task_id in self._task_machines:
+                machine = self._task_machines[task_id]
+                machine.state_changed.disconnect(self._on_task_state_changed)
+                del self._task_machines[task_id]
+                self.logger.debug(f"移除任务状态机: {task_id}")
 
-        # 如果有定时任务且设备离线，更新状态为SCHEDULED
-        current_status = self.get_device_status(device_name)
-        if current_status and has_scheduled and current_status.status == DeviceStatus.OFFLINE:
-            updates["status"] = DeviceStatus.SCHEDULED
+    def get_device_task_count(self, device_name: str) -> int:
+        """获取设备的任务数量"""
+        with QMutexLocker(self._mutex):
+            count = 0
+            for machine in self._task_machines.values():
+                context = machine.get_context()
+                if context.get('device_name') == device_name:
+                    if machine.get_state() in [DeviceState.QUEUED, DeviceState.PREPARING,
+                                               DeviceState.RUNNING, DeviceState.PAUSED]:
+                        count += 1
+            return count
 
-        self.update_status(device_name, **updates)
+    # === 回调处理 ===
 
-    def update_progress(self, device_name: str, progress: int):
-        """更新任务进度"""
-        self.update_status(device_name, current_task_progress=progress)
+    def _on_device_state_changed(self, name: str, old_state: str, new_state: str, context: dict):
+        """设备状态变化回调"""
+        old_enum = DeviceState(old_state)
+        new_enum = DeviceState(new_state)
 
-    def update_queue_info(self, device_name: str, queue_length: int):
-        """更新队列信息"""
-        self.update_status(device_name, queue_length=queue_length)
+        # 发送原始状态变化信号
+        self.state_changed.emit(name, old_enum, new_enum, context)
 
-    def batch_update_queue_info(self, queue_info: Dict[str, int]):
-        """批量更新队列信息"""
-        for device_name, queue_length in queue_info.items():
-            self.update_queue_info(device_name, queue_length)
+        # 生成UI信息
+        ui_info = self._create_ui_info(name, new_enum, context)
+        self.ui_info_changed.emit(name, ui_info)
 
-    def on_task_completed(self, device_name: str):
-        """任务完成时的状态更新"""
-        current = self.get_device_status(device_name)
-        if not current:
+    def _on_task_state_changed(self, name: str, old_state: str, new_state: str, context: dict):
+        """任务状态变化回调"""
+        # 任务状态变化可能影响设备状态
+        device_name = context.get('device_name')
+        if device_name:
+            self._update_device_from_task(device_name, DeviceState(new_state))
+
+    def _update_device_from_task(self, device_name: str, task_state: DeviceState):
+        """根据任务状态更新设备状态"""
+        device_machine = self.get_device_machine(device_name)
+        if not device_machine:
             return
 
-        updates = {
-            "total_tasks_completed": current.total_tasks_completed + 1,
-            "last_task_time": datetime.now(),
-            "current_task_id": None,
-            "current_task_progress": 0
-        }
+        # 获取设备的所有活动任务数
+        task_count = self.get_device_task_count(device_name)
+        device_machine.update_context(queue_length=task_count)
 
-        # 根据队列决定新状态
-        if current.queue_length > 0:
-            updates["status"] = DeviceStatus.WAITING
-        else:
-            updates["status"] = DeviceStatus.IDLE
-            updates["is_running"] = False
+        # 如果有任务在运行，更新设备状态
+        if task_state == DeviceState.RUNNING and device_machine.get_state() != DeviceState.RUNNING:
+            device_machine.safe_trigger('start_task')
+        elif task_state in [DeviceState.COMPLETED, DeviceState.FAILED, DeviceState.CANCELED]:
+            # 检查是否还有其他任务
+            if task_count == 0 and device_machine.get_state() == DeviceState.RUNNING:
+                device_machine.safe_trigger('task_success')
+                device_machine.safe_trigger('reset_to_connected')
 
-        self.update_status(device_name, **updates)
+    def _create_ui_info(self, device_name: str, state: DeviceState, context: dict) -> DeviceUIInfo:
+        """创建UI显示信息"""
+        config = self._ui_config[state]
 
-    def clear_device(self, device_name: str):
-        """清除设备状态"""
-        with QMutexLocker(self._mutex):
-            if device_name in self._device_status:
-                del self._device_status[device_name]
-                self.logger.debug(f"清除设备状态: {device_name}")
-            if device_name in self._device_state_machines:
-                del self._device_state_machines[device_name]
-                self.logger.debug(f"清除设备状态机: {device_name}")
+        return DeviceUIInfo(
+            device_name=device_name,
+            state=state,
+            state_text=config["text"],
+            state_color=config["color"],
+            button_text=config["button"],
+            button_enabled=config["enabled"],
+            tooltip=config["tooltip"],
+            progress=context.get('progress', 0),
+            error_message=context.get('error_message'),
+            task_name=context.get('task_name'),
+            queue_length=context.get('queue_length', 0),
+            is_connected=(state not in [DeviceState.DISCONNECTED, DeviceState.CONNECTING]),
+            is_busy=(state in [DeviceState.UPDATING, DeviceState.PREPARING,
+                               DeviceState.RUNNING, DeviceState.PAUSED])
+        )
 
-    # 状态机操作方法
-    def connect_device(self, device_name: str):
+
+    def connect_device(self, device_name: str) -> bool:
         """连接设备"""
-        state_machine = self._get_or_create_state_machine(device_name)
-        if state_machine.can('connect'):
-            state_machine.trigger('connect')
+        machine = self.get_or_create_device_machine(device_name)
+        return machine.safe_trigger('connect')
 
-    def device_connected(self, device_name: str):
+    def device_connected(self, device_name: str) -> bool:
         """设备连接成功"""
-        state_machine = self._get_or_create_state_machine(device_name)
-        if state_machine.can('connected'):
-            state_machine.trigger('connected')
+        machine = self.get_device_machine(device_name)
+        return machine.safe_trigger('connection_success') if machine else False
 
-    def start_update(self, device_name: str):
-        """开始更新资源"""
-        state_machine = self._get_or_create_state_machine(device_name)
-        if state_machine.can('start_update'):
-            state_machine.trigger('start_update')
+    def device_disconnected(self, device_name: str) -> bool:
+        """断开设备"""
+        machine = self.get_device_machine(device_name)
+        return machine.safe_trigger('disconnect') if machine else False
 
-    def update_completed(self, device_name: str):
+    def start_update(self, device_name: str) -> bool:
+        """开始更新"""
+        machine = self.get_device_machine(device_name)
+        return machine.safe_trigger('start_update') if machine else False
+
+    def update_completed(self, device_name: str) -> bool:
         """更新完成"""
-        state_machine = self._get_or_create_state_machine(device_name)
-        if state_machine.can('update_completed'):
-            state_machine.trigger('update_completed')
+        machine = self.get_device_machine(device_name)
+        return machine.safe_trigger('update_success') if machine else False
 
-    def prepare_task(self, device_name: str):
-        """准备任务"""
-        state_machine = self._get_or_create_state_machine(device_name)
-        if state_machine.can('prepare_task'):
-            state_machine.trigger('prepare_task')
+    def set_device_error(self, device_name: str, error_message: str):
+        """设置设备错误"""
+        machine = self.get_device_machine(device_name)
+        if machine:
+            machine.set_error_message(error_message)
+            machine.safe_trigger('set_error')
 
-    def start_task(self, device_name: str):
-        """开始任务"""
-        state_machine = self._get_or_create_state_machine(device_name)
-        if state_machine.can('start_task'):
-            state_machine.trigger('start_task')
+    def set_device_progress(self, device_name: str, progress: int):
+        """设置设备进度"""
+        machine = self.get_device_machine(device_name)
+        if machine:
+            machine.set_progress(progress)
 
-    def task_completed(self, device_name: str):
-        """任务完成"""
-        state_machine = self._get_or_create_state_machine(device_name)
-        if state_machine.can('task_completed'):
-            state_machine.trigger('task_completed')
+    def get_device_state(self, device_name: str) -> Optional[DeviceState]:
+        """获取设备状态"""
+        machine = self.get_device_machine(device_name)
+        return machine.get_state() if machine else None
 
-    def pause_task(self, device_name: str):
-        """暂停任务"""
-        state_machine = self._get_or_create_state_machine(device_name)
-        if state_machine.can('pause_task'):
-            state_machine.trigger('pause_task')
+    def get_device_ui_info(self, device_name: str) -> Optional[DeviceUIInfo]:
+        """获取设备UI信息"""
+        machine = self.get_device_machine(device_name)
+        if machine:
+            state = machine.get_state()
+            context = machine.get_context()
+            return self._create_ui_info(device_name, state, context)
+        return None
 
-    def resume_task(self, device_name: str):
-        """恢复任务"""
-        state_machine = self._get_or_create_state_machine(device_name)
-        if state_machine.can('resume_task'):
-            state_machine.trigger('resume_task')
+    def cleanup(self):
+        """清理所有状态机"""
+        with QMutexLocker(self._mutex):
+            for machine in self._state_machines.values():
+                machine.state_changed.disconnect()
+            for machine in self._task_machines.values():
+                machine.state_changed.disconnect()
+            self._state_machines.clear()
+            self._task_machines.clear()
+            self.logger.info("所有状态机已清理")
 
-    def set_error(self, device_name: str, error_message: str):
-        """设置错误状态"""
-        state_machine = self._get_or_create_state_machine(device_name)
-        state_machine.set_error(error_message)
-
-    def disconnect_device(self, device_name: str):
-        """断开设备连接"""
-        state_machine = self._get_or_create_state_machine(device_name)
-        if state_machine.can('disconnect'):
-            state_machine.trigger('disconnect')
-
-    def set_progress(self, device_name: str, progress: int):
-        """设置任务进度"""
-        state_machine = self._get_or_create_state_machine(device_name)
-        state_machine.set_progress(progress)
-
-    def set_task_info(self, device_name: str, task_id: Optional[str] = None, task_name: Optional[str] = None):
-        """设置任务信息"""
-        state_machine = self._get_or_create_state_machine(device_name)
-        state_machine.set_task_info(task_id, task_name)
-
-
-# 导入需要的模块
-import dataclasses
 
 # 创建全局实例
 device_status_manager = DeviceStatusManager()

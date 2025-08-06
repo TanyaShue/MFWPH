@@ -1,4 +1,9 @@
 # -*- coding: UTF-8 -*-
+"""
+任务管理器
+集中管理所有设备的任务执行器，使用统一状态机
+"""
+
 from typing import Dict, Optional, List, Union
 import asyncio
 from dataclasses import dataclass
@@ -10,8 +15,9 @@ from qasync import asyncSlot
 from app.models.config.app_config import DeviceConfig, Resource
 from app.models.config.global_config import RunTimeConfigs, global_config
 from app.models.logging.log_manager import log_manager
-from core.task_executor import TaskExecutor, TaskStatus
-from core.device_status_manager import device_status_manager, DeviceStatus
+from core.task_executor import TaskExecutor
+from core.device_state_machine import DeviceState
+from core.device_status_manager import device_status_manager
 
 
 @dataclass
@@ -26,20 +32,20 @@ class DeviceTaskInfo:
 
 class TaskerManager(QObject):
     """
-    集中管理所有设备任务执行器的管理器，使用单例模式确保整个应用中只有一个实例。
-    完全异步化的实现，集成了状态管理器。
+    集中管理所有设备任务执行器的管理器
+    使用统一状态机管理所有状态
     """
     # 设备相关信号
     device_added = Signal(str)  # 设备添加信号
     device_removed = Signal(str)  # 设备移除信号
-    device_status_changed = Signal(str, str)  # 设备状态变化信号 (device_name, status)
+    device_state_changed = Signal(str, DeviceState)  # 设备状态变化信号
 
     # 任务相关信号
     task_submitted = Signal(str, str)  # 任务提交信号 (device_name, task_id)
-    all_tasks_completed = Signal(str)  # 设备所有任务完成信号 (device_name)
+    all_tasks_completed = Signal(str)  # 设备所有任务完成信号
 
     # 错误信号
-    error_occurred = Signal(str, str)  # 错误发生信号 (device_name, error_message)
+    error_occurred = Signal(str, str)  # 错误发生信号
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
@@ -52,12 +58,30 @@ class TaskerManager(QObject):
         self._total_tasks_submitted = 0
         self._total_tasks_completed = 0
 
+        # 连接状态管理器信号
+        self._connect_status_manager_signals()
+
         self.logger.info("TaskerManager 初始化完成")
+
+    def _connect_status_manager_signals(self):
+        """连接状态管理器的信号"""
+        device_status_manager.state_changed.connect(self._on_device_state_changed)
+
+    @Slot(str, object, object, dict)
+    def _on_device_state_changed(self, name: str, old_state: DeviceState, new_state: DeviceState, context: dict):
+        """设备状态变化回调"""
+        self.device_state_changed.emit(name, new_state)
+
+        # 记录重要状态变化
+        if new_state == DeviceState.ERROR:
+            error_msg = context.get('error_message', '未知错误')
+            self.logger.error(f"设备 {name} 进入错误状态: {error_msg}")
+            self.error_occurred.emit(name, error_msg)
 
     @asyncSlot(DeviceConfig)
     async def create_executor(self, device_config: DeviceConfig) -> bool:
         """
-        异步创建并启动设备的任务执行器。如果执行器已存在则直接返回 True。
+        异步创建并启动设备的任务执行器
         """
         async with self._lock:
             if device_config.device_name in self._executors:
@@ -70,10 +94,10 @@ class TaskerManager(QObject):
             # 创建执行器
             executor = TaskExecutor(device_config, parent=self)
 
-            # 连接信号
+            # 连接执行器信号
             self._connect_executor_signals(executor, device_config.device_name)
 
-            # 启动执行器 - 直接调用异步方法
+            # 启动执行器
             success = await executor.start()
 
             if success:
@@ -97,7 +121,6 @@ class TaskerManager(QObject):
                     )
 
                 self.device_added.emit(device_config.device_name)
-                self.device_status_changed.emit(device_config.device_name, "active")
                 self.logger.info(
                     f"设备 {device_config.device_name} 的任务执行器创建并启动成功"
                 )
@@ -112,88 +135,55 @@ class TaskerManager(QObject):
             error_msg = f"为设备 {device_config.device_name} 创建任务执行器失败: {e}"
             self.logger.error(error_msg, exc_info=True)
 
+            # 使用状态机设置错误
+            device_status_manager.set_device_error(device_config.device_name, str(e))
             self.error_occurred.emit(device_config.device_name, str(e))
             return False
 
     def _connect_executor_signals(self, executor: TaskExecutor, device_name: str):
         """连接执行器信号"""
-        # 任务开始时更新状态为运行中
-        executor.task_started.connect(
-            lambda task_id: self._on_task_started(device_name, task_id)
+        # 任务状态变化时更新
+        executor.task_state_changed.connect(
+            lambda task_id, state, context: self._on_task_state_changed(
+                device_name, task_id, state, context
+            )
         )
 
-        # 任务完成时更新统计
-        executor.task_completed.connect(
-            lambda task_id, result: self._on_task_completed(device_name, task_id)
-        )
+    @Slot(str, str, object, dict)
+    def _on_task_state_changed(self, device_name: str, task_id: str,
+                               state: DeviceState, context: dict):
+        """任务状态变化回调"""
+        self.logger.debug(f"任务 {task_id} 状态变为: {state.value}")
 
-        # 任务失败时记录
-        executor.task_failed.connect(
-            lambda task_id, error: self._on_task_failed(device_name, task_id, error)
-        )
+        if state == DeviceState.RUNNING:
+            # 任务开始运行
+            self.logger.info(f"设备 {device_name} 的任务 {task_id} 已开始")
 
-        # 任务排队时更新队列信息
-        executor.task_queued.connect(
-            lambda task_id: self._update_queue_status(device_name)
-        )
+        elif state == DeviceState.COMPLETED:
+            # 任务完成
+            self._total_tasks_completed += 1
+            self.logger.info(
+                f"设备 {device_name} 的任务 {task_id} 已完成 "
+                f"(总完成数: {self._total_tasks_completed})"
+            )
 
-        # 任务取消时更新状态
-        executor.task_canceled.connect(
-            lambda task_id: self._on_task_canceled(device_name, task_id)
-        )
+            # 检查是否所有任务都完成了
+            with QMutexLocker(self._mutex):
+                executor_info = self._executors.get(device_name)
+                if executor_info and executor_info.executor.get_queue_length() == 0:
+                    self.all_tasks_completed.emit(device_name)
 
-        # 进度更新
-        executor.progress_updated.connect(
-            lambda task_id, progress: device_status_manager.update_progress(device_name, progress)
-        )
+        elif state == DeviceState.FAILED:
+            # 任务失败
+            error_msg = context.get('error_message', '未知错误')
+            self.logger.error(f"设备 {device_name} 的任务 {task_id} 失败: {error_msg}")
+            self.error_occurred.emit(device_name, f"任务 {task_id} 失败: {error_msg}")
 
-    @Slot(str, str)
-    def _on_task_started(self, device_name: str, task_id: str):
-        """任务开始回调"""
-        self.logger.debug(f"设备 {device_name} 的任务 {task_id} 已开始")
-        # 更新当前任务ID
-        device_status_manager.update_status(
-            device_name,
-            current_task_id=task_id,
-            current_task_progress=0
-        )
+        elif state == DeviceState.CANCELED:
+            # 任务取消
+            self.logger.info(f"设备 {device_name} 的任务 {task_id} 已取消")
 
-    @Slot(str, str)
-    def _on_task_completed(self, device_name: str, task_id: str):
-        """任务完成回调"""
-        self._total_tasks_completed += 1
-        self.logger.debug(
-            f"设备 {device_name} 的任务 {task_id} 已完成 "
-            f"(总完成数: {self._total_tasks_completed})"
-        )
-
-        # 通过状态管理器更新任务完成状态
-        device_status_manager.on_task_completed(device_name)
-
-        # 更新队列状态
-        self._update_queue_status(device_name)
-
-        # 检查是否所有任务都完成了
-        with QMutexLocker(self._mutex):
-            executor_info = self._executors.get(device_name)
-            if executor_info and executor_info.executor.get_queue_length() == 0:
-                self.all_tasks_completed.emit(device_name)
-
-    @Slot(str, str, str)
-    def _on_task_failed(self, device_name: str, task_id: str, error: str):
-        """任务失败回调"""
-        self.logger.error(f"设备 {device_name} 的任务 {task_id} 失败: {error}")
-        self.error_occurred.emit(device_name, f"任务 {task_id} 失败: {error}")
-
-        # 更新队列状态
-        self._update_queue_status(device_name)
-
-    @Slot(str, str)
-    def _on_task_canceled(self, device_name: str, task_id: str):
-        """任务取消回调"""
-        self.logger.info(f"设备 {device_name} 的任务 {task_id} 已取消")
-
-        # 更新队列状态
+        # 更新队列信息
         self._update_queue_status(device_name)
 
     def _update_queue_status(self, device_name: str):
@@ -202,7 +192,10 @@ class TaskerManager(QObject):
             executor_info = self._executors.get(device_name)
             if executor_info:
                 queue_length = executor_info.executor.get_queue_length()
-                device_status_manager.update_queue_info(device_name, queue_length)
+                # 更新设备状态机的队列信息
+                device_machine = device_status_manager.get_device_machine(device_name)
+                if device_machine:
+                    device_machine.update_context(queue_length=queue_length)
 
     @asyncSlot(str, object)
     async def submit_task(
@@ -211,7 +204,7 @@ class TaskerManager(QObject):
             task_data: Union[RunTimeConfigs, List[RunTimeConfigs]]
     ) -> Optional[Union[str, List[str]]]:
         """
-        异步向特定设备的执行器提交任务。
+        异步向特定设备的执行器提交任务
         """
         # 获取执行器
         executor_info = await self._get_executor_info(device_name)
@@ -228,7 +221,7 @@ class TaskerManager(QObject):
                 f"向设备 {device_name} 提交 {task_count} 个任务"
             )
 
-            # 提交任务 - 直接调用异步方法
+            # 提交任务
             result = await executor_info.executor.submit_task(task_data)
 
             if result:
@@ -261,20 +254,15 @@ class TaskerManager(QObject):
             error_msg = f"向设备 {device_name} 提交任务失败: {e}"
             self.logger.error(error_msg, exc_info=True)
 
-            # 更新设备状态为错误
-            device_status_manager.update_device_status(
-                device_name,
-                DeviceStatus.ERROR,
-                str(e)
-            )
-
+            # 使用状态机设置错误
+            device_status_manager.set_device_error(device_name, str(e))
             self.error_occurred.emit(device_name, str(e))
             return None
 
     @asyncSlot(str)
     async def stop_executor(self, device_name: str) -> bool:
         """
-        异步停止特定设备的执行器。
+        异步停止特定设备的执行器
         """
         executor_info = await self._get_executor_info(device_name)
         if not executor_info:
@@ -284,7 +272,7 @@ class TaskerManager(QObject):
         try:
             self.logger.info(f"正在停止设备 {device_name} 的执行器")
 
-            # 停止执行器 - 直接调用异步方法
+            # 停止执行器
             await executor_info.executor.stop()
 
             # 从管理器中移除
@@ -293,7 +281,6 @@ class TaskerManager(QObject):
 
             # 发送信号
             self.device_removed.emit(device_name)
-            self.device_status_changed.emit(device_name, "stopped")
 
             self.logger.info(
                 f"设备 {device_name} 的执行器已成功停止并移除 "
@@ -304,13 +291,12 @@ class TaskerManager(QObject):
         except Exception as e:
             error_msg = f"停止设备 {device_name} 的执行器失败: {e}"
             self.logger.error(error_msg, exc_info=True)
-
             self.error_occurred.emit(device_name, str(e))
             return False
 
     async def _get_executor_info(self, device_name: str) -> Optional[DeviceTaskInfo]:
         """
-        内部辅助方法，获取特定设备的执行器信息。
+        内部辅助方法，获取特定设备的执行器信息
         """
         async with self._lock:
             return self._executors.get(device_name)
@@ -318,7 +304,7 @@ class TaskerManager(QObject):
     @asyncSlot()
     async def get_active_devices(self) -> List[str]:
         """
-        异步获取所有活跃设备名称列表。
+        异步获取所有活跃设备名称列表
         """
         async with self._lock:
             devices = list(self._executors.keys())
@@ -328,7 +314,7 @@ class TaskerManager(QObject):
     @asyncSlot()
     async def stop_all(self) -> None:
         """
-        异步停止所有执行器。
+        异步停止所有执行器
         """
         self.logger.info("正在停止所有任务执行器")
 
@@ -360,14 +346,14 @@ class TaskerManager(QObject):
 
     def is_device_active(self, device_name: str) -> bool:
         """
-        检查设备执行器是否处于活跃状态（同步方法）。
+        检查设备执行器是否处于活跃状态（同步方法）
         """
         with QMutexLocker(self._mutex):
             return device_name in self._executors
 
     def get_device_queue_info(self) -> Dict[str, int]:
         """
-        获取所有设备的队列状态信息（同步方法）。
+        获取所有设备的队列状态信息（同步方法）
         """
         with QMutexLocker(self._mutex):
             queue_info = {}
@@ -375,26 +361,29 @@ class TaskerManager(QObject):
                 queue_info[name] = info.executor.get_queue_length()
             return queue_info
 
-    def get_executor_state(self, device_name: str):
-        """获取执行器状态（同步方法）"""
-        with QMutexLocker(self._mutex):
-            executor_info = self._executors.get(device_name)
-            if executor_info and hasattr(executor_info.executor, 'get_state'):
-                return executor_info.executor.get_state()
-            return None
+    def get_device_state(self, device_name: str) -> Optional[DeviceState]:
+        """获取设备状态（同步方法）"""
+        device_machine = device_status_manager.get_device_machine(device_name)
+        if device_machine:
+            return device_machine.get_state()
+        return None
 
     @asyncSlot()
     async def get_statistics(self) -> Dict[str, any]:
         """
-        获取任务管理器统计信息。
+        获取任务管理器统计信息
         """
         async with self._lock:
             active_devices = len(self._executors)
             device_stats = []
 
             for name, info in self._executors.items():
+                # 获取设备状态
+                state = self.get_device_state(name)
+
                 device_stats.append({
                     "name": name,
+                    "state": state.value if state else "unknown",
                     "task_count": info.task_count,
                     "queue_length": info.executor.get_queue_length(),
                     "created_at": info.created_at.isoformat(),
@@ -414,7 +403,7 @@ class TaskerManager(QObject):
     @asyncSlot(DeviceConfig)
     async def run_device_all_resource_task(self, device_config: DeviceConfig) -> bool:
         """
-        异步一键启动：提交所有已启用资源的任务。
+        异步一键启动：提交所有已启用资源的任务
         """
         self.logger.info(
             f"为设备 {device_config.device_name} 一键启动所有已启用资源任务"
@@ -488,7 +477,7 @@ class TaskerManager(QObject):
     @asyncSlot(str, str)
     async def run_resource_task(self, device_config_name: str, resource_name: str) -> None:
         """
-        提交指定资源的任务。
+        提交指定资源的任务
         """
         self.logger.info(
             f"为设备 {device_config_name} 提交资源 {resource_name} 的任务"
@@ -554,7 +543,7 @@ class TaskerManager(QObject):
     @asyncSlot(str, str)
     async def cancel_task(self, device_name: str, task_id: str) -> bool:
         """
-        取消指定设备的特定任务。
+        取消指定设备的特定任务
         """
         executor_info = await self._get_executor_info(device_name)
         if not executor_info:
@@ -562,7 +551,6 @@ class TaskerManager(QObject):
             return False
 
         try:
-            # 直接调用异步方法
             success = await executor_info.executor.cancel_task(task_id)
             if success:
                 self.logger.info(f"已取消设备 {device_name} 的任务 {task_id}")
@@ -580,16 +568,35 @@ class TaskerManager(QObject):
             return False
 
     @asyncSlot(str, str)
-    async def get_task_status(self, device_name: str, task_id: str) -> Optional[str]:
+    async def get_task_state(self, device_name: str, task_id: str) -> Optional[DeviceState]:
         """
-        获取指定任务的状态。
+        获取指定任务的状态
         """
         executor_info = await self._get_executor_info(device_name)
         if not executor_info:
             return None
 
-        status = executor_info.executor.get_task_status(task_id)
-        return status.value if status else None
+        return executor_info.executor.get_task_state(task_id)
+
+    @asyncSlot(str)
+    async def pause_device(self, device_name: str) -> bool:
+        """
+        暂停设备的当前任务
+        """
+        device_machine = device_status_manager.get_device_machine(device_name)
+        if device_machine and device_machine.can_trigger('pause_task'):
+            return device_machine.safe_trigger('pause_task')
+        return False
+
+    @asyncSlot(str)
+    async def resume_device(self, device_name: str) -> bool:
+        """
+        恢复设备的暂停任务
+        """
+        device_machine = device_status_manager.get_device_machine(device_name)
+        if device_machine and device_machine.can_trigger('resume_task'):
+            return device_machine.safe_trigger('resume_task')
+        return False
 
 
 # 单例模式

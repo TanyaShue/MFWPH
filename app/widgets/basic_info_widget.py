@@ -1,5 +1,10 @@
-from datetime import datetime
+# -*- coding: UTF-8 -*-
+"""
+设备基本信息组件
+使用统一状态机显示设备状态
+"""
 
+from datetime import datetime
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QIcon, QPalette
 from PySide6.QtWidgets import (
@@ -12,11 +17,12 @@ from app.models.logging.log_manager import log_manager
 from app.widgets.add_device_dialog import AddDeviceDialog
 from core.scheduled_task_manager import scheduled_task_manager
 from core.tasker_manager import task_manager
-from core.device_status_manager import device_status_manager, DeviceStatusInfo, DeviceStatus
+from core.device_state_machine import DeviceState
+from core.device_status_manager import device_status_manager, DeviceUIInfo
 
 
 class BasicInfoWidget(QFrame):
-    """Basic device information widget - Compact Version"""
+    """设备基本信息组件 - 紧凑版本"""
 
     def __init__(self, device_name, device_config, parent=None):
         super().__init__(parent)
@@ -28,11 +34,11 @@ class BasicInfoWidget(QFrame):
         # 设置基本属性
         self.setObjectName("infoFrame")
         self.setFrameShape(QFrame.StyledPanel)
-        self.setMaximumHeight(90)  # 限制最大高度
-        self.setMinimumHeight(80)  # 设置最小高度
+        self.setMaximumHeight(90)
+        self.setMinimumHeight(80)
 
-        # 注册设备到状态管理器
-        device_status_manager.register_device(device_name)
+        # 获取或创建设备状态机
+        self.device_machine = device_status_manager.get_or_create_device_machine(device_name)
 
         self.init_ui()
         self.connect_signals()
@@ -126,62 +132,59 @@ class BasicInfoWidget(QFrame):
 
     def connect_signals(self):
         """连接信号"""
-        # 监听状态变化信号
-        device_status_manager.status_changed.connect(self.on_status_changed)
         # 监听状态机状态变化信号
-        device_status_manager.state_machine_changed.connect(self.on_state_machine_changed)
+        device_status_manager.state_changed.connect(self.on_state_changed)
+        # 监听UI信息变化信号
+        device_status_manager.ui_info_changed.connect(self.on_ui_info_changed)
 
-    def on_status_changed(self, device_name: str, status_info: DeviceStatusInfo):
+    def on_state_changed(self, name: str, old_state: DeviceState, new_state: DeviceState, context: dict):
         """当状态变化时更新显示"""
+        if name != self.device_name:
+            return
+
+        # 状态变化时刷新显示
+        self.refresh_display()
+
+    def on_ui_info_changed(self, device_name: str, ui_info: DeviceUIInfo):
+        """当UI信息变化时更新显示"""
         if device_name != self.device_name:
             return
 
-        self.update_display(status_info)
-
-    def on_state_machine_changed(self, device_name: str, old_state: str, new_state: str):
-        """当状态机状态变化时更新显示"""
-        if device_name != self.device_name:
-            return
-
-        # 从状态管理器获取最新的状态信息并更新显示
-        status_info = device_status_manager.get_device_status(self.device_name)
-        if status_info:
-            self.update_display(status_info)
+        self.update_display(ui_info)
 
     def refresh_display(self):
         """刷新显示（从状态管理器获取最新状态）"""
-        status_info = device_status_manager.get_device_status(self.device_name)
-        if status_info:
-            self.update_display(status_info)
+        ui_info = device_status_manager.get_device_ui_info(self.device_name)
+        if ui_info:
+            self.update_display(ui_info)
 
-    def update_display(self, status_info: DeviceStatusInfo):
-        """根据状态信息更新UI显示"""
-        # 获取UI配置
-        ui_config = device_status_manager.get_ui_config(status_info.status)
-
+    def update_display(self, ui_info: DeviceUIInfo):
+        """根据UI信息更新显示"""
         # 更新状态指示器
         if hasattr(self, 'status_indicator'):
             self.status_indicator.setStyleSheet(f"""
                 QLabel {{
-                    background-color: {ui_config['color']};
+                    background-color: {ui_info.state_color};
                     border-radius: 5px;
                 }}
             """)
 
             # 构建提示文本
-            tooltip = ui_config['tooltip']
-            if status_info.error_message:
-                tooltip += f": {status_info.error_message}"
-            if status_info.queue_length > 0:
-                tooltip += f"，队列中还有 {status_info.queue_length} 个任务"
+            tooltip = ui_info.tooltip
+            if ui_info.error_message:
+                tooltip += f": {ui_info.error_message}"
+            if ui_info.queue_length > 0:
+                tooltip += f"，队列中还有 {ui_info.queue_length} 个任务"
+            if ui_info.progress > 0 and ui_info.state == DeviceState.RUNNING:
+                tooltip += f"（进度: {ui_info.progress}%）"
             self.status_indicator.setToolTip(tooltip)
 
         # 更新按钮
         if hasattr(self, 'run_btn'):
-            self.run_btn.setText(ui_config['button_text'])
-            self.run_btn.setEnabled(ui_config['button_enabled'])
+            self.run_btn.setText(ui_info.button_text)
+            self.run_btn.setEnabled(ui_info.button_enabled)
 
-            if status_info.is_running:
+            if ui_info.is_busy:
                 self.run_btn.setIcon(QIcon("assets/icons/stop.svg"))
                 self.run_btn.setToolTip("停止当前任务")
                 self.run_btn.setStyleSheet("""
@@ -226,41 +229,60 @@ class BasicInfoWidget(QFrame):
 
         # 更新定时任务显示
         if hasattr(self, 'schedule_value'):
-            self.schedule_value.setText(status_info.scheduled_time_text)
+            # 从scheduled_task_manager获取定时任务信息
+            scheduled_info = self._get_scheduled_info()
 
-            if status_info.has_scheduled_tasks:
+            if scheduled_info['has_scheduled']:
                 self.clock_icon.setVisible(True)
-                if status_info.next_scheduled_time:
-                    self.schedule_value.setToolTip(
-                        f"下次执行时间: {status_info.next_scheduled_time.strftime('%Y-%m-%d %H:%M:%S')}"
-                    )
-                else:
-                    self.schedule_value.setToolTip("定时任务已启用，等待计划执行")
+                self.schedule_value.setText(scheduled_info['text'])
+                self.schedule_value.setToolTip(scheduled_info['tooltip'])
             else:
                 self.clock_icon.setVisible(False)
+                self.schedule_value.setText("未启用")
                 self.schedule_value.setToolTip("未设置定时任务")
+
+    def _get_scheduled_info(self) -> dict:
+        """获取定时任务信息"""
+        # 这里应该从scheduled_task_manager获取实际的定时任务信息
+        # 暂时返回默认值
+        try:
+            # 尝试从scheduled_task_manager获取信息
+            if hasattr(scheduled_task_manager, 'get_device_schedule'):
+                schedule = scheduled_task_manager.get_device_schedule(self.device_name)
+                if schedule:
+                    return {
+                        'has_scheduled': True,
+                        'text': schedule.get('next_run_text', '已设置'),
+                        'tooltip': schedule.get('tooltip', '定时任务已启用')
+                    }
+        except:
+            pass
+
+        return {
+            'has_scheduled': False,
+            'text': '未启用',
+            'tooltip': '未设置定时任务'
+        }
 
     @asyncSlot()
     async def handle_run_stop_action(self):
-        """Handle run/stop button click based on current state"""
+        """处理运行/停止按钮点击"""
         if not self.device_config:
             return
 
-        # 从状态管理器获取当前状态
-        status_info = device_status_manager.get_device_status(self.device_name)
-        if not status_info:
-            return
+        # 获取当前状态
+        current_state = self.device_machine.get_state()
 
-        if status_info.is_running:
-            # Stop the device
+        if self.device_machine.is_busy():
+            # 停止设备
             await self.stop_device_tasks()
         else:
-            # Run the device
+            # 运行设备
             await self.run_device_tasks()
 
     @asyncSlot()
     async def run_device_tasks(self):
-        """Run device tasks and log the action"""
+        """运行设备任务"""
         try:
             if self.device_config:
                 self.logger.info("开始执行设备任务")
@@ -278,7 +300,7 @@ class BasicInfoWidget(QFrame):
 
     @asyncSlot()
     async def stop_device_tasks(self):
-        """Stop all tasks for this device"""
+        """停止设备任务"""
         try:
             if self.device_config:
                 self.logger.info("停止设备任务")
@@ -286,7 +308,7 @@ class BasicInfoWidget(QFrame):
                 # 禁用按钮
                 self.run_btn.setEnabled(False)
 
-                # Stop the device executor
+                # 停止设备执行器
                 success = await task_manager.stop_executor(self.device_name)
 
                 if success:
@@ -296,7 +318,7 @@ class BasicInfoWidget(QFrame):
             self.logger.error(f"停止任务时出错: {str(e)}")
 
     def open_settings_dialog(self):
-        """Open device settings dialog"""
+        """打开设备设置对话框"""
         if self.device_config:
             original_device_name = self.device_name
             dialog = AddDeviceDialog(global_config, self, edit_mode=True, device_config=self.device_config)
@@ -318,13 +340,12 @@ class BasicInfoWidget(QFrame):
                     main_window.show_previous_device_or_home(original_device_name)
 
     def refresh_ui(self, device_config=None):
-        """Refresh widget with updated device config"""
+        """刷新组件"""
         if device_config:
             self.device_config = device_config
 
-        # 正确清除现有布局和子部件
+        # 清除现有布局和子部件
         if self.layout():
-            # 删除所有子部件
             while self.layout().count():
                 child = self.layout().takeAt(0)
                 if child.widget():
@@ -332,13 +353,10 @@ class BasicInfoWidget(QFrame):
                 elif child.layout():
                     self._clear_layout(child.layout())
 
-            # 删除布局本身
             QWidget().setLayout(self.layout())
 
         self.init_ui()
         self.connect_signals()
-
-        # 刷新显示
         self.refresh_display()
 
     def _clear_layout(self, layout):
@@ -360,7 +378,8 @@ class BasicInfoWidget(QFrame):
         """清理资源"""
         # 断开信号连接
         try:
-            device_status_manager.status_changed.disconnect(self.on_status_changed)
+            device_status_manager.state_changed.disconnect(self.on_state_changed)
+            device_status_manager.ui_info_changed.disconnect(self.on_ui_info_changed)
         except:
             pass
         super().closeEvent(event)
