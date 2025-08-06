@@ -8,3 +8,4 @@ qasync
 cryptography
 semver
 pandas
+filelock
