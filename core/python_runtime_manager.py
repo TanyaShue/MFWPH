@@ -113,21 +113,6 @@ class PythonRuntimeManager:
 
     def _get_latest_patch_version(self, version: str) -> str:
         """获取指定版本的最新patch版本"""
-        try:
-            url = f"https://www.python.org/ftp/python/"
-            with urllib.request.urlopen(url) as response:
-                html = response.read().decode('utf-8')
-
-            pattern = rf'{version}\.(\d+)'
-            matches = re.findall(pattern, html)
-
-            if matches:
-                max_patch = max(int(m) for m in matches)
-                return f"{version}.{max_patch}"
-
-        except Exception as e:
-            self._print_progress(f"无法从官网获取版本信息: {e}", "WARNING")
-
         # 使用预定义的版本映射作为后备
         fallback_versions = {
             "3.8": "3.8.19",
