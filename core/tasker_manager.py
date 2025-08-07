@@ -403,7 +403,7 @@ class TaskerManager(QObject):
     @asyncSlot(DeviceConfig)
     async def run_device_all_resource_task(self, device_config: DeviceConfig) -> bool:
         """
-        异步一键启动：提交所有已启用资源的任务
+        异步一键启动：提交所有已启用资源的任务，不阻塞 UI
         """
         self.logger.info(
             f"为设备 {device_config.device_name} 一键启动所有已启用资源任务"
@@ -416,15 +416,18 @@ class TaskerManager(QObject):
             f"{len(enabled_resources)}"
         )
 
-        # 获取运行时配置
-        runtime_configs = []
-        for resource in enabled_resources:
-            config = global_config.get_runtime_configs_for_resource(
-                resource.resource_name,
-                device_config.device_name
-            )
-            if config:
-                runtime_configs.append(config)
+        def get_all_runtime_configs():
+            result = []
+            for resource in enabled_resources:
+                config = global_config.get_runtime_configs_for_resource(
+                    resource.resource_name,
+                    device_config.device_name
+                )
+                if config:
+                    result.append(config)
+            return result
+
+        runtime_configs = await asyncio.to_thread(get_all_runtime_configs)
 
         if not runtime_configs:
             self.logger.warning(
@@ -566,17 +569,6 @@ class TaskerManager(QObject):
                 f"取消设备 {device_name} 的任务 {task_id} 时出错: {e}"
             )
             return False
-
-    @asyncSlot(str, str)
-    async def get_task_state(self, device_name: str, task_id: str) -> Optional[DeviceState]:
-        """
-        获取指定任务的状态
-        """
-        executor_info = await self._get_executor_info(device_name)
-        if not executor_info:
-            return None
-
-        return executor_info.executor.get_task_state(task_id)
 
     @asyncSlot(str)
     async def pause_device(self, device_name: str) -> bool:

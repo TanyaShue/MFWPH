@@ -1,34 +1,28 @@
 import asyncio
 import platform
-import urllib.request
 import zipfile
 import tarfile
 from pathlib import Path
 import filelock
-import re
 import shutil
-import sys
-from datetime import datetime
+import json
+import aiohttp
+import aiofiles
+from typing import Optional, Dict, Any
+
+from app.utils.notification_manager import notification_manager
 
 
 class PythonRuntimeManager:
-    """Python运行时管理器 - 优化版
-
-    功能：
-    1. 自动下载和安装指定版本的Python
-    2. 自动配置pip、setuptools、wheel等基础包
-    3. 使用virtualenv创建虚拟环境
-    4. 支持Windows、Linux、macOS多平台
-    5. 实时显示安装进度和输出
-    """
+    """Python运行时管理器 - 优化版"""
 
     def __init__(self, runtime_base_dir: str, logger=None):
         self.runtime_base_dir = Path(runtime_base_dir)
         self.runtime_base_dir.mkdir(parents=True, exist_ok=True)
         self.logger = logger or self._get_default_logger()
-        self.logger.info(f"\n🚀 Python运行时管理器初始化")
-        self.logger.info(f"📁 基础目录: {self.runtime_base_dir.absolute()}")
-        self.logger.info("-" * 60)
+        self.config = self._load_config()
+        self._download_session: Optional[aiohttp.ClientSession] = None
+        self.logger.info(f"🚀 Python运行时管理器初始化: {self.runtime_base_dir.absolute()}")
 
     def _get_default_logger(self):
         """获取默认logger"""
@@ -36,92 +30,93 @@ class PythonRuntimeManager:
         logger = logging.getLogger("PythonRuntimeManager")
         if not logger.handlers:
             handler = logging.StreamHandler()
-            handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+            handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
             logger.addHandler(handler)
-            logger.setLevel(logging.DEBUG)
+            logger.setLevel(logging.INFO)
         return logger
 
-    def _print_progress(self, message: str, level: str = "INFO"):
-        """打印进度信息"""
-        timestamp = datetime.now().strftime("%H:%M:%S")
-        icons = {
-            "INFO": "ℹ️",
-            "SUCCESS": "✅",
-            "WARNING": "⚠️",
-            "ERROR": "❌",
-            "PROGRESS": "⏳"
-        }
-        icon = icons.get(level, "▶")
-        self.logger.info(f"[{timestamp}] {icon} {message}")
-
-    def _download_with_progress(self, url: str, filepath: Path):
-        """带进度条的下载函数"""
-
-        def download_hook(block_num, block_size, total_size):
-            downloaded = block_num * block_size
-            percent = min(100, (downloaded / total_size) * 100)
-            mb_downloaded = downloaded / (1024 * 1024)
-            mb_total = total_size / (1024 * 1024)
-
-            # 使用\r实现进度条覆盖更新
-            bar_length = 40
-            filled_length = int(bar_length * percent // 100)
-            bar = '█' * filled_length + '░' * (bar_length - filled_length)
-
-            sys.stdout.write(f'\r下载进度: |{bar}| {percent:.1f}% ({mb_downloaded:.1f}/{mb_total:.1f} MB)')
-            sys.stdout.flush()
-
-            if percent >= 100:
-                self.logger.info()  # 完成后换行
-
-        urllib.request.urlretrieve(url, str(filepath), download_hook)
-
-    async def _stream_subprocess_output(self, cmd, cwd=None):
-        """实时流式输出子进程的结果"""
-        process = await asyncio.create_subprocess_exec(
-            *cmd,
-            cwd=cwd,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.STDOUT  # 合并stderr到stdout
-        )
-
-        # 实时读取并打印输出
-        while True:
-            line = await process.stdout.readline()
-            if not line:
-                break
-            self.logger.info(f"  │ {line.decode().rstrip()}")
-
-        await process.wait()
-        return process.returncode
-
-    def _get_python_download_url(self, version: str) -> dict:
-        """动态生成Python下载URL"""
-        self._print_progress(f"正在查找Python {version}的最新版本...", "PROGRESS")
-        patch_version = self._get_latest_patch_version(version)
-        if not patch_version:
-            raise ValueError(f"无法找到Python {version}的有效版本")
-
-        self._print_progress(f"找到版本: Python {patch_version}", "SUCCESS")
-        base_url = f"https://www.python.org/ftp/python/{patch_version}"
-
-        return {
-            "windows": f"{base_url}/python-{patch_version}-embed-amd64.zip",
-            "linux": f"{base_url}/Python-{patch_version}.tgz",
-            "darwin": f"{base_url}/Python-{patch_version}.tgz"
+    def _load_config(self) -> Dict[str, Any]:
+        """加载配置文件"""
+        config_path = Path("assets/config/python_sources.json")
+        default_config = {
+            "fallback_versions": {
+                "3.10": "3.10.14", "3.11": "3.11.9", "3.12": "3.12.3"
+            },
+            "python_download_sources": {
+                "windows": ["https://www.python.org/ftp/python/{version}/python-{version}-embed-amd64.zip"],
+                "linux": ["https://www.python.org/ftp/python/{version}/Python-{version}.tgz"],
+                "darwin": ["https://www.python.org/ftp/python/{version}/Python-{version}.tgz"]
+            }
         }
 
-    def _get_latest_patch_version(self, version: str) -> str:
-        """获取指定版本的最新patch版本"""
-        # 使用预定义的版本映射作为后备
-        fallback_versions = {
-            "3.8": "3.8.19",
-            "3.9": "3.9.19",
-            "3.10": "3.10.14",
-            "3.11": "3.11.9",
-            "3.12": "3.12.3"
-        }
-        return fallback_versions.get(version)
+        try:
+            if config_path.exists():
+                with open(config_path, 'r', encoding='utf-8') as f:
+                    return json.load(f)
+        except Exception as e:
+            self.logger.error(f"加载配置失败: {e}")
+        return default_config
+
+    async def _get_session(self) -> aiohttp.ClientSession:
+        """获取或创建aiohttp会话"""
+        if self._download_session is None or self._download_session.closed:
+            timeout = aiohttp.ClientTimeout(total=1800, connect=60)  # 30分钟总超时
+            self._download_session = aiohttp.ClientSession(timeout=timeout)
+        return self._download_session
+
+    async def _download_file_async(self, url: str, filepath: Path, progress_callback=None):
+        """异步下载文件"""
+        session = await self._get_session()
+        filepath.parent.mkdir(parents=True, exist_ok=True)
+
+        try:
+            async with session.get(url) as response:
+                response.raise_for_status()
+                total_size = int(response.headers.get('content-length', 0))
+
+                self.logger.info(f"下载: {url} ({total_size / 1024 / 1024:.1f} MB)")
+                notification_manager.show_info("开始安装Python环境，请稍候...", "安装")
+
+                downloaded = 0
+                chunk_size = 8192
+
+                async with aiofiles.open(filepath, 'wb') as file:
+                    async for chunk in response.content.iter_chunked(chunk_size):
+                        await file.write(chunk)
+                        downloaded += len(chunk)
+
+                        if progress_callback and total_size > 0:
+                            progress = (downloaded / total_size) * 100
+                            await progress_callback(progress, downloaded, total_size)
+
+                        # 让出控制权，保持UI响应
+                        if downloaded % (chunk_size * 100) == 0:
+                            await asyncio.sleep(0)
+
+                self.logger.info("下载完成")
+                return True
+
+        except Exception as e:
+            self.logger.error(f"下载失败: {e}")
+            if filepath.exists():
+                filepath.unlink()
+            raise
+
+    async def _progress_callback(self, progress: float, downloaded: int, total: int):
+        """下载进度回调"""
+        mb_downloaded = downloaded / (1024 * 1024)
+        mb_total = total / (1024 * 1024)
+        if int(progress) % 10 == 0:  # 每10%记录一次
+            self.logger.info(f"下载进度: {progress:.1f}% ({mb_downloaded:.1f}/{mb_total:.1f} MB)")
+
+    def _get_patch_version(self, version: str) -> str:
+        """获取完整版本号"""
+        # 简化版本处理
+        if len(version.split('.')) == 3:
+            return version
+
+        fallback = self.config.get("fallback_versions", {})
+        return fallback.get(version, "3.11.9")
 
     def get_python_dir(self, version: str) -> Path:
         """获取Python版本目录"""
@@ -147,396 +142,254 @@ class PythonRuntimeManager:
 
     async def ensure_python_installed(self, version: str) -> bool:
         """确保Python版本已安装"""
-        self.logger.info(f"\n{'=' * 60}")
-        self._print_progress(f"检查Python {version}安装状态...", "INFO")
-
         python_exe = self.get_python_executable(version)
 
         if python_exe.exists():
-            self._print_progress(f"Python {version} 已存在: {python_exe}", "SUCCESS")
-            # 检查pip和virtualenv是否可用
-            if await self._check_python_components(version):
-                self._print_progress("所有组件已就绪！", "SUCCESS")
-                return True
-            else:
-                self._print_progress(f"Python {version} 组件不完整，开始修复...", "WARNING")
-                return await self._setup_python_components(version)
+            self.logger.info(f"✅ Python {version} 已安装")
+            return await self._ensure_pip_installed(version)
 
-        self._print_progress(f"Python {version} 未安装，准备下载...", "INFO")
-        return await self._download_python(version)
+        self.logger.info(f"Python {version} 未安装，开始下载...")
+        return await self._download_and_install_python(version)
 
-    async def _check_python_components(self, version: str) -> bool:
-        """检查Python组件是否完整"""
-        python_exe = self.get_python_executable(version)
-
-        self._print_progress("检查Python组件...", "PROGRESS")
-
-        components = {
-            "pip": False,
-            "virtualenv": False
-        }
-
-        # 检查pip
-        try:
-            process = await asyncio.create_subprocess_exec(
-                str(python_exe), "-m", "pip", "--version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await process.communicate()
-            if process.returncode == 0:
-                components["pip"] = True
-                self.logger.info(f"  ✓ pip: {stdout.decode().strip()}")
-            else:
-                self.logger.info(f"  ✗ pip: 不可用")
-        except Exception as e:
-            self.logger.info(f"  ✗ pip: 检查失败 - {e}")
-
-        # 检查virtualenv
-        try:
-            process = await asyncio.create_subprocess_exec(
-                str(python_exe), "-m", "virtualenv", "--version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await process.communicate()
-            if process.returncode == 0:
-                components["virtualenv"] = True
-                self.logger.info(f"  ✓ virtualenv: {stdout.decode().strip()}")
-            else:
-                self.logger.info(f"  ✗ virtualenv: 不可用")
-        except Exception as e:
-            self.logger.info(f"  ✗ virtualenv: 检查失败 - {e}")
-
-        return all(components.values())
-
-    async def _download_python(self, version: str) -> bool:
+    async def _download_and_install_python(self, version: str) -> bool:
         """下载并安装Python"""
         system = platform.system().lower()
+        patch_version = self._get_patch_version(version)
 
-        try:
-            download_urls = self._get_python_download_url(version)
-            url = download_urls.get(system)
-            if not url:
-                raise ValueError(f"不支持的系统: {system}")
-        except Exception as e:
-            self._print_progress(f"获取下载URL失败: {e}", "ERROR")
+        # 获取下载URL
+        sources = self.config.get("python_download_sources", {}).get(system, [])
+        if not sources:
+            self.logger.error(f"不支持的系统: {system}")
             return False
 
+        urls = [url.format(version=patch_version) for url in sources]
         python_dir = self.get_python_dir(version)
 
-        # 使用锁避免重复下载
-        lock_file = self.runtime_base_dir / f".download_lock_{version}"
-        lock = filelock.FileLock(str(lock_file))
+        # 使用文件锁避免并发下载
+        lock_file = self.runtime_base_dir / f".lock_{version}"
+        lock = filelock.FileLock(str(lock_file), timeout=300)
 
         try:
-            with lock.acquire(timeout=300):
+            with lock:
                 # 再次检查是否已安装
                 if self.get_python_executable(version).exists():
                     return True
 
-                self._print_progress(f"开始下载Python {version}", "INFO")
-                self.logger.info(f"  URL: {url}")
-
-                # 创建临时目录
-                temp_dir = python_dir.parent / f"temp_python_{version}"
+                # 下载Python
+                temp_dir = self.runtime_base_dir / f"temp_{version}"
                 temp_dir.mkdir(exist_ok=True)
 
-                # 下载文件
-                filename = url.split("/")[-1]
-                temp_file = temp_dir / filename
+                for url in urls:
+                    try:
+                        filename = url.split("/")[-1]
+                        temp_file = temp_dir / filename
 
-                loop = asyncio.get_event_loop()
-                await loop.run_in_executor(
-                    None,
-                    lambda: self._download_with_progress(url, temp_file)
-                )
+                        await self._download_file_async(
+                            url, temp_file,
+                            progress_callback=self._progress_callback
+                        )
 
-                self._print_progress("下载完成！", "SUCCESS")
-                self._print_progress("开始解压文件...", "PROGRESS")
+                        # 解压文件
+                        await self._extract_archive(temp_file, python_dir)
 
-                # 解压文件
-                python_dir.mkdir(parents=True, exist_ok=True)
+                        # Linux/Mac需要编译
+                        if system in ["linux", "darwin"]:
+                            await self._compile_python(python_dir, patch_version)
 
-                if filename.endswith(".zip"):
-                    self.logger.info("  解压ZIP文件...")
-                    with zipfile.ZipFile(temp_file, 'r') as zip_ref:
-                        total_files = len(zip_ref.namelist())
-                        for i, file in enumerate(zip_ref.namelist()):
-                            zip_ref.extract(file, python_dir)
-                            if i % 10 == 0:  # 每10个文件更新一次进度
-                                percent = (i / total_files) * 100
-                                sys.stdout.write(f'\r  解压进度: {percent:.1f}%')
-                                sys.stdout.flush()
-                        self.logger.info(f'\r  解压进度: 100.0%')
+                        # Windows嵌入式版本设置
+                        if system == "windows":
+                            await self._setup_windows_embedded(version)
 
-                elif filename.endswith(".tgz") or filename.endswith(".tar.gz"):
-                    self.logger.info("  解压TAR.GZ文件...")
-                    with tarfile.open(temp_file, 'r:gz') as tar_ref:
-                        tar_ref.extractall(python_dir)
+                        # 清理临时文件
+                        shutil.rmtree(temp_dir, ignore_errors=True)
 
-                    # Linux/Mac需要编译
-                    if system in ["linux", "darwin"]:
-                        patch_version = self._get_latest_patch_version(version)
-                        await self._compile_python(python_dir, patch_version)
+                        # 安装pip
+                        await self._ensure_pip_installed(version)
 
-                # 清理临时文件
-                self._print_progress("清理临时文件...", "PROGRESS")
-                temp_file.unlink()
-                temp_dir.rmdir()
+                        self.logger.info(f"✅ Python {version} 安装完成")
+                        return True
 
-                self._print_progress(f"Python {version} 安装完成！", "SUCCESS")
+                    except Exception as e:
+                        self.logger.error(f"下载失败: {e}")
+                        continue
 
-                # 设置Python组件
-                if not await self._setup_python_components(version):
-                    self._print_progress("Python组件设置失败", "ERROR")
-                    return False
-
-                return True
+                return False
 
         except Exception as e:
-            self._print_progress(f"下载Python {version}失败: {e}", "ERROR")
+            self.logger.error(f"安装Python失败: {e}")
             return False
 
-    async def _compile_python(self, python_dir: Path, patch_version: str):
-        """编译Python (Linux/Mac)"""
-        source_dir = python_dir / f"Python-{patch_version}"
+    async def _extract_archive(self, archive_path: Path, extract_to: Path):
+        """异步解压文件"""
+        extract_to.mkdir(parents=True, exist_ok=True)
 
-        self._print_progress("开始编译Python (这可能需要几分钟)...", "INFO")
+        def extract():
+            if archive_path.suffix == '.zip':
+                with zipfile.ZipFile(archive_path, 'r') as zf:
+                    zf.extractall(extract_to)
+            elif archive_path.suffix in ['.tgz', '.gz']:
+                with tarfile.open(archive_path, 'r:gz') as tf:
+                    tf.extractall(extract_to)
+
+        # 在异步环境中运行同步解压操作
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, extract)
+
+        # 删除压缩包
+        archive_path.unlink()
+
+    async def _compile_python(self, python_dir: Path, version: str):
+        """编译Python (Linux/Mac)"""
+        source_dir = python_dir / f"Python-{version}"
 
         commands = [
-            (["./configure", f"--prefix={python_dir}", "--enable-optimizations"], "配置"),
+            (["./configure", f"--prefix={python_dir}"], "配置"),
             (["make", "-j4"], "编译"),
             (["make", "install"], "安装")
         ]
 
-        for cmd, step_name in commands:
-            self._print_progress(f"执行{step_name}步骤...", "PROGRESS")
-            self.logger.info(f"  命令: {' '.join(cmd)}")
-
-            returncode = await self._stream_subprocess_output(cmd, str(source_dir))
-
-            if returncode != 0:
-                self._print_progress(f"{step_name}步骤失败", "ERROR")
-                raise Exception(f"编译命令失败: {' '.join(cmd)}")
-
-            self._print_progress(f"{step_name}完成", "SUCCESS")
-
-        # 清理源码目录
-        self._print_progress("清理源码目录...", "PROGRESS")
-        shutil.rmtree(source_dir)
-
-    async def _setup_python_components(self, version: str) -> bool:
-        """设置Python组件（pip和virtualenv）"""
-        python_exe = self.get_python_executable(version)
-        system = platform.system().lower()
-
-        self.logger.info(f"\n{'=' * 60}")
-        self._print_progress("配置Python组件", "INFO")
-
-        try:
-            # Windows嵌入式版本需要特殊处理
-            if system == "windows":
-                await self._setup_windows_embedded_python(version)
-
-            # 确保pip已安装
-            self._print_progress("检查pip状态...", "PROGRESS")
-
-            # 检查pip是否已存在
+        for cmd, step in commands:
+            self.logger.info(f"执行{step}...")
             process = await asyncio.create_subprocess_exec(
-                str(python_exe), "-m", "pip", "--version",
+                *cmd, cwd=source_dir,
                 stdout=asyncio.subprocess.PIPE,
                 stderr=asyncio.subprocess.PIPE
             )
-            stdout, stderr = await process.communicate()
+            await process.communicate()
 
             if process.returncode != 0:
-                # 尝试ensurepip
-                self._print_progress("pip不存在，尝试使用ensurepip安装...", "WARNING")
-                returncode = await self._stream_subprocess_output(
-                    [str(python_exe), "-m", "ensurepip", "--upgrade"]
-                )
+                raise Exception(f"{step}失败")
 
-                if returncode != 0:
-                    self._print_progress("ensurepip失败，尝试手动安装pip...", "WARNING")
-                    await self._install_pip_manually(python_exe)
+        # 清理源码
+        shutil.rmtree(source_dir, ignore_errors=True)
 
-            # 升级pip到最新版本
-            self._print_progress("升级pip到最新版本...", "PROGRESS")
-            returncode = await self._stream_subprocess_output(
-                [str(python_exe), "-m", "pip", "install", "--upgrade", "pip"]
-            )
-
-            # 安装setuptools、wheel和virtualenv
-            self._print_progress("安装必要的包 (setuptools, wheel, virtualenv)...", "PROGRESS")
-            returncode = await self._stream_subprocess_output(
-                [str(python_exe), "-m", "pip", "install", "--upgrade", "setuptools", "wheel", "virtualenv"]
-            )
-
-            if returncode != 0:
-                self._print_progress("安装必要包失败", "ERROR")
-                return False
-
-            self._print_progress("Python组件配置完成！", "SUCCESS")
-            return True
-
-        except Exception as e:
-            self._print_progress(f"设置Python组件失败: {e}", "ERROR")
-            return False
-
-    async def _setup_windows_embedded_python(self, version: str):
+    async def _setup_windows_embedded(self, version: str):
         """设置Windows嵌入式Python"""
         python_dir = self.get_python_dir(version)
-
-        # 创建python._pth文件以启用site-packages
         pth_file = python_dir / f"python{version.replace('.', '')}._pth"
+
         if pth_file.exists():
             content = pth_file.read_text()
             if "#import site" in content:
                 content = content.replace("#import site", "import site")
                 pth_file.write_text(content)
-                self._print_progress("已启用Windows嵌入式Python的site-packages", "SUCCESS")
 
-    async def _install_pip_manually(self, python_exe: Path):
-        """手动安装pip"""
-        try:
-            # 下载get-pip.py
-            get_pip_url = "https://bootstrap.pypa.io/get-pip.py"
-            temp_file = python_exe.parent / "get-pip.py"
+    async def _ensure_pip_installed(self, version: str) -> bool:
+        """确保pip已安装"""
+        python_exe = self.get_python_executable(version)
 
-            self._print_progress("下载get-pip.py...", "PROGRESS")
-            loop = asyncio.get_event_loop()
-            await loop.run_in_executor(
-                None,
-                lambda: self._download_with_progress(get_pip_url, temp_file)
+        # 检查pip
+        process = await asyncio.create_subprocess_exec(
+            str(python_exe), "-m", "pip", "--version",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL
+        )
+        await process.communicate()
+
+        if process.returncode != 0:
+            # 尝试安装pip
+            self.logger.info("安装pip...")
+
+            # 先尝试ensurepip
+            process = await asyncio.create_subprocess_exec(
+                str(python_exe), "-m", "ensurepip", "--upgrade",
+                stdout=asyncio.subprocess.PIPE,
+                stderr=asyncio.subprocess.PIPE
             )
+            await process.communicate()
 
-            # 运行get-pip.py
-            self._print_progress("运行get-pip.py安装pip...", "PROGRESS")
-            returncode = await self._stream_subprocess_output(
-                [str(python_exe), str(temp_file)]
-            )
+            if process.returncode != 0:
+                # 下载get-pip.py
+                get_pip_url = "https://bootstrap.pypa.io/get-pip.py"
+                get_pip_file = python_exe.parent / "get-pip.py"
 
-            if returncode != 0:
-                raise Exception("get-pip.py执行失败")
+                try:
+                    await self._download_file_async(get_pip_url, get_pip_file)
 
-            # 清理临时文件
-            temp_file.unlink()
-            self._print_progress("pip手动安装成功", "SUCCESS")
+                    process = await asyncio.create_subprocess_exec(
+                        str(python_exe), str(get_pip_file),
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE
+                    )
+                    await process.communicate()
+                    get_pip_file.unlink()
+                except Exception as e:
+                    self.logger.error(f"安装pip失败: {e}")
+                    return False
 
-        except Exception as e:
-            self._print_progress(f"手动安装pip失败: {e}", "ERROR")
-            raise
+        # 安装virtualenv
+        process = await asyncio.create_subprocess_exec(
+            str(python_exe), "-m", "pip", "install", "--upgrade",
+            "pip", "setuptools", "wheel", "virtualenv",
+            stdout=asyncio.subprocess.DEVNULL,
+            stderr=asyncio.subprocess.DEVNULL
+        )
+        await process.communicate()
+
+        return process.returncode == 0
 
     async def create_venv(self, version: str, resource_name: str) -> bool:
         """使用virtualenv创建虚拟环境"""
-        python_exe = self.get_python_executable(version)
         venv_dir = self.get_venv_dir(version, resource_name)
 
-        self.logger.info(f"\n{'=' * 60}")
-        self._print_progress(f"创建虚拟环境: {resource_name}", "INFO")
-
         if venv_dir.exists():
-            self._print_progress(f"虚拟环境已存在: {venv_dir}", "SUCCESS")
+            self.logger.info(f"虚拟环境已存在: {resource_name}")
             return True
 
-        self._print_progress(f"目标路径: {venv_dir}", "INFO")
+        python_exe = self.get_python_executable(version)
         venv_dir.parent.mkdir(parents=True, exist_ok=True)
 
-        # 使用virtualenv创建虚拟环境
-        self._print_progress("执行virtualenv命令...", "PROGRESS")
-        returncode = await self._stream_subprocess_output(
-            [str(python_exe), "-m", "virtualenv", str(venv_dir)]
+        # 先确保virtualenv已安装
+        process = await asyncio.create_subprocess_exec(
+            str(python_exe), "-m", "pip", "list",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL
         )
+        stdout, _ = await process.communicate()
 
-        if returncode == 0:
-            self._print_progress("虚拟环境创建成功！", "SUCCESS")
-            await self._upgrade_venv_pip(version, resource_name)
+        if "virtualenv" not in stdout.decode():
+            self.logger.info("安装virtualenv...")
+            process = await asyncio.create_subprocess_exec(
+                str(python_exe), "-m", "pip", "install", "virtualenv",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL
+            )
+            await process.communicate()
+
+        # 使用virtualenv创建虚拟环境
+        process = await asyncio.create_subprocess_exec(
+            str(python_exe), "-m", "virtualenv", str(venv_dir),
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.PIPE
+        )
+        stdout, stderr = await process.communicate()
+
+        if process.returncode == 0:
+            self.logger.info(f"✅ 虚拟环境创建成功: {resource_name}")
+
+            # 升级虚拟环境中的pip
+            venv_python = self.get_venv_python(version, resource_name)
+            process = await asyncio.create_subprocess_exec(
+                str(venv_python), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL
+            )
+            await process.communicate()
+
             return True
 
-        self._print_progress("创建虚拟环境失败", "ERROR")
+        self.logger.error(f"创建虚拟环境失败: {stderr.decode()}")
         return False
 
-    async def _upgrade_venv_pip(self, version: str, resource_name: str):
-        """升级虚拟环境中的pip"""
-        venv_python = self.get_venv_python(version, resource_name)
+    async def cleanup(self):
+        """清理资源"""
+        if self._download_session:
+            await self._download_session.close()
 
-        try:
-            self._print_progress("升级虚拟环境中的pip、setuptools和wheel...", "PROGRESS")
-            returncode = await self._stream_subprocess_output(
-                [str(venv_python), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel"]
-            )
-
-            if returncode == 0:
-                self._print_progress("虚拟环境组件升级成功", "SUCCESS")
-            else:
-                self._print_progress("虚拟环境组件升级失败", "WARNING")
-
-        except Exception as e:
-            self._print_progress(f"升级虚拟环境pip时出错: {e}", "WARNING")
-
-    async def get_python_info(self, version: str) -> dict:
-        """获取Python安装信息"""
-        python_exe = self.get_python_executable(version)
-        info = {
-            "version": version,
-            "installed": python_exe.exists(),
-            "executable": str(python_exe),
-            "components": {}
-        }
-
-        if not python_exe.exists():
-            return info
-
-        self.logger.info(f"\n{'=' * 60}")
-        self._print_progress(f"获取Python {version}详细信息...", "INFO")
-
-        try:
-            # 获取详细版本信息
-            process = await asyncio.create_subprocess_exec(
-                str(python_exe), "--version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await process.communicate()
-            full_version = (stdout.decode() + stderr.decode()).strip()
-            info["full_version"] = full_version
-            self.logger.info(f"  版本: {full_version}")
-
-            # 检查pip
-            process = await asyncio.create_subprocess_exec(
-                str(python_exe), "-m", "pip", "--version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await process.communicate()
-            info["components"]["pip"] = {
-                "available": process.returncode == 0,
-                "version": stdout.decode().strip() if process.returncode == 0 else None
-            }
-            if process.returncode == 0:
-                self.logger.info(f"  ✓ pip: {stdout.decode().strip()}")
-            else:
-                self.logger.info(f"  ✗ pip: 不可用")
-
-            # 检查virtualenv
-            process = await asyncio.create_subprocess_exec(
-                str(python_exe), "-m", "virtualenv", "--version",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
-            )
-            stdout, stderr = await process.communicate()
-            info["components"]["virtualenv"] = {
-                "available": process.returncode == 0,
-                "version": stdout.decode().strip() if process.returncode == 0 else None
-            }
-            if process.returncode == 0:
-                self.logger.info(f"  ✓ virtualenv: {stdout.decode().strip()}")
-            else:
-                self.logger.info(f"  ✗ virtualenv: 不可用")
-
-        except Exception as e:
-            info["error"] = str(e)
-            self._print_progress(f"获取信息时出错: {e}", "ERROR")
-
-        return info
+    def __del__(self):
+        """析构函数"""
+        if hasattr(self, '_download_session') and self._download_session:
+            try:
+                asyncio.create_task(self._download_session.close())
+            except:
+                pass

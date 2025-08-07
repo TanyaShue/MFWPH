@@ -495,7 +495,7 @@ class TaskExecutor(QObject):
             task_manager.set_progress(progress)
             self.device_manager.set_progress(progress)
 
-            self.logger.info(f"子任务 {sub_task.task_entry} 执行完毕，进度: {progress}%")
+            self.logger.info(f"子任务 {sub_task.task_entry} 执行完毕")
 
         return {"result": "success", "data": task.data}
 
@@ -799,21 +799,3 @@ class TaskExecutor(QObject):
     def get_queue_length(self) -> int:
         """获取队列长度"""
         return len(self._task_queue)
-
-    def get_task_state(self, task_id: str) -> Optional[DeviceState]:
-        """获取任务状态"""
-        # 检查当前任务
-        if self._current_task and self._current_task.id == task_id:
-            return self._current_task.state_manager.get_state()
-
-        # 检查队列中的任务
-        for task in self._task_queue:
-            if task.id == task_id:
-                return task.state_manager.get_state()
-
-        # 检查状态管理器中的任务
-        task_manager = device_status_manager.get_task_manager(task_id)
-        if task_manager:
-            return task_manager.get_state()
-
-        return None

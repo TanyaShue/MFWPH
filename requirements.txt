@@ -9,3 +9,5 @@ cryptography
 semver
 pandas
 filelock
+aiohttp
+aiofiles

@@ -269,9 +269,6 @@ class BasicInfoWidget(QFrame):
         if not self.device_config:
             return
 
-        # 获取当前状态
-        current_state = self.device_manager.get_state()
-
         if self.device_manager.is_busy():
             # 停止设备
             await self.stop_device_tasks()
@@ -284,7 +281,7 @@ class BasicInfoWidget(QFrame):
         """运行设备任务"""
         try:
             if self.device_config:
-                self.logger.info("开始执行设备任务")
+                self.logger.info("开始任务")
 
                 # 禁用按钮
                 self.run_btn.setEnabled(False)
@@ -292,7 +289,7 @@ class BasicInfoWidget(QFrame):
                 success = await task_manager.run_device_all_resource_task(self.device_config)
 
                 if success:
-                    self.logger.info("设备任务执行完成")
+                    self.logger.info("设备任务创建完成")
 
         except Exception as e:
             self.logger.error(f"运行任务时出错: {str(e)}")
