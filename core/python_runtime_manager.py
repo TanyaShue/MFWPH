@@ -74,7 +74,7 @@ class PythonRuntimeManager:
                 response.raise_for_status()
                 total_size = int(response.headers.get('content-length', 0))
 
-                self.logger.debug(f"下载: {url} ({total_size / 1024 / 1024:.1f} MB)")
+                self.logger.info(f"下载: {url} ({total_size / 1024 / 1024:.1f} MB)")
                 notification_manager.show_info("开始安装Python环境，请稍候...", "安装")
 
                 downloaded = 0
@@ -107,7 +107,7 @@ class PythonRuntimeManager:
         mb_downloaded = downloaded / (1024 * 1024)
         mb_total = total / (1024 * 1024)
         if int(progress) % 10 == 0:  # 每10%记录一次
-            self.logger.debug(f"下载进度: {progress:.1f}% ({mb_downloaded:.1f}/{mb_total:.1f} MB)")
+            self.logger.info(f"下载进度: {progress:.1f}% ({mb_downloaded:.1f}/{mb_total:.1f} MB)")
 
     def _get_patch_version(self, version: str) -> str:
         """获取完整版本号"""
@@ -329,7 +329,7 @@ class PythonRuntimeManager:
         return process.returncode == 0
 
     async def create_venv(self, version: str, resource_name: str) -> bool:
-        """创建虚拟环境"""
+        """使用virtualenv创建虚拟环境"""
         venv_dir = self.get_venv_dir(version, resource_name)
 
         if venv_dir.exists():
@@ -339,9 +339,26 @@ class PythonRuntimeManager:
         python_exe = self.get_python_executable(version)
         venv_dir.parent.mkdir(parents=True, exist_ok=True)
 
-        # 创建虚拟环境
+        # 先确保virtualenv已安装
         process = await asyncio.create_subprocess_exec(
-            str(python_exe), "-m", "venv", str(venv_dir),
+            str(python_exe), "-m", "pip", "list",
+            stdout=asyncio.subprocess.PIPE,
+            stderr=asyncio.subprocess.DEVNULL
+        )
+        stdout, _ = await process.communicate()
+
+        if "virtualenv" not in stdout.decode():
+            self.logger.info("安装virtualenv...")
+            process = await asyncio.create_subprocess_exec(
+                str(python_exe), "-m", "pip", "install", "virtualenv",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL
+            )
+            await process.communicate()
+
+        # 使用virtualenv创建虚拟环境
+        process = await asyncio.create_subprocess_exec(
+            str(python_exe), "-m", "virtualenv", str(venv_dir),
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE
         )
@@ -349,6 +366,16 @@ class PythonRuntimeManager:
 
         if process.returncode == 0:
             self.logger.info(f"✅ 虚拟环境创建成功: {resource_name}")
+
+            # 升级虚拟环境中的pip
+            venv_python = self.get_venv_python(version, resource_name)
+            process = await asyncio.create_subprocess_exec(
+                str(venv_python), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel",
+                stdout=asyncio.subprocess.DEVNULL,
+                stderr=asyncio.subprocess.DEVNULL
+            )
+            await process.communicate()
+
             return True
 
         self.logger.error(f"创建虚拟环境失败: {stderr.decode()}")
