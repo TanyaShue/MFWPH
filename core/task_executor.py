@@ -344,9 +344,6 @@ class TaskExecutor(QObject):
                 progress=0
             )
 
-            # 记录当前状态
-            self.logger.info(f"设备状态: {self.device_manager.get_state()}, 任务状态: {task_manager.get_state()}")
-
             # 执行任务列表
             result = await self._run_tasks(task)
 
@@ -416,8 +413,7 @@ class TaskExecutor(QObject):
                 task,
                 agent_config.version,
                 agent_config.use_venv,
-                agent_config.requirements_path,
-                agent_config.pip_index_url
+                agent_config.requirements_path
             )
 
             if not python_exe:
@@ -501,7 +497,7 @@ class TaskExecutor(QObject):
 
     async def _prepare_python_environment(
             self, task: Task, python_version: str, use_venv: bool,
-            requirements_path: str, pip_index_url: str
+            requirements_path: str
     ) -> Optional[str]:
         """准备Python环境"""
         try:
@@ -520,15 +516,13 @@ class TaskExecutor(QObject):
                     task.data.resource_name,
                     task.data.resource_path,
                     python_version,
-                    requirements_path,
-                    pip_index_url
+                    requirements_path
                 )
             else:
                 await self._install_requirements(
                     python_exe,
                     task.data.resource_path,
-                    requirements_path,
-                    pip_index_url
+                    requirements_path
                 )
 
             return python_exe
@@ -539,7 +533,7 @@ class TaskExecutor(QObject):
 
     async def _setup_venv_environment(
             self, resource_name: str, resource_path: str,
-            python_version: str, requirements_path: str, pip_index_url: str
+            python_version: str, requirements_path: str
     ) -> str:
         """设置虚拟环境"""
         venv_dir = self.runtime_manager.get_venv_dir(python_version, resource_name)
@@ -553,7 +547,6 @@ class TaskExecutor(QObject):
             str(venv_python),
             resource_path,
             requirements_path,
-            pip_index_url,
             venv_dir
         )
 
@@ -561,7 +554,7 @@ class TaskExecutor(QObject):
 
     async def _check_and_install_deps(
             self, python_exe: str, resource_path: str,
-            requirements_path: str, pip_index_url: str, venv_dir: Path
+            requirements_path: str, venv_dir: Path
     ):
         """检查并安装依赖"""
         req_file = Path(resource_path) / requirements_path
@@ -589,8 +582,7 @@ class TaskExecutor(QObject):
         await self._install_requirements(
             python_exe,
             resource_path,
-            requirements_path,
-            pip_index_url
+            requirements_path
         )
 
         # 保存hash
@@ -599,7 +591,7 @@ class TaskExecutor(QObject):
 
     async def _install_requirements(
             self, python_exe: str, resource_path: str,
-            requirements_path: str, pip_index_url: str
+            requirements_path: str
     ):
         """安装依赖"""
         req_file = Path(resource_path) / requirements_path
@@ -608,20 +600,9 @@ class TaskExecutor(QObject):
 
         self.logger.info(f"安装依赖: {req_file}")
 
-        # 加载pip源
-        config_path = Path("assets/config/python_sources.json")
-        pip_sources = ["https://pypi.org/simple/"]
-        if config_path.exists():
-            try:
-                config_data = await self._run_in_executor(
-                    lambda: json.loads(config_path.read_text(encoding='utf-8'))
-                )
-                pip_sources = config_data.get("pip_sources", pip_sources)
-            except Exception as e:
-                self.logger.warning(f"加载pip源配置失败: {e}")
-
-        if pip_index_url and pip_index_url != "https://pypi.org/simple/":
-            pip_sources.insert(0, pip_index_url)
+        await self.runtime_manager.install_requirements()
+        # 从配置文件加载pip源
+        pip_sources = await self._load_pip_sources()
 
         # 升级pip
         await self._run_pip_command(python_exe, ["-m", "pip", "install", "--upgrade", "pip"])
@@ -655,15 +636,6 @@ class TaskExecutor(QObject):
                 self.logger.warning(f"使用pip源 {source} 出错: {e}")
 
         raise Exception("所有pip源都无法安装依赖")
-
-    async def _run_pip_command(self, python_exe: str, args: list):
-        """运行pip命令"""
-        process = await asyncio.create_subprocess_exec(
-            python_exe, *args,
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
-        )
-        await process.communicate()
 
     async def _start_agent_process(self, task: Task, agent_config, python_exe: str):
         """启动Agent进程"""

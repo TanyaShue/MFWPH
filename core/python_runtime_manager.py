@@ -1,4 +1,5 @@
 import asyncio
+import os
 import platform
 import zipfile
 import tarfile
@@ -371,22 +372,31 @@ class PythonRuntimeManager:
             await process.communicate()
 
             if process.returncode != 0:
-                # 下载get-pip.py
-                get_pip_url = "https://bootstrap.pypa.io/get-pip.py"
+                # 从配置中读取 get-pip.py 源
+                get_pip_urls = self.config.get("get_pip_sources", [])
                 get_pip_file = python_exe.parent / "get-pip.py"
 
-                try:
-                    await self._download_file_async(get_pip_url, get_pip_file)
+                for get_pip_url in get_pip_urls:
+                    try:
+                        await self._download_file_async(get_pip_url, get_pip_file)
 
-                    process = await asyncio.create_subprocess_exec(
-                        str(python_exe), str(get_pip_file),
-                        **kwargs
-                    )
-                    await process.communicate()
-                    get_pip_file.unlink()
-                except Exception as e:
-                    self.logger.error(f"安装pip失败: {e}")
-                    return False
+                        process = await asyncio.create_subprocess_exec(
+                            str(python_exe), str(get_pip_file),
+                            **kwargs
+                        )
+                        await process.communicate()
+                        get_pip_file.unlink()
+
+                        if process.returncode == 0:
+                            return True
+                        else:
+                            self.logger.warning(f"从 {get_pip_url} 安装 pip 失败，尝试下一个源。")
+
+                    except Exception as e:
+                        self.logger.warning(f"从 {get_pip_url} 下载失败: {e}")
+
+                self.logger.error("安装 pip 失败：所有源尝试均未成功。")
+                return False
 
         # 安装virtualenv - 使用隐藏窗口的参数
         process = await asyncio.create_subprocess_exec(
@@ -473,6 +483,41 @@ class PythonRuntimeManager:
             return True
         else:
             self.logger.error(f"包安装失败: {stderr.decode()}")
+            return False
+
+    async def install_requirements(self, version: str, resource_name: str, requirements_path: str) -> bool:
+        """
+        使用 requirements.txt 安装依赖包
+        :param version: Python 版本号（用于查找虚拟环境）
+        :param resource_name: 虚拟环境资源名称
+        :param requirements_path: requirements.txt 文件路径
+        :return: 安装是否成功
+        """
+        venv_python = self.get_venv_python(version, resource_name)
+
+        if not venv_python.exists():
+            self.logger.error(f"虚拟环境不存在: {resource_name}")
+            return False
+
+        if not os.path.isfile(requirements_path):
+            self.logger.error(f"requirements.txt 不存在: {requirements_path}")
+            return False
+
+        # 使用隐藏窗口的参数安装包
+        kwargs = self._get_subprocess_kwargs()
+
+        self.logger.info(f"安装依赖自: {requirements_path}")
+        process = await asyncio.create_subprocess_exec(
+            str(venv_python), "-m", "pip", "install", "-r", requirements_path,
+            **kwargs
+        )
+        stdout, stderr = await process.communicate()
+
+        if process.returncode == 0:
+            self.logger.info("✅ requirements.txt 安装成功")
+            return True
+        else:
+            self.logger.error(f"requirements.txt 安装失败: {stderr.decode()}")
             return False
 
     async def run_python_script(self, version: str, resource_name: str, script_path: str, *args) -> tuple:

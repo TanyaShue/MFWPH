@@ -30,7 +30,6 @@
 | `agent_params` | `str` | `""` | Launch parameters |
 | `requirements_path` | `str` | `""` | Path to requirements.txt |
 | `use_venv` | `bool` | `True` | Use virtual environment |
-| `pip_index_url` | `Optional[str]` | `None` | Custom PyPI mirror URL |
 
 ---
 
