@@ -1,7 +1,7 @@
 # -*- coding: UTF-8 -*-
 """
 任务执行器
-使用统一状态机管理任务生命周期
+使用简化的状态管理器管理任务生命周期
 """
 
 import asyncio
@@ -29,7 +29,7 @@ from app.models.config.app_config import DeviceConfig, DeviceType
 from app.models.config.global_config import RunTimeConfigs, global_config
 from app.models.logging.log_manager import log_manager
 from core.python_runtime_manager import PythonRuntimeManager
-from core.device_state_machine import StateMachine, DeviceState
+from core.device_state_machine import SimpleStateManager, DeviceState
 from core.device_status_manager import device_status_manager
 
 
@@ -38,7 +38,7 @@ class Task:
     """简化的任务数据类"""
     id: str
     data: RunTimeConfigs
-    state_machine: StateMachine
+    state_manager: SimpleStateManager
     created_at: datetime = field(default_factory=datetime.now)
     result: Optional[dict] = None
 
@@ -57,8 +57,8 @@ class TaskExecutor(QObject):
         self.device_name = device_config.device_name
         self.logger = log_manager.get_device_logger(device_config.device_name)
 
-        # 状态机
-        self.device_machine = device_status_manager.get_or_create_device_machine(self.device_name)
+        # 状态管理器
+        self.device_manager = device_status_manager.get_or_create_device_manager(self.device_name)
 
         # 核心组件
         self._controller = None
@@ -116,10 +116,8 @@ class TaskExecutor(QObject):
                 return True
 
             try:
-                # 触发连接状态
-                if not self.device_machine.safe_trigger('connect'):
-                    self.logger.error("无法开始连接设备")
-                    return False
+                # 设置连接中状态
+                self.device_manager.set_state(DeviceState.CONNECTING)
 
                 # 初始化Toolkit
                 current_dir = os.getcwd()
@@ -132,12 +130,14 @@ class TaskExecutor(QObject):
 
                 # 初始化控制器
                 if not await self._initialize_controller():
-                    self.device_machine.set_error_message("控制器初始化失败")
-                    self.device_machine.safe_trigger('connection_failed')
+                    self.device_manager.set_state(
+                        DeviceState.ERROR,
+                        error_message="控制器初始化失败"
+                    )
                     return False
 
                 # 连接成功
-                self.device_machine.safe_trigger('connection_success')
+                self.device_manager.set_state(DeviceState.CONNECTED)
 
                 self._active = True
                 self._processing_task = asyncio.create_task(self._process_tasks())
@@ -148,8 +148,10 @@ class TaskExecutor(QObject):
 
             except Exception as e:
                 self.logger.error(f"启动失败: {e}", exc_info=True)
-                self.device_machine.set_error_message(str(e))
-                self.device_machine.safe_trigger('set_error')
+                self.device_manager.set_state(
+                    DeviceState.ERROR,
+                    error_message=str(e)
+                )
                 self._active = False
                 return False
 
@@ -165,11 +167,11 @@ class TaskExecutor(QObject):
 
             # 取消所有排队任务
             for task in self._task_queue:
-                task.state_machine.safe_trigger('cancel_task')
+                task.state_manager.set_state(DeviceState.CANCELED)
 
             # 取消当前任务
             if self._current_task:
-                self._current_task.state_machine.safe_trigger('cancel_task')
+                self._current_task.state_manager.set_state(DeviceState.CANCELED)
 
             self._task_queue.clear()
 
@@ -192,7 +194,8 @@ class TaskExecutor(QObject):
         self._executor.shutdown(wait=False)
 
         # 断开设备
-        self.device_machine.safe_trigger('disconnect')
+        if not self.device_manager.is_running_task():
+            self.device_manager.set_state(DeviceState.DISCONNECTED)
 
         self.logger.info("任务执行器已停止")
         self.executor_stopped.emit()
@@ -305,23 +308,22 @@ class TaskExecutor(QObject):
             while self._task_queue:
                 task = self._task_queue.pop(0)
                 # 检查任务状态是否为排队中
-                if task.state_machine.get_state() == DeviceState.QUEUED:
+                if task.state_manager.get_state() == DeviceState.QUEUED:
                     self._current_task = task
                     return task
                 else:
                     # 任务已被取消或处理
-                    device_status_manager.remove_task_machine(task.id)
+                    device_status_manager.remove_task_manager(task.id)
 
             return None
 
     async def _execute_task(self, task: Task):
         """执行单个任务"""
-        task_machine = task.state_machine
+        task_manager = task.state_manager
 
         try:
-            # 准备任务
-            if not task_machine.safe_trigger('dequeue_task'):
-                raise Exception("无法开始准备任务")
+            # 设置任务为准备状态
+            task_manager.set_state(DeviceState.PREPARING)
 
             # 创建任务器
             await self._create_tasker(task.data.resource_path)
@@ -331,77 +333,58 @@ class TaskExecutor(QObject):
             if agent_success:
                 self.logger.info("Agent初始化成功")
 
-            # 开始执行 - 修复：确保设备状态机正确转换
-            if not task_machine.safe_trigger('preparation_success'):
-                raise Exception("无法开始执行任务")
+            # 开始执行任务
+            task_manager.set_state(DeviceState.RUNNING)
 
-            # 关键修复：确保设备状态机转换到RUNNING状态
-            if not self.device_machine.safe_trigger('start_task'):
-                # 尝试强制更新上下文以显示正在运行
-                self.device_machine.update_context(is_running=True, task_id=task.id, task_name=task.data.resource_name)
-
-            # 设置初始进度
-            self.device_machine.set_progress(0)
+            # 同步设备状态到运行中
+            self.device_manager.set_state(
+                DeviceState.RUNNING,
+                task_id=task.id,
+                task_name=task.data.resource_name,
+                progress=0
+            )
 
             # 记录当前状态
-            self.logger.info(f"设备状态: {self.device_machine.get_state()}, 任务状态: {task_machine.get_state()}")
+            self.logger.info(f"设备状态: {self.device_manager.get_state()}, 任务状态: {task_manager.get_state()}")
 
             # 执行任务列表
             result = await self._run_tasks(task)
 
             # 任务成功
             task.result = result
-            task_machine.safe_trigger('task_success')
-            self.device_machine.safe_trigger('task_success')
+            task_manager.set_state(DeviceState.COMPLETED, progress=100)
 
             self.logger.info(f"任务 {task.id} 执行成功")
 
         except asyncio.CancelledError:
-            task_machine.safe_trigger('cancel_task')
-            self.device_machine.safe_trigger('cancel_task')  # 同步设备状态
+            task_manager.set_state(DeviceState.CANCELED)
             self.logger.info(f"任务 {task.id} 被取消")
 
         except Exception as e:
             error_msg = str(e)
-            task_machine.set_error_message(error_msg)
-            task_machine.safe_trigger('task_failed')
-            self.device_machine.safe_trigger('task_failed')  # 同步设备状态
+            task_manager.set_state(DeviceState.FAILED, error_message=error_msg)
             self.logger.error(f"任务 {task.id} 失败: {error_msg}", exc_info=True)
 
         finally:
             # 发送最终状态
             self.task_state_changed.emit(
                 task.id,
-                task_machine.get_state(),
-                task_machine.get_context()
+                task_manager.get_state(),
+                task_manager.get_context()
             )
 
             # 清理
             async with self._lock:
                 self._current_task = None
 
-            # 移除任务状态机
-            device_status_manager.remove_task_machine(task.id)
+            # 移除任务状态管理器
+            device_status_manager.remove_task_manager(task.id)
 
-            # 重置设备状态 - 修复：正确处理设备状态重置
-            current_device_state = self.device_machine.get_state()
-            if current_device_state in [DeviceState.COMPLETED, DeviceState.FAILED, DeviceState.CANCELED]:
-                # 检查是否还有其他任务
-                if self.get_queue_length() == 0:
-                    self.device_machine.safe_trigger('reset_to_connected')
-                    self.logger.info("没有更多任务，设备状态重置为CONNECTED")
-            elif current_device_state == DeviceState.RUNNING:
-                # 如果设备还在RUNNING状态，需要手动转换到完成状态然后重置
-                if task_machine.get_state() == DeviceState.COMPLETED:
-                    self.device_machine.safe_trigger('task_success')
-                elif task_machine.get_state() == DeviceState.FAILED:
-                    self.device_machine.safe_trigger('task_failed')
-                elif task_machine.get_state() == DeviceState.CANCELED:
-                    self.device_machine.safe_trigger('cancel_task')
-
-                # 然后重置到连接状态
-                if self.get_queue_length() == 0:
-                    self.device_machine.safe_trigger('reset_to_connected')
+            # 检查并重置设备状态
+            if self.get_queue_length() == 0:
+                # 没有更多任务，设备回到连接状态
+                self.device_manager.set_state(DeviceState.CONNECTED)
+                self.logger.info("没有更多任务，设备状态重置为CONNECTED")
 
     async def _setup_agent(self, task: Task) -> bool:
         """设置Agent"""
@@ -410,26 +393,14 @@ class TaskExecutor(QObject):
             return True  # 不需要Agent
 
         try:
-            # 修复：在准备状态下触发更新
-            current_state = self.device_machine.get_state()
-
-            # 如果当前是PREPARING状态，可以开始更新
-            if current_state == DeviceState.PREPARING:
-                if not self.device_machine.safe_trigger('start_update'):
-                    # 如果无法从PREPARING转到UPDATING，记录但继续
-                    self.logger.warning("无法从PREPARING状态转换到UPDATING状态")
-            elif current_state == DeviceState.CONNECTED:
-                # 从CONNECTED状态也可以开始更新
-                if not self.device_machine.safe_trigger('start_update'):
-                    self.logger.warning("无法从CONNECTED状态转换到UPDATING状态")
-            else:
-                self.logger.debug(f"当前状态 {current_state} 不需要转换到UPDATING")
+            # 设置为更新状态
+            self.device_manager.set_state(DeviceState.UPDATING)
 
             # 如果Agent已运行，直接返回
             if self._agent_process and self._agent_process.poll() is None:
-                # 如果进入了更新状态，需要切换回来
-                if self.device_machine.get_state() == DeviceState.UPDATING:
-                    self.device_machine.safe_trigger('update_success')
+                # 更新完成，根据是否有任务决定下一个状态
+                next_state = DeviceState.PREPARING if task else DeviceState.CONNECTED
+                self.device_manager.set_state(next_state)
                 return True
 
             # 创建Agent客户端
@@ -452,11 +423,6 @@ class TaskExecutor(QObject):
             if not python_exe:
                 raise Exception("Python环境准备失败")
 
-            # 更新完成 - 修复：正确处理更新完成后的状态
-            if self.device_machine.get_state() == DeviceState.UPDATING:
-                # 设置task_id以便has_pending_task条件检查
-                self.device_machine.update_context(task_id=task.id)
-
             # 启动Agent进程
             await self._start_agent_process(task, agent_config, python_exe)
 
@@ -466,34 +432,35 @@ class TaskExecutor(QObject):
             if not connected:
                 raise Exception("无法连接到Agent")
 
+            # 更新完成，准备执行任务
+            self.device_manager.set_state(DeviceState.PREPARING)
+
             self.logger.info("Agent连接成功")
             return True
 
         except Exception as e:
             self.logger.error(f"Agent设置失败: {e}")
-            self.device_machine.set_error_message(str(e))
-
-            # 根据当前状态决定如何处理错误
-            if self.device_machine.get_state() == DeviceState.UPDATING:
-                self.device_machine.safe_trigger('update_failed')
-
+            self.device_manager.set_state(
+                DeviceState.ERROR,
+                error_message=str(e)
+            )
             await self._cleanup_agent()
             return False
 
     async def _run_tasks(self, task: Task) -> dict:
         """执行任务列表"""
         task_list = task.data.task_list
-        task_machine = task.state_machine
+        task_manager = task.state_manager
 
         self.logger.info(f"执行任务列表，共 {len(task_list)} 个子任务")
 
         # 确保设备状态显示为运行中
-        if self.device_machine.get_state() != DeviceState.RUNNING:
-            self.logger.warning(f"执行任务时设备状态异常: {self.device_machine.get_state()}")
+        if self.device_manager.get_state() != DeviceState.RUNNING:
+            self.logger.warning(f"执行任务时设备状态异常: {self.device_manager.get_state()}")
 
         for i, sub_task in enumerate(task_list):
             # 检查取消状态
-            if task_machine.get_state() == DeviceState.CANCELED:
+            if task_manager.get_state() == DeviceState.CANCELED:
                 raise asyncio.CancelledError()
 
             self.logger.info(f"执行子任务 {i + 1}/{len(task_list)}: {sub_task.task_entry}")
@@ -516,21 +483,17 @@ class TaskExecutor(QObject):
 
             # 等待完成，同时检查取消
             while not future.done():
-                if task_machine.get_state() == DeviceState.CANCELED:
+                if task_manager.get_state() == DeviceState.CANCELED:
                     await self._run_in_executor(self._tasker.post_stop)
                     raise asyncio.CancelledError()
                 await asyncio.sleep(0.1)
 
             await future
 
-            # 更新进度 - 同时更新设备和任务进度
+            # 更新进度
             progress = int((i + 1) / len(task_list) * 100)
-            task_machine.set_progress(progress)
-            self.device_machine.set_progress(progress)
-
-            # 确保设备仍显示为运行中
-            if self.device_machine.get_state() != DeviceState.RUNNING:
-                self.logger.warning(f"子任务执行中设备状态异常: {self.device_machine.get_state()}")
+            task_manager.set_progress(progress)
+            self.device_manager.set_progress(progress)
 
             self.logger.info(f"子任务 {sub_task.task_entry} 执行完毕，进度: {progress}%")
 
@@ -790,15 +753,15 @@ class TaskExecutor(QObject):
                 # 生成任务ID
                 task_id = f"task_{datetime.now().timestamp()}_{id(config)}"
 
-                # 创建任务状态机
-                task_machine = device_status_manager.create_task_machine(task_id, self.device_name)
-                task_machine.set_task_info(task_id, config.resource_name)
+                # 创建任务状态管理器
+                task_manager = device_status_manager.create_task_manager(task_id, self.device_name)
+                task_manager.set_task_info(task_id, config.resource_name)
 
                 # 创建任务
                 task = Task(
                     id=task_id,
                     data=config,
-                    state_machine=task_machine
+                    state_manager=task_manager
                 )
 
                 self._task_queue.append(task)
@@ -806,7 +769,7 @@ class TaskExecutor(QObject):
 
                 # 更新设备队列长度
                 queue_length = len(self._task_queue)
-                self.device_machine.update_context(queue_length=queue_length)
+                self.device_manager.update_context(queue_length=queue_length)
 
                 self.logger.debug(f"任务 {task_id} 已加入队列")
 
@@ -818,17 +781,17 @@ class TaskExecutor(QObject):
         async with self._lock:
             # 检查当前任务
             if self._current_task and self._current_task.id == task_id:
-                self._current_task.state_machine.safe_trigger('cancel_task')
+                self._current_task.state_manager.set_state(DeviceState.CANCELED)
                 return True
 
             # 检查队列中的任务
             for task in self._task_queue:
                 if task.id == task_id:
-                    task.state_machine.safe_trigger('cancel_task')
+                    task.state_manager.set_state(DeviceState.CANCELED)
                     self._task_queue.remove(task)
 
                     # 更新队列长度
-                    self.device_machine.update_context(queue_length=len(self._task_queue))
+                    self.device_manager.update_context(queue_length=len(self._task_queue))
                     return True
 
         return False
@@ -841,16 +804,16 @@ class TaskExecutor(QObject):
         """获取任务状态"""
         # 检查当前任务
         if self._current_task and self._current_task.id == task_id:
-            return self._current_task.state_machine.get_state()
+            return self._current_task.state_manager.get_state()
 
         # 检查队列中的任务
         for task in self._task_queue:
             if task.id == task_id:
-                return task.state_machine.get_state()
+                return task.state_manager.get_state()
 
         # 检查状态管理器中的任务
-        task_machine = device_status_manager.get_task_machine(task_id)
-        if task_machine:
-            return task_machine.get_state()
+        task_manager = device_status_manager.get_task_manager(task_id)
+        if task_manager:
+            return task_manager.get_state()
 
         return None

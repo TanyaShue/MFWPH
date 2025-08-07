@@ -1,7 +1,7 @@
 # -*- coding: UTF-8 -*-
 """
 设备基本信息组件
-使用统一状态机显示设备状态
+使用简化的状态管理器显示设备状态
 """
 
 from datetime import datetime
@@ -37,8 +37,8 @@ class BasicInfoWidget(QFrame):
         self.setMaximumHeight(90)
         self.setMinimumHeight(80)
 
-        # 获取或创建设备状态机
-        self.device_machine = device_status_manager.get_or_create_device_machine(device_name)
+        # 获取或创建设备状态管理器
+        self.device_manager = device_status_manager.get_or_create_device_manager(self.device_name)
 
         self.init_ui()
         self.connect_signals()
@@ -132,7 +132,7 @@ class BasicInfoWidget(QFrame):
 
     def connect_signals(self):
         """连接信号"""
-        # 监听状态机状态变化信号
+        # 监听状态管理器的状态变化信号
         device_status_manager.state_changed.connect(self.on_state_changed)
         # 监听UI信息变化信号
         device_status_manager.ui_info_changed.connect(self.on_ui_info_changed)
@@ -244,7 +244,6 @@ class BasicInfoWidget(QFrame):
     def _get_scheduled_info(self) -> dict:
         """获取定时任务信息"""
         # 这里应该从scheduled_task_manager获取实际的定时任务信息
-        # 暂时返回默认值
         try:
             # 尝试从scheduled_task_manager获取信息
             if hasattr(scheduled_task_manager, 'get_device_schedule'):
@@ -271,9 +270,9 @@ class BasicInfoWidget(QFrame):
             return
 
         # 获取当前状态
-        current_state = self.device_machine.get_state()
+        current_state = self.device_manager.get_state()
 
-        if self.device_machine.is_busy():
+        if self.device_manager.is_busy():
             # 停止设备
             await self.stop_device_tasks()
         else:

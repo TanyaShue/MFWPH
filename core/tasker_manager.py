@@ -1,7 +1,7 @@
 # -*- coding: UTF-8 -*-
 """
 任务管理器
-集中管理所有设备的任务执行器，使用统一状态机
+集中管理所有设备的任务执行器，使用简化的状态管理
 """
 
 from typing import Dict, Optional, List, Union
@@ -33,7 +33,7 @@ class DeviceTaskInfo:
 class TaskerManager(QObject):
     """
     集中管理所有设备任务执行器的管理器
-    使用统一状态机管理所有状态
+    使用简化的状态管理器管理所有状态
     """
     # 设备相关信号
     device_added = Signal(str)  # 设备添加信号
@@ -135,7 +135,7 @@ class TaskerManager(QObject):
             error_msg = f"为设备 {device_config.device_name} 创建任务执行器失败: {e}"
             self.logger.error(error_msg, exc_info=True)
 
-            # 使用状态机设置错误
+            # 使用状态管理器设置错误
             device_status_manager.set_device_error(device_config.device_name, str(e))
             self.error_occurred.emit(device_config.device_name, str(e))
             return False
@@ -192,10 +192,10 @@ class TaskerManager(QObject):
             executor_info = self._executors.get(device_name)
             if executor_info:
                 queue_length = executor_info.executor.get_queue_length()
-                # 更新设备状态机的队列信息
-                device_machine = device_status_manager.get_device_machine(device_name)
-                if device_machine:
-                    device_machine.update_context(queue_length=queue_length)
+                # 更新设备状态管理器的队列信息
+                device_manager = device_status_manager.get_device_manager(device_name)
+                if device_manager:
+                    device_manager.update_context(queue_length=queue_length)
 
     @asyncSlot(str, object)
     async def submit_task(
@@ -254,7 +254,7 @@ class TaskerManager(QObject):
             error_msg = f"向设备 {device_name} 提交任务失败: {e}"
             self.logger.error(error_msg, exc_info=True)
 
-            # 使用状态机设置错误
+            # 使用状态管理器设置错误
             device_status_manager.set_device_error(device_name, str(e))
             self.error_occurred.emit(device_name, str(e))
             return None
@@ -363,9 +363,9 @@ class TaskerManager(QObject):
 
     def get_device_state(self, device_name: str) -> Optional[DeviceState]:
         """获取设备状态（同步方法）"""
-        device_machine = device_status_manager.get_device_machine(device_name)
-        if device_machine:
-            return device_machine.get_state()
+        device_manager = device_status_manager.get_device_manager(device_name)
+        if device_manager:
+            return device_manager.get_state()
         return None
 
     @asyncSlot()
@@ -583,9 +583,10 @@ class TaskerManager(QObject):
         """
         暂停设备的当前任务
         """
-        device_machine = device_status_manager.get_device_machine(device_name)
-        if device_machine and device_machine.can_trigger('pause_task'):
-            return device_machine.safe_trigger('pause_task')
+        device_manager = device_status_manager.get_device_manager(device_name)
+        if device_manager and device_manager.get_state() == DeviceState.RUNNING:
+            device_manager.set_state(DeviceState.PAUSED)
+            return True
         return False
 
     @asyncSlot(str)
@@ -593,9 +594,10 @@ class TaskerManager(QObject):
         """
         恢复设备的暂停任务
         """
-        device_machine = device_status_manager.get_device_machine(device_name)
-        if device_machine and device_machine.can_trigger('resume_task'):
-            return device_machine.safe_trigger('resume_task')
+        device_manager = device_status_manager.get_device_manager(device_name)
+        if device_manager and device_manager.get_state() == DeviceState.PAUSED:
+            device_manager.set_state(DeviceState.RUNNING)
+            return True
         return False
 
 

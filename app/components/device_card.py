@@ -1,7 +1,7 @@
 # -*- coding: UTF-8 -*-
 """
 设备卡片组件
-使用统一状态机显示设备信息
+使用简化的状态管理器显示设备信息
 """
 
 from PySide6.QtCore import Qt
@@ -33,8 +33,8 @@ class DeviceCard(QFrame):
         self.setMaximumSize(350, 220)
         self.setSizePolicy(QSizePolicy.Preferred, QSizePolicy.Fixed)
 
-        # 获取或创建设备状态机
-        self.device_machine = device_status_manager.get_or_create_device_machine(self.device_name)
+        # 获取或创建设备状态管理器
+        self.device_manager = device_status_manager.get_or_create_device_manager(self.device_name)
 
         self.init_ui()
         self.connect_signals()
@@ -160,7 +160,7 @@ class DeviceCard(QFrame):
 
     def connect_signals(self):
         """连接信号"""
-        # 监听状态机状态变化
+        # 监听状态管理器的状态变化
         device_status_manager.state_changed.connect(self.on_state_changed)
         # 监听UI信息变化
         device_status_manager.ui_info_changed.connect(self.on_ui_info_changed)
@@ -263,7 +263,7 @@ class DeviceCard(QFrame):
             return
 
         # 根据当前状态决定操作
-        if self.device_machine.is_busy():
+        if self.device_manager.is_busy():
             # 停止设备
             await self.stop_device_tasks()
         else:
