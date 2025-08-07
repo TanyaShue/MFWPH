@@ -9,13 +9,14 @@ import json
 import aiohttp
 import aiofiles
 import time
+import subprocess
 from typing import Optional, Dict, Any
 
 from app.utils.notification_manager import notification_manager
 
 
 class PythonRuntimeManager:
-    """Python运行时管理器 - 优化版"""
+    """Python运行时管理器 - 优化版（隐藏命令行窗口）"""
 
     def __init__(self, runtime_base_dir: str, logger=None):
         self.runtime_base_dir = Path(runtime_base_dir)
@@ -24,6 +25,22 @@ class PythonRuntimeManager:
         self.config = self._load_config()
         self._download_session: Optional[aiohttp.ClientSession] = None
         self.logger.info(f"🚀 Python运行时管理器初始化: {self.runtime_base_dir.absolute()}")
+
+    def _get_subprocess_kwargs(self) -> dict:
+        """获取子进程参数，用于隐藏命令行窗口"""
+        kwargs = {
+            'stdout': asyncio.subprocess.PIPE,
+            'stderr': asyncio.subprocess.PIPE
+        }
+
+        # Windows系统特殊处理
+        if platform.system() == "Windows":
+            # 使用 CREATE_NO_WINDOW 标志来隐藏窗口
+            kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+            # 或者使用以下方式（适用于较旧的Python版本）
+            # kwargs['creationflags'] = 0x08000000  # CREATE_NO_WINDOW
+
+        return kwargs
 
     def _get_default_logger(self):
         """获取默认logger"""
@@ -41,13 +58,48 @@ class PythonRuntimeManager:
         config_path = Path("assets/config/python_sources.json")
         default_config = {
             "fallback_versions": {
-                "3.10": "3.10.14", "3.11": "3.11.9", "3.12": "3.12.3"
+                "3.10": "3.10.5",
+                "3.11": "3.11.9",
+                "3.12": "3.12.3"
             },
             "python_download_sources": {
-                "windows": ["https://www.python.org/ftp/python/{version}/python-{version}-embed-amd64.zip"],
-                "linux": ["https://www.python.org/ftp/python/{version}/Python-{version}.tgz"],
-                "darwin": ["https://www.python.org/ftp/python/{version}/Python-{version}.tgz"]
-            }
+                "windows": [
+                    "https://mirrors.aliyun.com/python-release/windows/python-{version}-embed-amd64.zip",
+                    "https://mirrors.huaweicloud.com/python/{version}/python-{version}-embed-amd64.zip",
+                    "https://registry.npmmirror.com/-/binary/python/{version}/python-{version}-embed-amd64.zip",
+                    "https://npm.taobao.org/mirrors/python/{version}/python-{version}-embed-amd64.zip",
+                    "https://www.python.org/ftp/python/{version}/python-{version}-embed-amd64.zip"
+                ],
+                "linux": [
+                    "https://mirrors.aliyun.com/python-release/source/Python-{version}.tgz",
+                    "https://mirrors.huaweicloud.com/python/{version}/Python-{version}.tgz",
+                    "https://registry.npmmirror.com/-/binary/python/{version}/Python-{version}.tgz",
+                    "https://npm.taobao.org/mirrors/python/{version}/Python-{version}.tgz",
+                    "https://www.python.org/ftp/python/{version}/Python-{version}.tgz"
+                ],
+                "darwin": [
+                    "https://mirrors.aliyun.com/python-release/source/Python-{version}.tgz",
+                    "https://mirrors.huaweicloud.com/python/{version}/Python-{version}.tgz",
+                    "https://registry.npmmirror.com/-/binary/python/{version}/Python-{version}.tgz",
+                    "https://npm.taobao.org/mirrors/python/{version}/Python-{version}.tgz",
+                    "https://www.python.org/ftp/python/{version}/Python-{version}.tgz"
+                ]
+            },
+            "pip_sources": [
+                "https://pypi.tuna.tsinghua.edu.cn/simple/",
+                "https://mirrors.aliyun.com/pypi/simple/",
+                "https://pypi.douban.com/simple/",
+                "https://pypi.mirrors.ustc.edu.cn/simple/",
+                "https://mirrors.cloud.tencent.com/pypi/simple/",
+                "https://pypi.org/simple/"
+            ],
+            "get_pip_sources": [
+                "https://mirrors.aliyun.com/pypi/get-pip.py",
+                "https://pypi.tuna.tsinghua.edu.cn/mirrors/pypi/get-pip.py",
+                "https://mirrors.huaweicloud.com/repository/pypi/get-pip.py",
+                "https://registry.npmmirror.com/-/binary/pypa/get-pip.py",
+                "https://bootstrap.pypa.io/get-pip.py"
+            ]
         }
 
         try:
@@ -109,9 +161,9 @@ class PythonRuntimeManager:
                                 else:
                                     eta_str = f"{int(eta / 3600)}小时{int((eta % 3600) / 60)}分"
 
-                                self.logger.info(f"下载进度: {progress:.1f}% | 剩余: {eta_str}")
+                                self.logger.debug(f"下载进度: {progress:.1f}% | 剩余: {eta_str}")
                             else:
-                                self.logger.info(f"下载进度: {progress:.1f}%")
+                                self.logger.debug(f"下载进度: {progress:.1f}%")
 
                             last_log_time = current_time
 
@@ -127,8 +179,6 @@ class PythonRuntimeManager:
             if filepath.exists():
                 filepath.unlink()
             raise
-
-
 
     def _get_patch_version(self, version: str) -> str:
         """获取完整版本号"""
@@ -205,9 +255,7 @@ class PythonRuntimeManager:
                         filename = url.split("/")[-1]
                         temp_file = temp_dir / filename
 
-                        await self._download_file_async(
-                            url, temp_file
-                        )
+                        await self._download_file_async(url, temp_file)
 
                         # 解压文件
                         await self._extract_archive(temp_file, python_dir)
@@ -272,10 +320,13 @@ class PythonRuntimeManager:
 
         for cmd, step in commands:
             self.logger.info(f"执行{step}...")
+
+            # 使用隐藏窗口的参数
+            kwargs = self._get_subprocess_kwargs()
+            kwargs['cwd'] = source_dir
+
             process = await asyncio.create_subprocess_exec(
-                *cmd, cwd=source_dir,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                *cmd, **kwargs
             )
             await process.communicate()
 
@@ -300,11 +351,11 @@ class PythonRuntimeManager:
         """确保pip已安装"""
         python_exe = self.get_python_executable(version)
 
-        # 检查pip
+        # 检查pip - 使用隐藏窗口的参数
+        kwargs = self._get_subprocess_kwargs()
         process = await asyncio.create_subprocess_exec(
             str(python_exe), "-m", "pip", "--version",
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL
+            **kwargs
         )
         await process.communicate()
 
@@ -315,8 +366,7 @@ class PythonRuntimeManager:
             # 先尝试ensurepip
             process = await asyncio.create_subprocess_exec(
                 str(python_exe), "-m", "ensurepip", "--upgrade",
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.PIPE
+                **kwargs
             )
             await process.communicate()
 
@@ -330,8 +380,7 @@ class PythonRuntimeManager:
 
                     process = await asyncio.create_subprocess_exec(
                         str(python_exe), str(get_pip_file),
-                        stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.PIPE
+                        **kwargs
                     )
                     await process.communicate()
                     get_pip_file.unlink()
@@ -339,12 +388,11 @@ class PythonRuntimeManager:
                     self.logger.error(f"安装pip失败: {e}")
                     return False
 
-        # 安装virtualenv
+        # 安装virtualenv - 使用隐藏窗口的参数
         process = await asyncio.create_subprocess_exec(
             str(python_exe), "-m", "pip", "install", "--upgrade",
             "pip", "setuptools", "wheel", "virtualenv",
-            stdout=asyncio.subprocess.DEVNULL,
-            stderr=asyncio.subprocess.DEVNULL
+            **kwargs
         )
         await process.communicate()
 
@@ -361,11 +409,13 @@ class PythonRuntimeManager:
         python_exe = self.get_python_executable(version)
         venv_dir.parent.mkdir(parents=True, exist_ok=True)
 
+        # 获取隐藏窗口的参数
+        kwargs = self._get_subprocess_kwargs()
+
         # 先确保virtualenv已安装
         process = await asyncio.create_subprocess_exec(
             str(python_exe), "-m", "pip", "list",
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.DEVNULL
+            **kwargs
         )
         stdout, _ = await process.communicate()
 
@@ -373,28 +423,25 @@ class PythonRuntimeManager:
             self.logger.info("安装virtualenv...")
             process = await asyncio.create_subprocess_exec(
                 str(python_exe), "-m", "pip", "install", "virtualenv",
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL
+                **kwargs
             )
             await process.communicate()
 
-        # 使用virtualenv创建虚拟环境
+        # 使用virtualenv创建虚拟环境 - 使用隐藏窗口的参数
         process = await asyncio.create_subprocess_exec(
             str(python_exe), "-m", "virtualenv", str(venv_dir),
-            stdout=asyncio.subprocess.PIPE,
-            stderr=asyncio.subprocess.PIPE
+            **kwargs
         )
         stdout, stderr = await process.communicate()
 
         if process.returncode == 0:
             self.logger.info(f"✅ 虚拟环境创建成功: {resource_name}")
 
-            # 升级虚拟环境中的pip
+            # 升级虚拟环境中的pip - 使用隐藏窗口的参数
             venv_python = self.get_venv_python(version, resource_name)
             process = await asyncio.create_subprocess_exec(
                 str(venv_python), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel",
-                stdout=asyncio.subprocess.DEVNULL,
-                stderr=asyncio.subprocess.DEVNULL
+                **kwargs
             )
             await process.communicate()
 
@@ -403,25 +450,55 @@ class PythonRuntimeManager:
         self.logger.error(f"创建虚拟环境失败: {stderr.decode()}")
         return False
 
-    def get_download_status(self) -> Dict[str, Dict[str, Any]]:
-        """获取所有下载任务的状态"""
-        status = {}
-        for filepath, progress in self._download_progress.items():
-            status[filepath] = {
-                "progress": progress.progress_percent,
-                "downloaded_mb": progress.downloaded / (1024 * 1024),
-                "total_mb": progress.total_size / (1024 * 1024),
-                "speed_mbps": progress.download_speed,
-                "eta_seconds": progress.estimated_time_remaining,
-                "eta_formatted": progress.format_time(progress.estimated_time_remaining)
-            }
-        return status
+    async def install_packages(self, version: str, resource_name: str, packages: list) -> bool:
+        """在虚拟环境中安装包"""
+        venv_python = self.get_venv_python(version, resource_name)
+
+        if not venv_python.exists():
+            self.logger.error(f"虚拟环境不存在: {resource_name}")
+            return False
+
+        # 使用隐藏窗口的参数安装包
+        kwargs = self._get_subprocess_kwargs()
+
+        self.logger.info(f"安装包: {', '.join(packages)}")
+        process = await asyncio.create_subprocess_exec(
+            str(venv_python), "-m", "pip", "install", *packages,
+            **kwargs
+        )
+        stdout, stderr = await process.communicate()
+
+        if process.returncode == 0:
+            self.logger.info(f"✅ 包安装成功")
+            return True
+        else:
+            self.logger.error(f"包安装失败: {stderr.decode()}")
+            return False
+
+    async def run_python_script(self, version: str, resource_name: str, script_path: str, *args) -> tuple:
+        """在虚拟环境中运行Python脚本"""
+        venv_python = self.get_venv_python(version, resource_name)
+
+        if not venv_python.exists():
+            self.logger.error(f"虚拟环境不存在: {resource_name}")
+            return (None, "Virtual environment does not exist")
+
+        # 使用隐藏窗口的参数运行脚本
+        kwargs = self._get_subprocess_kwargs()
+
+        process = await asyncio.create_subprocess_exec(
+            str(venv_python), script_path, *args,
+            **kwargs
+        )
+        stdout, stderr = await process.communicate()
+
+        return (stdout.decode() if stdout else None,
+                stderr.decode() if stderr else None)
 
     async def cleanup(self):
         """清理资源"""
         if self._download_session:
             await self._download_session.close()
-        self._download_progress.clear()
 
     def __del__(self):
         """析构函数"""
