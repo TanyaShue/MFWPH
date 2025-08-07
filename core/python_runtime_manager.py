@@ -8,6 +8,7 @@ import shutil
 import json
 import aiohttp
 import aiofiles
+import time
 from typing import Optional, Dict, Any
 
 from app.utils.notification_manager import notification_manager
@@ -64,7 +65,7 @@ class PythonRuntimeManager:
             self._download_session = aiohttp.ClientSession(timeout=timeout)
         return self._download_session
 
-    async def _download_file_async(self, url: str, filepath: Path, progress_callback=None):
+    async def _download_file_async(self, url: str, filepath: Path):
         """异步下载文件"""
         session = await self._get_session()
         filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -79,17 +80,42 @@ class PythonRuntimeManager:
 
                 downloaded = 0
                 chunk_size = 8192
+                start_time = time.time()
+                last_log_time = start_time
 
                 async with aiofiles.open(filepath, 'wb') as file:
                     async for chunk in response.content.iter_chunked(chunk_size):
                         await file.write(chunk)
                         downloaded += len(chunk)
 
-                        if progress_callback and total_size > 0:
-                            progress = (downloaded / total_size) * 100
-                            await progress_callback(progress, downloaded, total_size)
+                        current_time = time.time()
 
-                        # 让出控制权，保持UI响应
+                        # 每2秒记录一次进度
+                        if current_time - last_log_time >= 2.0 or downloaded >= total_size:
+                            progress = (downloaded / total_size) * 100 if total_size > 0 else 0
+                            elapsed = current_time - start_time
+
+                            # 计算速度和剩余时间
+                            if elapsed > 0:
+                                speed = downloaded / elapsed  # bytes/sec
+                                remaining_bytes = total_size - downloaded
+                                eta = remaining_bytes / speed if speed > 0 else 0
+
+                                # 格式化时间
+                                if eta < 60:
+                                    eta_str = f"{int(eta)}秒"
+                                elif eta < 3600:
+                                    eta_str = f"{int(eta / 60)}分{int(eta % 60)}秒"
+                                else:
+                                    eta_str = f"{int(eta / 3600)}小时{int((eta % 3600) / 60)}分"
+
+                                self.logger.info(f"下载进度: {progress:.1f}% | 剩余: {eta_str}")
+                            else:
+                                self.logger.info(f"下载进度: {progress:.1f}%")
+
+                            last_log_time = current_time
+
+                        # 定期让出控制权，保持UI响应
                         if downloaded % (chunk_size * 100) == 0:
                             await asyncio.sleep(0)
 
@@ -102,12 +128,7 @@ class PythonRuntimeManager:
                 filepath.unlink()
             raise
 
-    async def _progress_callback(self, progress: float, downloaded: int, total: int):
-        """下载进度回调"""
-        mb_downloaded = downloaded / (1024 * 1024)
-        mb_total = total / (1024 * 1024)
-        if int(progress) % 10 == 0:  # 每10%记录一次
-            self.logger.info(f"下载进度: {progress:.1f}% ({mb_downloaded:.1f}/{mb_total:.1f} MB)")
+
 
     def _get_patch_version(self, version: str) -> str:
         """获取完整版本号"""
@@ -185,8 +206,7 @@ class PythonRuntimeManager:
                         temp_file = temp_dir / filename
 
                         await self._download_file_async(
-                            url, temp_file,
-                            progress_callback=self._progress_callback
+                            url, temp_file
                         )
 
                         # 解压文件
@@ -207,12 +227,14 @@ class PythonRuntimeManager:
                         await self._ensure_pip_installed(version)
 
                         self.logger.info(f"✅ Python {version} 安装完成")
+                        notification_manager.show_success(f"Python {version} 安装成功", "完成")
                         return True
 
                     except Exception as e:
                         self.logger.error(f"下载失败: {e}")
                         continue
 
+                notification_manager.show_error(f"Python {version} 安装失败", "错误")
                 return False
 
         except Exception as e:
@@ -381,10 +403,25 @@ class PythonRuntimeManager:
         self.logger.error(f"创建虚拟环境失败: {stderr.decode()}")
         return False
 
+    def get_download_status(self) -> Dict[str, Dict[str, Any]]:
+        """获取所有下载任务的状态"""
+        status = {}
+        for filepath, progress in self._download_progress.items():
+            status[filepath] = {
+                "progress": progress.progress_percent,
+                "downloaded_mb": progress.downloaded / (1024 * 1024),
+                "total_mb": progress.total_size / (1024 * 1024),
+                "speed_mbps": progress.download_speed,
+                "eta_seconds": progress.estimated_time_remaining,
+                "eta_formatted": progress.format_time(progress.estimated_time_remaining)
+            }
+        return status
+
     async def cleanup(self):
         """清理资源"""
         if self._download_session:
             await self._download_session.close()
+        self._download_progress.clear()
 
     def __del__(self):
         """析构函数"""
