@@ -495,7 +495,7 @@ class TaskExecutor(QObject):
             task_manager.set_progress(progress)
             self.device_manager.set_progress(progress)
 
-            self.logger.info(f"子任务 {sub_task.task_entry} 执行完毕，进度: {progress}%")
+            self.logger.info(f"子任务 {sub_task.task_entry} 执行完毕")
 
         return {"result": "success", "data": task.data}
 
