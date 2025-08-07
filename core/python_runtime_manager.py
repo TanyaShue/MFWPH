@@ -10,6 +10,8 @@ import json
 from datetime import datetime
 from concurrent.futures import ThreadPoolExecutor
 
+from app.utils.notification_manager import notification_manager
+
 
 class PythonRuntimeManager:
     """Python运行时管理器 - 优化版"""
@@ -86,6 +88,7 @@ class PythonRuntimeManager:
 
         def download():
             self.logger.info(f"开始下载: {url}")
+            notification_manager.show_progress("download", "开始安装python环境", "开始安装python环境")
 
             def hook(block_num, block_size, total_size):
                 if total_size > 0 and block_num % 10 == 0:
@@ -93,7 +96,8 @@ class PythonRuntimeManager:
                     mb_downloaded = (block_num * block_size) / (1024 * 1024)
                     mb_total = total_size / (1024 * 1024)
                     self.logger.debug(f'下载进度: {percent:.1f}% ({mb_downloaded:.1f}/{mb_total:.1f} MB)')
-
+                    fraction = round(min(1, (block_num * block_size) / total_size), 2)
+                    notification_manager.show_progress("download", "开始安装python环境", "开始安装python环境",fraction)
             urllib.request.urlretrieve(url, str(filepath), hook)
             self.logger.info("下载完成")
 
