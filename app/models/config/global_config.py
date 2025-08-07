@@ -6,7 +6,7 @@ from typing import List, Dict, Optional, Any
 from app.models.config.app_config import AppConfig
 from app.models.config.resource_config import ResourceConfig, SelectOption, BoolOption, InputOption, \
     SettingsGroupOption, Task
-from app.models.logging.log_manager import log_manager
+from app.models.logging.log_manager import log_manager, app_logger
 
 
 @dataclass
@@ -169,7 +169,6 @@ class GlobalConfig:
         # 通过 source_file（包含文件名）计算出资源加载目录
         resource_path = Path(resource_config.source_file).parent if resource_config.source_file else Path()
 
-
         return RunTimeConfigs(task_list=runtime_configs, resource_path=resource_path, resource_name=resource_name)
 
     def get_runtime_config_for_task(self, resource_name: str, task_name: str, device_id: str = None) -> Optional[
@@ -201,6 +200,7 @@ class GlobalConfig:
         str, Any]:
         """
         处理任务的选项，生成 pipeline_override。
+        优化版本：减少重复查找，提高性能
 
         Args:
             resource_config: 资源配置
@@ -218,42 +218,50 @@ class GlobalConfig:
                     dict1[key] = value
 
         resource_name = resource_config.resource_name
-        device_resources = []
-        settings_list = []
 
+        # 性能优化：提前获取所有相关的设置，避免在循环中重复查找
+        relevant_settings = None
         if self.app_config is not None:
+            # 找到指定设备的资源设置
             for device in self.app_config.devices:
-                # 如果提供了device_id，则只处理指定设备
                 if device_id is not None and device.device_name != device_id:
                     continue
 
                 for resource in device.resources:
                     if resource.resource_name == resource_name:
-                        device_resources.append(resource)
-                        # 查找对应的 resource_settings
-                        settings = next(
+                        # 找到对应的 resource_settings
+                        relevant_settings = next(
                             (s for s in self.app_config.resource_settings
                              if s.name == resource.settings_name and
                              s.resource_name == resource.resource_name),
                             None
                         )
-                        if settings:
-                            settings_list.append(settings)
+                        if relevant_settings:
+                            break
+                if relevant_settings:
+                    break
 
+        # 构建选项值的快速查找字典
+        option_values_map = {}
+        if relevant_settings and hasattr(relevant_settings, 'options') and relevant_settings.options:
+            for opt_config in relevant_settings.options:
+                option_values_map[opt_config.option_name] = opt_config.value
+
+        # 构建资源选项的快速查找字典
+        resource_options_map = {opt.name: opt for opt in resource_config.options}
+
+        # 缓存日志记录器，避免重复获取
+        logger = None
+        use_debug_log = False  # 可以通过配置控制是否输出详细日志
+
+        # 处理每个任务选项
         for option_name in task.option:
-            option = next((opt for opt in resource_config.options if opt.name == option_name), None)
+            option = resource_options_map.get(option_name)
             if option is None:
                 continue
 
-            option_value = None
-            # 从 resource_settings 中查找选项值
-            for settings in settings_list:
-                if hasattr(settings, 'options') and settings.options:
-                    option_config = next((opt for opt in settings.options if opt.option_name == option_name), None)
-                    if option_config is not None:
-                        option_value = option_config.value
-                        break
-
+            # 从映射中快速获取选项值
+            option_value = option_values_map.get(option_name)
             if option_value is None:
                 option_value = option.default
 
@@ -268,7 +276,6 @@ class GlobalConfig:
 
             elif isinstance(option, BoolOption):
                 if option.pipeline_override:
-                    # 对于布尔选项，将值转换为实际布尔值
                     bool_value = self._parse_bool_value(option_value)
                     processed_override = self._replace_placeholder(option.pipeline_override, str(option_value),
                                                                    bool_value)
@@ -281,42 +288,32 @@ class GlobalConfig:
 
             elif isinstance(option, SettingsGroupOption):
                 # 处理设置组
-                # 首先检查组的启用状态 - 确保转换为布尔值
+                # 修复：正确获取设置组的启用状态
+                # 设置组的值应该是一个布尔值，表示整个组是否启用
                 group_enabled = self._parse_bool_value(option_value) if option_value is not None else option.default
 
-                # 添加日志以便调试
-                logger = log_manager.get_device_logger(device_id)
-                logger.debug(f"设置组 [{option_name}] 状态: option_value={option_value}, group_enabled={group_enabled}")
+                app_logger.debug(f"设置组 [{option_name}] 状态: option_value={option_value}, "
+                             f"group_enabled={group_enabled}, type={type(option_value)}")
 
-                if group_enabled and option.pipeline_override:
-                    # 如果组启用，应用组级别的pipeline_override
-                    logger.debug(f"应用设置组 [{option_name}] 的 pipeline_override")
-                    merge_dicts(final_pipeline_override, option.pipeline_override)
-
-                # 处理组内的每个设置
+                # 如果组启用，应用组级别的 pipeline_override
                 if group_enabled:
-                    logger.debug(f"处理设置组 [{option_name}] 内的子选项")
+                    if option.pipeline_override:
+                        app_logger.debug(f"应用设置组 [{option_name}] 的 pipeline_override")
+                        merge_dicts(final_pipeline_override, option.pipeline_override)
+
+                    # 处理组内的每个子选项
+                    app_logger.debug(f"处理设置组 [{option_name}] 内的子选项")
                     for sub_option in option.settings:
                         sub_option_name = f"{option_name}.{sub_option.name}"
-                        sub_option_value = None
 
-                        # 从 resource_settings 中查找子选项的值
-                        for settings in settings_list:
-                            if hasattr(settings, 'options') and settings.options:
-                                sub_option_config = next(
-                                    (opt for opt in settings.options if opt.option_name == sub_option_name),
-                                    None
-                                )
-                                if sub_option_config is not None:
-                                    sub_option_value = sub_option_config.value
-                                    break
-
+                        # 从映射中快速获取子选项值
+                        sub_option_value = option_values_map.get(sub_option_name)
                         if sub_option_value is None:
                             sub_option_value = sub_option.default
 
-                        logger.debug(f"处理子选项 [{sub_option_name}]: value={sub_option_value}")
+                        app_logger.debug(f"处理子选项 [{sub_option_name}]: value={sub_option_value}")
 
-                        # 处理子选项的pipeline_override
+                        # 处理子选项的 pipeline_override
                         if isinstance(sub_option, SelectOption):
                             choice_value = sub_option_value
                             choice = next((c for c in sub_option.choices if c.name == sub_option_value), None)
@@ -345,9 +342,55 @@ class GlobalConfig:
                                 )
                                 merge_dicts(final_pipeline_override, processed_override)
                 else:
-                    logger.debug(f"设置组 [{option_name}] 已禁用，跳过子选项处理")
+                    app_logger.debug(f"设置组 [{option_name}] 已禁用，跳过组级别override和子选项处理")
 
         return final_pipeline_override
+
+    def _process_select_option(self, option: SelectOption, option_value: Any,
+                               final_override: Dict, merge_func):
+        """处理选择类型选项"""
+        choice_value = option_value
+        choice = next((c for c in option.choices if c.name == option_value), None)
+        if choice:
+            choice_value = choice.value
+
+        if option.pipeline_override:
+            choice_override = option.pipeline_override.get(choice_value, {})
+            if choice_override:
+                merge_func(final_override, choice_override)
+
+    def _process_bool_option(self, option: BoolOption, option_value: Any,
+                             final_override: Dict, merge_func):
+        """处理布尔类型选项"""
+        if option.pipeline_override:
+            bool_value = self._parse_bool_value(option_value)
+            processed_override = self._replace_placeholder(
+                option.pipeline_override, str(option_value), bool_value
+            )
+            merge_func(final_override, processed_override)
+
+    def _process_input_option(self, option: InputOption, option_value: Any,
+                              final_override: Dict, merge_func):
+        """处理输入类型选项"""
+        if option_value and option.pipeline_override:
+            processed_override = self._replace_placeholder(
+                option.pipeline_override, str(option_value)
+            )
+            merge_func(final_override, processed_override)
+
+    def _process_settings_group_options(self, group: SettingsGroupOption, group_name: str,
+                                        option_values_map: Dict, final_override: Dict, merge_func):
+        """批量处理设置组内的选项"""
+        for sub_option in group.settings:
+            sub_option_name = f"{group_name}.{sub_option.name}"
+            sub_option_value = option_values_map.get(sub_option_name, sub_option.default)
+
+            if isinstance(sub_option, SelectOption):
+                self._process_select_option(sub_option, sub_option_value, final_override, merge_func)
+            elif isinstance(sub_option, BoolOption):
+                self._process_bool_option(sub_option, sub_option_value, final_override, merge_func)
+            elif isinstance(sub_option, InputOption):
+                self._process_input_option(sub_option, sub_option_value, final_override, merge_func)
 
     def _parse_bool_value(self, value: Any) -> bool:
         """
@@ -356,7 +399,9 @@ class GlobalConfig:
         if isinstance(value, bool):
             return value
         if isinstance(value, str):
-            return value.lower() in ('true', 'yes', 'y', '1', 'on')
+            return value.lower() in ('true', 'yes', 'y', '1', 'on', 'enabled', '启用', '开启')
+        if isinstance(value, (int, float)):
+            return value != 0
         return bool(value)
 
     def _replace_placeholder(self, pipeline: Any, value: str, bool_value: bool = None) -> Any:

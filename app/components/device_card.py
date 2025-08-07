@@ -283,7 +283,7 @@ class DeviceCard(QFrame):
                 success = await task_manager.run_device_all_resource_task(self.device_config)
 
                 if success:
-                    self.logger.info(f"设备任务执行完成")
+                    self.logger.info(f"设备任务创建完成")
 
             except Exception as e:
                 self.logger.error(f"运行任务时出错: {str(e)}")
