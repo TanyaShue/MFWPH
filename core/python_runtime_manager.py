@@ -26,9 +26,9 @@ class PythonRuntimeManager:
         self.runtime_base_dir = Path(runtime_base_dir)
         self.runtime_base_dir.mkdir(parents=True, exist_ok=True)
         self.logger = logger or self._get_default_logger()
-        print(f"\n🚀 Python运行时管理器初始化")
-        print(f"📁 基础目录: {self.runtime_base_dir.absolute()}")
-        print("-" * 60)
+        self.logger.info(f"\n🚀 Python运行时管理器初始化")
+        self.logger.info(f"📁 基础目录: {self.runtime_base_dir.absolute()}")
+        self.logger.info("-" * 60)
 
     def _get_default_logger(self):
         """获取默认logger"""
@@ -52,7 +52,7 @@ class PythonRuntimeManager:
             "PROGRESS": "⏳"
         }
         icon = icons.get(level, "▶")
-        print(f"[{timestamp}] {icon} {message}")
+        self.logger.info(f"[{timestamp}] {icon} {message}")
 
     def _download_with_progress(self, url: str, filepath: Path):
         """带进度条的下载函数"""
@@ -72,7 +72,7 @@ class PythonRuntimeManager:
             sys.stdout.flush()
 
             if percent >= 100:
-                print()  # 完成后换行
+                self.logger.info()  # 完成后换行
 
         urllib.request.urlretrieve(url, str(filepath), download_hook)
 
@@ -90,7 +90,7 @@ class PythonRuntimeManager:
             line = await process.stdout.readline()
             if not line:
                 break
-            print(f"  │ {line.decode().rstrip()}")
+            self.logger.info(f"  │ {line.decode().rstrip()}")
 
         await process.wait()
         return process.returncode
@@ -147,7 +147,7 @@ class PythonRuntimeManager:
 
     async def ensure_python_installed(self, version: str) -> bool:
         """确保Python版本已安装"""
-        print(f"\n{'=' * 60}")
+        self.logger.info(f"\n{'=' * 60}")
         self._print_progress(f"检查Python {version}安装状态...", "INFO")
 
         python_exe = self.get_python_executable(version)
@@ -186,11 +186,11 @@ class PythonRuntimeManager:
             stdout, stderr = await process.communicate()
             if process.returncode == 0:
                 components["pip"] = True
-                print(f"  ✓ pip: {stdout.decode().strip()}")
+                self.logger.info(f"  ✓ pip: {stdout.decode().strip()}")
             else:
-                print(f"  ✗ pip: 不可用")
+                self.logger.info(f"  ✗ pip: 不可用")
         except Exception as e:
-            print(f"  ✗ pip: 检查失败 - {e}")
+            self.logger.info(f"  ✗ pip: 检查失败 - {e}")
 
         # 检查virtualenv
         try:
@@ -202,11 +202,11 @@ class PythonRuntimeManager:
             stdout, stderr = await process.communicate()
             if process.returncode == 0:
                 components["virtualenv"] = True
-                print(f"  ✓ virtualenv: {stdout.decode().strip()}")
+                self.logger.info(f"  ✓ virtualenv: {stdout.decode().strip()}")
             else:
-                print(f"  ✗ virtualenv: 不可用")
+                self.logger.info(f"  ✗ virtualenv: 不可用")
         except Exception as e:
-            print(f"  ✗ virtualenv: 检查失败 - {e}")
+            self.logger.info(f"  ✗ virtualenv: 检查失败 - {e}")
 
         return all(components.values())
 
@@ -236,7 +236,7 @@ class PythonRuntimeManager:
                     return True
 
                 self._print_progress(f"开始下载Python {version}", "INFO")
-                print(f"  URL: {url}")
+                self.logger.info(f"  URL: {url}")
 
                 # 创建临时目录
                 temp_dir = python_dir.parent / f"temp_python_{version}"
@@ -259,7 +259,7 @@ class PythonRuntimeManager:
                 python_dir.mkdir(parents=True, exist_ok=True)
 
                 if filename.endswith(".zip"):
-                    print("  解压ZIP文件...")
+                    self.logger.info("  解压ZIP文件...")
                     with zipfile.ZipFile(temp_file, 'r') as zip_ref:
                         total_files = len(zip_ref.namelist())
                         for i, file in enumerate(zip_ref.namelist()):
@@ -268,10 +268,10 @@ class PythonRuntimeManager:
                                 percent = (i / total_files) * 100
                                 sys.stdout.write(f'\r  解压进度: {percent:.1f}%')
                                 sys.stdout.flush()
-                        print(f'\r  解压进度: 100.0%')
+                        self.logger.info(f'\r  解压进度: 100.0%')
 
                 elif filename.endswith(".tgz") or filename.endswith(".tar.gz"):
-                    print("  解压TAR.GZ文件...")
+                    self.logger.info("  解压TAR.GZ文件...")
                     with tarfile.open(temp_file, 'r:gz') as tar_ref:
                         tar_ref.extractall(python_dir)
 
@@ -312,7 +312,7 @@ class PythonRuntimeManager:
 
         for cmd, step_name in commands:
             self._print_progress(f"执行{step_name}步骤...", "PROGRESS")
-            print(f"  命令: {' '.join(cmd)}")
+            self.logger.info(f"  命令: {' '.join(cmd)}")
 
             returncode = await self._stream_subprocess_output(cmd, str(source_dir))
 
@@ -331,7 +331,7 @@ class PythonRuntimeManager:
         python_exe = self.get_python_executable(version)
         system = platform.system().lower()
 
-        print(f"\n{'=' * 60}")
+        self.logger.info(f"\n{'=' * 60}")
         self._print_progress("配置Python组件", "INFO")
 
         try:
@@ -433,7 +433,7 @@ class PythonRuntimeManager:
         python_exe = self.get_python_executable(version)
         venv_dir = self.get_venv_dir(version, resource_name)
 
-        print(f"\n{'=' * 60}")
+        self.logger.info(f"\n{'=' * 60}")
         self._print_progress(f"创建虚拟环境: {resource_name}", "INFO")
 
         if venv_dir.exists():
@@ -488,7 +488,7 @@ class PythonRuntimeManager:
         if not python_exe.exists():
             return info
 
-        print(f"\n{'=' * 60}")
+        self.logger.info(f"\n{'=' * 60}")
         self._print_progress(f"获取Python {version}详细信息...", "INFO")
 
         try:
@@ -501,7 +501,7 @@ class PythonRuntimeManager:
             stdout, stderr = await process.communicate()
             full_version = (stdout.decode() + stderr.decode()).strip()
             info["full_version"] = full_version
-            print(f"  版本: {full_version}")
+            self.logger.info(f"  版本: {full_version}")
 
             # 检查pip
             process = await asyncio.create_subprocess_exec(
@@ -515,9 +515,9 @@ class PythonRuntimeManager:
                 "version": stdout.decode().strip() if process.returncode == 0 else None
             }
             if process.returncode == 0:
-                print(f"  ✓ pip: {stdout.decode().strip()}")
+                self.logger.info(f"  ✓ pip: {stdout.decode().strip()}")
             else:
-                print(f"  ✗ pip: 不可用")
+                self.logger.info(f"  ✗ pip: 不可用")
 
             # 检查virtualenv
             process = await asyncio.create_subprocess_exec(
@@ -531,9 +531,9 @@ class PythonRuntimeManager:
                 "version": stdout.decode().strip() if process.returncode == 0 else None
             }
             if process.returncode == 0:
-                print(f"  ✓ virtualenv: {stdout.decode().strip()}")
+                self.logger.info(f"  ✓ virtualenv: {stdout.decode().strip()}")
             else:
-                print(f"  ✗ virtualenv: 不可用")
+                self.logger.info(f"  ✗ virtualenv: 不可用")
 
         except Exception as e:
             info["error"] = str(e)
