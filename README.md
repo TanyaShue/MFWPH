@@ -25,23 +25,19 @@
 ## 简介
 
 **MFWPH**（MaaFramework with Plugin Host）是基于 [MaaFramework](https://github.com/MaaXYZ/MaaFramework) 构建的一款资源脚本加载器与统一 UI 启动平台。  
-该平台致力于帮助用户集中管理各类自动化资源脚本（例如 MaaYYs 等），以简化使用流程并提升脚本管理效率。  
-MFWPH 提供直观的图形化界面，使非开发人员也能轻松添加、管理和运行自动化任务。
+能更方便的帮你管理maafw的资源文件
 
 ---
 
 ## 功能特点
 
-- 📦 **资源脚本插件化加载**  
-  支持自定义行为脚本加载，无需修改主程序代码即可接入更多自动化工具。
-
-- 🧩 **多脚本共存运行**  
+- **多脚本多资源共存运行**  
   可同时加载并管理多个自动化项目，在左侧导航栏中自动展示所有已添加的资源。
 
-- 🖥️ **图形化界面**  
+- **图形化界面**  
   基于 Qt 构建的现代化界面设计，直观易用。
 
-- 🔄 **动态资源更新**  
+- **动态资源更新**  
   当在资源目录下添加、删除或更新资源。
 
 ---
@@ -111,7 +107,8 @@ YourResource/
 ├── model/                     # 模型文件目录（如 AI 模型、识图模型等）
 ├── pipeline/                  # 自动化流程主逻辑代码
 ├── image/                     # 脚本使用的图像资源（截图、素材等）
-├── custom_dir/                # 自定义扩展目录
+├── agent/                     # 自定义扩展目录
+│   ├── agent.py               # 自定义动作模块（如点击、滑动等逻辑）
 │   ├── custom_action/         # 自定义动作模块（如点击、滑动等逻辑）
 │   └── custom_recognition/    # 自定义图像识别模块（如自定义 OCR、特征匹配等）
 └── ...                        # 可根据需要添加的其他目录或文件（如文档、日志等）
@@ -121,7 +118,7 @@ YourResource/
 
 可参考 [MaaYYs 的 resource_config.json](https://github.com/TanyaShue/MaaYYs/blob/main/resource_config.json) 文件。  
 该文件用于定义资源名称、描述、图标路径以及其他元数据信息，使得平台在加载时能正确展示资源信息。
-
+可查看具体文档[resource_config_zh.md](docs/resource_config_zh.md)[doc/]以及示例文件[resource_config.example.json](docs/example/resource_config.example.json)
 ---
 
 ## 常见问题

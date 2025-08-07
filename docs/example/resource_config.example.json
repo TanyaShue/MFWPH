@@ -1,0 +1,38 @@
+{
+  "resource_name": "demo_resource",
+  "resource_version": "1.0.0",
+  "resource_author": "John Doe",
+  "resource_description": "示例资源描述",
+  "resource_update_service_id": "update_service_001",
+  "resource_rep_url": "https://example.com/repo.git",
+  "resource_icon": "icon.png",
+  "agent": {
+    "type": "python",
+    "version": "3.12",
+    "agent_path": "agent.py",
+    "use_venv": true
+  },
+  "resource_tasks": [
+    {
+      "task_name": "task1",
+      "task_entry": "main.py",
+      "option": ["enable_logging"]
+    }
+  ],
+  "options": [
+    {
+      "name": "enable_logging",
+      "type": "boole",
+      "default": true
+    },
+    {
+      "name": "run_mode",
+      "type": "select",
+      "default": "fast",
+      "choices": [
+        {"name": "Fast Mode", "value": "fast"},
+        {"name": "Safe Mode", "value": "safe"}
+      ]
+    }
+  ]
+}
