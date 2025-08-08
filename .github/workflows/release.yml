@@ -5,86 +5,55 @@ on:
     tags:
       - 'v*'
   workflow_dispatch:
-    inputs:
-      test_build:
-        description: 'Test build without release'
-        required: false
-        default: 'false'
 
 permissions:
   contents: write
 
 jobs:
-  # 构建矩阵配置
   build:
-    name: Build ${{ matrix.os }} ${{ matrix.arch }}
+    name: Build ${{ matrix.os }}
     runs-on: ${{ matrix.runner }}
 
     strategy:
       fail-fast: false
       matrix:
         include:
-          # Windows 构建
-          - os: windows
-            arch: x64
+          # Windows x64
+          - os: windows-x64
             runner: windows-latest
-            python-arch: x64
 
-          - os: windows
-            arch: x86
-            runner: windows-latest
-            python-arch: x86
+          # macOS Intel
+          - os: macos-x64
+            runner: macos-13
 
-          # macOS 构建
-          - os: macos
-            arch: x64
-            runner: macos-13  # Intel Mac
-            python-arch: x64
+          # macOS Apple Silicon
+          - os: macos-arm64
+            runner: macos-14
 
-          - os: macos
-            arch: arm64
-            runner: macos-14  # Apple Silicon
-            python-arch: arm64
-
-          # Linux 构建
-          - os: linux
-            arch: x64
+          # Linux x64
+          - os: linux-x64
             runner: ubuntu-latest
-            python-arch: x64
-
-          - os: linux
-            arch: arm64
-            runner: ubuntu-latest  # 将使用 QEMU 模拟
-            python-arch: x64  # 主机架构
 
     steps:
       - name: Checkout code
         uses: actions/checkout@v4
         with:
-          submodules: false
+          submodules: true
           fetch-depth: 0
 
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
           python-version: '3.12'
-          architecture: ${{ matrix.python-arch }}
-
-      # Linux ARM64 需要设置 QEMU
-      - name: Set up QEMU
-        if: matrix.os == 'linux' && matrix.arch == 'arm64'
-        uses: docker/setup-qemu-action@v3
-        with:
-          platforms: arm64
 
       - name: Install dependencies
         run: |
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      # Windows 特定步骤
+      # Windows特定步骤 - 复制DLL文件
       - name: Copy DLL files (Windows)
-        if: matrix.os == 'windows'
+        if: runner.os == 'Windows'
         shell: pwsh
         run: |
           if (Test-Path -Path "${{ github.workspace }}\DLL") {
@@ -97,48 +66,16 @@ jobs:
             Write-Host "DLL folder not found."
           }
 
-      # macOS 特定步骤 - 安装证书（如果有）
-      - name: Install Apple Certificate
-        if: matrix.os == 'macos' && env.APPLE_CERTIFICATE != ''
-        env:
-          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
-          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
-        run: |
-          # 创建临时钥匙串
-          KEYCHAIN_PATH=$RUNNER_TEMP/app-signing.keychain-db
-          KEYCHAIN_PASSWORD=$(openssl rand -base64 32)
-          
-          # 解码证书
-          echo "$APPLE_CERTIFICATE" | base64 --decode > certificate.p12
-          
-          # 创建并配置钥匙串
-          security create-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          security set-keychain-settings -lut 21600 "$KEYCHAIN_PATH"
-          security unlock-keychain -p "$KEYCHAIN_PASSWORD" "$KEYCHAIN_PATH"
-          
-          # 导入证书
-          security import certificate.p12 -P "$APPLE_CERTIFICATE_PASSWORD" \
-            -A -t cert -f pkcs12 -k "$KEYCHAIN_PATH"
-          security list-keychain -d user -s "$KEYCHAIN_PATH"
-          
-          # 清理
-          rm certificate.p12
-
       # 构建应用
       - name: Build application
         id: build
-        run: |
-          python build.py --platform ${{ matrix.os }}-${{ matrix.arch }}
-        env:
-          GITHUB_REF: ${{ github.ref }}
-
-      # 获取构建产物信息
-      - name: Get build artifacts info
-        id: artifacts
         shell: bash
         run: |
+          # 运行构建脚本
+          python build.py --platform ${{ matrix.os }}
+          
           # 查找生成的归档文件
-          if [ "${{ matrix.os }}" = "windows" ]; then
+          if [[ "${{ runner.os }}" == "Windows" ]]; then
             ARCHIVE=$(find ./dist -name "*.zip" -type f | head -1)
           else
             ARCHIVE=$(find ./dist -name "*.tar.gz" -type f | head -1)
@@ -149,55 +86,27 @@ jobs:
             exit 1
           fi
           
-          ARCHIVE_NAME=$(basename "$ARCHIVE")
-          echo "archive_path=$ARCHIVE" >> $GITHUB_OUTPUT
+          # 重命名为标准格式
+          ARCHIVE_NAME="MFWPH_${{ matrix.os }}$([[ '${{ runner.os }}' == 'Windows' ]] && echo '.zip' || echo '.tar.gz')"
+          mv "$ARCHIVE" "./dist/$ARCHIVE_NAME"
+          
+          echo "archive_path=./dist/$ARCHIVE_NAME" >> $GITHUB_OUTPUT
           echo "archive_name=$ARCHIVE_NAME" >> $GITHUB_OUTPUT
           echo "Build completed: $ARCHIVE_NAME"
-
-      # macOS 代码签名和公证
-      - name: Code signing and notarization (macOS)
-        if: matrix.os == 'macos' && env.APPLE_ID != ''
-        env:
-          APPLE_ID: ${{ secrets.APPLE_ID }}
-          APPLE_ID_PASSWORD: ${{ secrets.APPLE_ID_PASSWORD }}
-          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
-        run: |
-          # 解压归档
-          tar -xzf ${{ steps.artifacts.outputs.archive_path }} -C ./dist/temp
-          
-          # 签名
-          codesign --deep --force --verify --verbose \
-            --sign "$APPLE_TEAM_ID" \
-            --options runtime \
-            ./dist/temp/MFWPH
-          
-          # 重新打包
-          tar -czf ${{ steps.artifacts.outputs.archive_path }} -C ./dist/temp .
-          
-          # 公证
-          xcrun notarytool submit ${{ steps.artifacts.outputs.archive_path }} \
-            --apple-id "$APPLE_ID" \
-            --password "$APPLE_ID_PASSWORD" \
-            --team-id "$APPLE_TEAM_ID" \
-            --wait
-          
-          # 清理
-          rm -rf ./dist/temp
 
       # 上传构建产物
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
-          name: ${{ matrix.os }}-${{ matrix.arch }}-build
-          path: ${{ steps.artifacts.outputs.archive_path }}
+          name: ${{ matrix.os }}-build
+          path: ${{ steps.build.outputs.archive_path }}
           retention-days: 7
 
-  # 创建发布
   release:
     name: Create Release
     needs: build
     runs-on: ubuntu-latest
-    if: startsWith(github.ref, 'refs/tags/') && github.event.inputs.test_build != 'true'
+    if: startsWith(github.ref, 'refs/tags/')
 
     steps:
       - name: Checkout code
@@ -237,9 +146,6 @@ jobs:
             echo "$CHANGELOG"
             echo 'EOF'
           } >> $GITHUB_OUTPUT
-          
-          echo "Generated changelog:"
-          echo "$CHANGELOG"
 
       - name: Prepare release files
         id: prepare
@@ -252,11 +158,6 @@ jobs:
           # 列出所有文件
           echo "Release files:"
           ls -la ./release_files/
-          
-          # 生成文件列表供发布使用
-          FILES=$(find ./release_files -type f -printf "%p,")
-          FILES=${FILES%,}  # 移除最后的逗号
-          echo "files=$FILES" >> $GITHUB_OUTPUT
 
       - name: Create GitHub Release
         uses: ncipollo/release-action@v1
@@ -265,41 +166,36 @@ jobs:
           tag: ${{ github.ref_name }}
           name: Release ${{ github.ref_name }}
           body: |
-            ## 🎉 版本 ${{ github.ref_name }} 发布
-
-            ### 📋 更新日志
+            ## 版本 ${{ github.ref_name }} 更新日志
 
             ${{ steps.changelog.outputs.CHANGELOG }}
 
-            ### 📦 下载
-
-            | 平台 | 架构 | 下载链接 |
-            |------|------|----------|
-            | Windows | x64 | [MFWPH-windows-x64.zip] |
-            | Windows | x86 | [MFWPH-windows-x86.zip] |
-            | macOS | Intel | [MFWPH-macos-x64.tar.gz] |
-            | macOS | Apple Silicon | [MFWPH-macos-arm64.tar.gz] |
-            | Linux | x64 | [MFWPH-linux-x64.tar.gz] |
-            | Linux | ARM64 | [MFWPH-linux-arm64.tar.gz] |
-
-            ### 📝 安装说明
-
+            ---
+            
+            ### 下载链接
+            
+            | 平台 | 下载 |
+            |------|------|
+            | Windows x64 | MFWPH_windows-x64.zip |
+            | macOS Intel | MFWPH_macos-x64.tar.gz |
+            | macOS Apple Silicon | MFWPH_macos-arm64.tar.gz |
+            | Linux x64 | MFWPH_linux-x64.tar.gz |
+            
+            ### 安装说明
+            
             **Windows:**
-            1. 下载对应架构的 ZIP 文件
-            2. 解压到目标文件夹
-            3. 运行 `MFWPH.exe`
-
+            1. 下载并解压 ZIP 文件
+            2. 运行 `MFWPH.exe`
+            
             **macOS:**
-            1. 下载对应架构的 TAR.GZ 文件
-            2. 解压：`tar -xzf MFWPH-macos-*.tar.gz`
-            3. 运行：`./MFWPH`
-            4. 首次运行可能需要在系统偏好设置中允许运行
-
+            1. 下载并解压 TAR.GZ 文件：`tar -xzf MFWPH_macos-*.tar.gz`
+            2. 运行：`./MFWPH`
+            3. 首次运行可能需要在系统偏好设置中允许
+            
             **Linux:**
-            1. 下载对应架构的 TAR.GZ 文件
-            2. 解压：`tar -xzf MFWPH-linux-*.tar.gz`
-            3. 添加执行权限：`chmod +x MFWPH`
-            4. 运行：`./MFWPH`
+            1. 下载并解压 TAR.GZ 文件：`tar -xzf MFWPH_linux-x64.tar.gz`
+            2. 添加执行权限：`chmod +x MFWPH`
+            3. 运行：`./MFWPH`
 
           draft: false
           prerelease: false
@@ -307,9 +203,8 @@ jobs:
           artifactContentType: application/octet-stream
           artifactErrorsFailBuild: true
 
-  # 清理工作流
   cleanup:
-    name: Cleanup old artifacts
+    name: Cleanup
     needs: release
     runs-on: ubuntu-latest
     if: always()
@@ -320,9 +215,7 @@ jobs:
         with:
           name: |
             windows-x64-build
-            windows-x86-build
             macos-x64-build
             macos-arm64-build
             linux-x64-build
-            linux-arm64-build
           failOnError: false
