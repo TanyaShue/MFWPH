@@ -11,7 +11,7 @@ import tempfile
 import zipfile
 import tarfile
 from pathlib import Path
-from typing import List, Optional, Dict, Tuple
+from typing import List, Optional
 
 import PyInstaller.__main__
 import semver
@@ -20,11 +20,9 @@ import semver
 APP_NAME = "MFWPH"
 UPDATER_NAME = "updater"
 DEFAULT_VERSION = "0.0.1"
-DEFAULT_EXCLUSIONS = [
-    '.git', '.github', '.gitignore', '.gitmodules', '.nicegui',
-    '.idea', 'config', 'debug', 'logs', 'pending_updates', 'resource',
-    '__pycache__', '*.pyc', '.DS_Store', 'Thumbs.db'
-]
+DEFAULT_EXCLUSIONS = ['.git', '.github', '.gitignore', '.gitmodules', '.nicegui', '.idea',
+                      'config', 'debug', 'logs', 'pending_updates', 'resource', '__pycache__',
+                      '*.pyc', '*.pyo', '.DS_Store', 'Thumbs.db', 'build', 'dist']
 
 # 配置日志
 logging.basicConfig(
@@ -35,54 +33,12 @@ logging.basicConfig(
 logger = logging.getLogger(__name__)
 
 
-class Platform:
-    """平台检测和配置"""
-
-    @staticmethod
-    def get_current() -> Dict[str, str]:
-        """获取当前平台信息"""
-        system = platform.system().lower()
-        machine = platform.machine().lower()
-
-        # 标准化架构名称
-        arch_map = {
-            'x86_64': 'x64',
-            'amd64': 'x64',
-            'arm64': 'arm64',
-            'aarch64': 'arm64',
-            'x86': 'x86',
-            'i386': 'x86',
-            'i686': 'x86',
-        }
-
-        arch = arch_map.get(machine, machine)
-
-        return {
-            'system': system,
-            'arch': arch,
-            'platform_tag': f"{system}-{arch}"
-        }
-
-    @staticmethod
-    def get_executable_extension() -> str:
-        """获取可执行文件扩展名"""
-        system = platform.system().lower()
-        return '.exe' if system == 'windows' else ''
-
-    @staticmethod
-    def get_archive_extension() -> str:
-        """获取归档文件扩展名"""
-        system = platform.system().lower()
-        return '.zip' if system == 'windows' else '.tar.gz'
-
-
 class BuildContext:
     """构建上下文管理器，处理临时文件"""
 
     def __init__(self, keep_files: bool = False):
         self.keep_files = keep_files
         self.temp_files = []
-        self.platform_info = Platform.get_current()
 
     def add_temp_file(self, file_path: str) -> str:
         self.temp_files.append(file_path)
@@ -102,6 +58,27 @@ class BuildContext:
                         logger.warning(f"删除临时文件失败 {file_path}: {str(e)}")
 
 
+def get_platform_info():
+    """获取平台信息"""
+    system = platform.system().lower()
+    machine = platform.machine().lower()
+
+    # 标准化系统名称
+    if system == 'darwin':
+        system = 'macos'
+
+    # 标准化架构名称
+    arch_map = {
+        'x86_64': 'x64',
+        'amd64': 'x64',
+        'arm64': 'arm64',
+        'aarch64': 'arm64',
+    }
+    arch = arch_map.get(machine, machine)
+
+    return system, arch
+
+
 def get_version() -> str:
     """获取版本号"""
     # 从GitHub Actions环境变量获取
@@ -117,10 +94,8 @@ def get_version() -> str:
 
     # 从git命令获取
     try:
-        result = subprocess.run(
-            ['git', 'describe', '--tags', '--abbrev=0'],
-            capture_output=True, text=True, check=False
-        )
+        result = subprocess.run(['git', 'describe', '--tags', '--abbrev=0'],
+                                capture_output=True, text=True, check=False)
         if result.returncode == 0 and result.stdout.strip().startswith('v'):
             version = result.stdout.strip()[1:]
             try:
@@ -136,7 +111,7 @@ def get_version() -> str:
     return DEFAULT_VERSION
 
 
-def find_site_package_path(target: str) -> Optional[str]:
+def find_site_package_path(target: str) -> str:
     """查找site-packages中的路径"""
     for path in site.getsitepackages():
         target_path = os.path.join(path, target)
@@ -144,38 +119,43 @@ def find_site_package_path(target: str) -> Optional[str]:
             logger.info(f"找到 {target} 在: {target_path}")
             return target_path
 
-    # 尝试用户site-packages
-    user_path = os.path.join(site.getusersitepackages(), target)
-    if os.path.exists(user_path):
-        logger.info(f"找到 {target} 在用户目录: {user_path}")
-        return user_path
-
-    logger.warning(f"未找到 {target} 在site-packages中")
-    return None
+    # 创建后备路径
+    fallback_path = os.path.join(os.getcwd(), f"{target.replace('/', '_')}_fallback")
+    os.makedirs(fallback_path, exist_ok=True)
+    logger.info(f"创建后备路径: {fallback_path}")
+    return fallback_path
 
 
-def create_version_info_files(
-        version: str,
-        build_time: str,
-        ctx: BuildContext,
-        app_name: str = APP_NAME,
-        create_version_txt: bool = True
-) -> Tuple[Optional[str], Optional[str]]:
+def create_file_with_content(content: str, suffix: str = '.txt') -> str:
+    """创建包含指定内容的临时文件"""
+    with tempfile.NamedTemporaryFile(mode='w', suffix=suffix, delete=False, encoding='utf-8') as f:
+        f.write(content)
+        return f.name
+
+
+def create_version_info_files(version: str, build_time: str, ctx: BuildContext, app_name: str = APP_NAME,
+                              create_version_txt: bool = True, platform_name: str = None):
     """创建版本相关的信息文件"""
     version_file = None
-    win_version_file = None
 
-    # 创建通用版本信息文件
+    # 只为主程序创建版本信息文件
     if create_version_txt:
-        version_content = f"version={version}\nbuild_time={build_time}\nplatform={ctx.platform_info['platform_tag']}\n"
+        system, arch = get_platform_info()
+        if platform_name:
+            platform_info = platform_name
+        else:
+            platform_info = f"{system}-{arch}"
+
+        version_content = f"version={version}\nbuild_time={build_time}\nplatform={platform_info}\n"
         version_file = os.path.join(tempfile.gettempdir(), f"versioninfo_{app_name}.txt")
         with open(version_file, 'w', encoding='utf-8') as f:
             f.write(version_content)
         ctx.add_temp_file(version_file)
         logger.info(f"创建版本信息文件: {version_file}")
 
-    # Windows平台特定的版本信息
-    if ctx.platform_info['system'] == 'windows':
+    # Windows平台需要文件版本信息
+    win_version_file = None
+    if sys.platform == 'win32':
         ver_info = semver.VersionInfo.parse(version)
         version_tuple = (ver_info.major, ver_info.minor, ver_info.patch, 0)
 
@@ -209,88 +189,65 @@ VSVersionInfo(
   ]
 )
 """
-        with tempfile.NamedTemporaryFile(mode='w', suffix='.txt', delete=False, encoding='utf-8') as f:
-            f.write(win_version_content)
-            win_version_file = f.name
+        win_version_file = create_file_with_content(win_version_content)
         ctx.add_temp_file(win_version_file)
 
     return version_file, win_version_file
 
 
-def get_pyinstaller_args(
-        app_name: str,
-        entry_point: str,
-        version_file: Optional[str],
-        win_version_file: Optional[str],
-        is_windowed: bool = True,
-        platform_info: Dict[str, str] = None
-) -> List[str]:
-    """构建PyInstaller参数"""
-    if platform_info is None:
-        platform_info = Platform.get_current()
+def run_pyinstaller(version_file: str, win_version_file: str):
+    """运行PyInstaller构建主程序"""
+    maa_bin_path = find_site_package_path('maa/bin')
+    maa_agent_path = find_site_package_path('MaaAgentBinary')
 
     args = [
-        entry_point,
+        'main.py',
         '--onefile',
-        f'--name={app_name}',
+        f'--name={APP_NAME}',
         '--clean',
     ]
 
-    # 平台特定的参数
-    if platform_info['system'] == 'windows':
-        if is_windowed:
-            args.append('--windowed')
-        else:
-            args.append('--console')
-        args.append('--uac-admin')
+    # 平台特定参数
+    if sys.platform == 'win32':
+        args.extend(['--windowed', '--uac-admin'])
         if win_version_file:
             args.append(f'--version-file={win_version_file}')
-    elif platform_info['system'] == 'darwin':  # macOS
-        if is_windowed:
-            args.append('--windowed')
-        # macOS特定选项
-        args.append('--osx-bundle-identifier=com.mfwph.app')
-    else:  # Linux和其他Unix系统
-        if not is_windowed:
-            args.append('--console')
+    elif sys.platform == 'darwin':
+        args.append('--windowed')
 
     # 添加数据文件
+    args.extend([
+        f'--add-data={maa_bin_path}{os.pathsep}maa/bin',
+        f'--add-data={maa_agent_path}{os.pathsep}MaaAgentBinary',
+    ])
+
     if version_file:
         args.append(f'--add-data={version_file}{os.pathsep}.')
 
-    # 查找并添加依赖库
-    maa_bin_path = find_site_package_path('maa/bin')
-    if maa_bin_path:
-        args.append(f'--add-data={maa_bin_path}{os.pathsep}maa/bin')
-
-    maa_agent_path = find_site_package_path('MaaAgentBinary')
-    if maa_agent_path:
-        args.append(f'--add-data={maa_agent_path}{os.pathsep}MaaAgentBinary')
-
-    return args
-
-
-def run_pyinstaller(
-        app_name: str,
-        entry_point: str,
-        version_file: Optional[str],
-        win_version_file: Optional[str],
-        is_windowed: bool = True,
-        platform_info: Dict[str, str] = None
-):
-    """运行PyInstaller构建"""
-    args = get_pyinstaller_args(
-        app_name, entry_point, version_file,
-        win_version_file, is_windowed, platform_info
-    )
-
-    logger.info(f"正在运行PyInstaller构建 {app_name}...")
-    logger.info(f"入口点: {entry_point}")
-    if version_file:
-        logger.info(f"版本信息文件: {version_file}")
-
+    logger.info("正在运行PyInstaller构建主程序...")
+    logger.info(f"版本信息文件: {version_file}")
     PyInstaller.__main__.run(args)
-    logger.info(f"PyInstaller构建 {app_name} 成功")
+    logger.info("PyInstaller构建主程序成功")
+
+
+def run_pyinstaller_updater(win_version_file: str):
+    """运行PyInstaller构建更新程序"""
+    args = [
+        'update.py',
+        '--onefile',
+        '--console',
+        f'--name={UPDATER_NAME}',
+        '--clean',
+    ]
+
+    if sys.platform == 'win32':
+        args.append('--uac-admin')
+        if win_version_file:
+            args.append(f'--version-file={win_version_file}')
+
+    logger.info("正在运行PyInstaller构建更新程序...")
+    PyInstaller.__main__.run(args)
+    logger.info("PyInstaller构建更新程序成功")
 
 
 def copy_assets(dist_dir: str):
@@ -307,97 +264,122 @@ def copy_assets(dist_dir: str):
         logger.warning(f"assets文件夹不存在: {src}")
 
 
-def create_archive(
-        dist_dir: str,
-        archive_path: str,
-        exclusions: List[str],
-        include_updater: bool = True,
-        platform_info: Dict[str, str] = None
-):
+def create_archive(dist_dir: str, archive_path: str, exclusions: List[str], include_updater: bool = True):
     """创建归档包（ZIP或TAR.GZ）"""
-    if platform_info is None:
-        platform_info = Platform.get_current()
+    system, _ = get_platform_info()
 
-    exe_ext = Platform.get_executable_extension()
-
-    if platform_info['system'] == 'windows':
-        # Windows使用ZIP
-        with zipfile.ZipFile(archive_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-            # 添加主程序
-            main_exe = os.path.join(dist_dir, f"{APP_NAME}{exe_ext}")
-            if os.path.exists(main_exe):
-                zipf.write(main_exe, f"{APP_NAME}{exe_ext}")
-                logger.info(f"添加主程序到ZIP: {APP_NAME}{exe_ext}")
-
-            # 添加更新程序
-            if include_updater:
-                updater_exe = os.path.join(dist_dir, f"{UPDATER_NAME}{exe_ext}")
-                if os.path.exists(updater_exe):
-                    zipf.write(updater_exe, f"{UPDATER_NAME}{exe_ext}")
-                    logger.info(f"添加更新程序到ZIP: {UPDATER_NAME}{exe_ext}")
-
-            # 添加其他文件
-            _add_files_to_archive(zipf, dist_dir, exclusions, exe_ext, 'zip')
+    if system == 'windows':
+        create_zip_archive(dist_dir, archive_path, exclusions, include_updater)
     else:
-        # Unix系统使用TAR.GZ
-        with tarfile.open(archive_path, 'w:gz') as tarf:
-            # 添加主程序
-            main_exe = os.path.join(dist_dir, f"{APP_NAME}{exe_ext}")
-            if os.path.exists(main_exe):
-                # 设置可执行权限
-                info = tarf.gettarinfo(main_exe, f"{APP_NAME}{exe_ext}")
-                info.mode = 0o755
-                with open(main_exe, 'rb') as f:
-                    tarf.addfile(info, f)
-                logger.info(f"添加主程序到TAR: {APP_NAME}{exe_ext}")
-
-            # 添加更新程序
-            if include_updater:
-                updater_exe = os.path.join(dist_dir, f"{UPDATER_NAME}{exe_ext}")
-                if os.path.exists(updater_exe):
-                    info = tarf.gettarinfo(updater_exe, f"{UPDATER_NAME}{exe_ext}")
-                    info.mode = 0o755
-                    with open(updater_exe, 'rb') as f:
-                        tarf.addfile(info, f)
-                    logger.info(f"添加更新程序到TAR: {UPDATER_NAME}{exe_ext}")
-
-            # 添加其他文件
-            _add_files_to_archive(tarf, dist_dir, exclusions, exe_ext, 'tar')
-
-    logger.info(f"成功创建归档包: {archive_path}")
+        create_tar_archive(dist_dir, archive_path, exclusions, include_updater)
 
 
-def _add_files_to_archive(archive, dist_dir: str, exclusions: List[str], exe_ext: str, archive_type: str):
-    """辅助函数：添加文件到归档"""
+def create_zip_archive(dist_dir: str, zip_path: str, exclusions: List[str], include_updater: bool = True):
+    """创建ZIP包（Windows）"""
+    logger.info(f"开始创建ZIP包: {zip_path}")
+
+    # 先收集要添加的文件列表
+    files_to_add = []
+
+    # 添加主程序
+    main_exe = os.path.join(dist_dir, f"{APP_NAME}.exe")
+    if os.path.exists(main_exe):
+        files_to_add.append((main_exe, f"{APP_NAME}.exe"))
+        logger.info(f"准备添加: {APP_NAME}.exe")
+
+    # 添加更新程序
+    if include_updater:
+        updater_exe = os.path.join(dist_dir, f"{UPDATER_NAME}.exe")
+        if os.path.exists(updater_exe):
+            files_to_add.append((updater_exe, f"{UPDATER_NAME}.exe"))
+            logger.info(f"准备添加: {UPDATER_NAME}.exe")
+
+    # 收集其他文件
     for root, dirs, files in os.walk(dist_dir):
-        # 排除指定目录
-        dirs[:] = [d for d in dirs if d not in exclusions]
+        # 排除不需要的目录
+        dirs[:] = [d for d in dirs if not any(pattern in d for pattern in exclusions)]
+
+        rel_root = os.path.relpath(root, dist_dir)
+        if rel_root == '.':
+            rel_root = ''
 
         for file in files:
-            # 跳过可执行文件（已经单独处理）
-            if file.endswith(exe_ext) and file.startswith((APP_NAME, UPDATER_NAME)):
+            # 跳过exe文件和排除的文件
+            if file.endswith('.exe'):
                 continue
-
-            if file in exclusions:
+            if any(pattern in file for pattern in exclusions):
+                continue
+            if file == os.path.basename(zip_path):
                 continue
 
             file_path = os.path.join(root, file)
-            arcname = os.path.relpath(file_path, dist_dir)
+            if rel_root:
+                arcname = os.path.join(rel_root, file)
+            else:
+                arcname = file
+            files_to_add.append((file_path, arcname))
 
-            if archive_type == 'zip':
-                archive.write(file_path, arcname)
-            else:  # tar
-                archive.add(file_path, arcname)
+    # 创建ZIP文件
+    logger.info(f"创建ZIP文件，共 {len(files_to_add)} 个文件")
+    with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+        for file_path, arcname in files_to_add:
+            logger.debug(f"添加到ZIP: {arcname}")
+            zipf.write(file_path, arcname)
+
+    logger.info(f"成功创建ZIP包: {zip_path}")
+
+
+def create_tar_archive(dist_dir: str, tar_path: str, exclusions: List[str], include_updater: bool = True):
+    """创建TAR.GZ包（macOS/Linux）"""
+    logger.info(f"开始创建TAR.GZ包: {tar_path}")
+
+    with tarfile.open(tar_path, 'w:gz') as tarf:
+        # 添加主程序
+        main_exe = os.path.join(dist_dir, APP_NAME)
+        if os.path.exists(main_exe):
+            info = tarf.gettarinfo(main_exe, APP_NAME)
+            info.mode = 0o755  # 设置可执行权限
+            with open(main_exe, 'rb') as f:
+                tarf.addfile(info, f)
+            logger.info(f"添加主程序到TAR: {APP_NAME}")
+
+        # 添加更新程序
+        if include_updater:
+            updater_exe = os.path.join(dist_dir, UPDATER_NAME)
+            if os.path.exists(updater_exe):
+                info = tarf.gettarinfo(updater_exe, UPDATER_NAME)
+                info.mode = 0o755
+                with open(updater_exe, 'rb') as f:
+                    tarf.addfile(info, f)
+                logger.info(f"添加更新程序到TAR: {UPDATER_NAME}")
+
+        # 添加其他文件
+        for root, dirs, files in os.walk(dist_dir):
+            # 排除不需要的目录
+            dirs[:] = [d for d in dirs if not any(pattern in d for pattern in exclusions)]
+
+            for file in files:
+                # 跳过可执行文件和排除的文件
+                if file in [APP_NAME, UPDATER_NAME]:
+                    continue
+                if any(pattern in file for pattern in exclusions):
+                    continue
+
+                file_path = os.path.join(root, file)
+                arcname = os.path.relpath(file_path, dist_dir)
+                tarf.add(file_path, arcname)
+
+    logger.info(f"成功创建TAR.GZ包: {tar_path}")
 
 
 def main():
-    parser = argparse.ArgumentParser(description=f'Cross-platform build script for {APP_NAME}')
+    parser = argparse.ArgumentParser(description=f'Build script for {APP_NAME}')
     parser.add_argument('--keep-files', '-k', action='store_true', help='Keep intermediate files')
     parser.add_argument('--archive-name', '-a', help='Custom name for the output archive file')
     parser.add_argument('--exclude', '-e', nargs='+', default=DEFAULT_EXCLUSIONS, help='Files to exclude')
     parser.add_argument('--verbose', '-v', action='store_true', help='Enable verbose logging')
     parser.add_argument('--skip-updater', action='store_true', help='Skip building updater')
-    parser.add_argument('--platform', help='Override platform detection (format: system-arch)')
+    parser.add_argument('--platform', help='Target platform (e.g., windows-x64, macos-arm64, linux-x64)')
     args = parser.parse_args()
 
     if args.verbose:
@@ -410,71 +392,60 @@ def main():
         # 获取版本号
         version = get_version()
 
-        # 设置平台信息
+        # 获取平台信息
+        system, arch = get_platform_info()
         if args.platform:
-            parts = args.platform.split('-')
-            platform_info = {
-                'system': parts[0],
-                'arch': parts[1] if len(parts) > 1 else 'x64',
-                'platform_tag': args.platform
-            }
+            platform_name = args.platform
         else:
-            platform_info = Platform.get_current()
+            platform_name = f"{system}-{arch}"
 
-        logger.info(f"构建平台: {platform_info['platform_tag']}")
+        logger.info(f"构建平台: {platform_name}")
 
         # 设置目录和文件名
         dist_dir = os.path.join(os.getcwd(), 'dist')
         Path(dist_dir).mkdir(exist_ok=True)
 
         build_time = start_time.strftime("%Y%m%d_%H%M%S")
-        archive_ext = Platform.get_archive_extension()
+
+        # 根据平台选择归档格式
+        if system == 'windows':
+            archive_ext = '.zip'
+        else:
+            archive_ext = '.tar.gz'
 
         if args.archive_name:
             archive_name = args.archive_name
         else:
-            archive_name = f"{APP_NAME}_v{version}_{platform_info['platform_tag']}_{build_time}"
+            archive_name = f"{APP_NAME}_v{version}_{platform_name}_{build_time}"
 
         archive_path = os.path.join(dist_dir, f"{archive_name}{archive_ext}")
 
         with BuildContext(args.keep_files) as ctx:
-            ctx.platform_info = platform_info
-
             # 创建主程序版本信息文件
             version_file, win_version_file = create_version_info_files(
-                version, build_time, ctx, APP_NAME, create_version_txt=True
+                version, build_time, ctx, APP_NAME, create_version_txt=True, platform_name=platform_name
             )
 
-            # 构建主程序
-            run_pyinstaller(
-                APP_NAME, 'main.py', version_file, win_version_file,
-                is_windowed=True, platform_info=platform_info
-            )
+            # 运行PyInstaller构建主程序
+            run_pyinstaller(version_file, win_version_file)
 
             # 构建更新程序
             if not args.skip_updater:
                 _, updater_win_version_file = create_version_info_files(
-                    version, build_time, ctx, UPDATER_NAME, create_version_txt=False
+                    version, build_time, ctx, UPDATER_NAME, create_version_txt=False, platform_name=platform_name
                 )
-                run_pyinstaller(
-                    UPDATER_NAME, 'update.py', None, updater_win_version_file,
-                    is_windowed=False, platform_info=platform_info
-                )
+                run_pyinstaller_updater(updater_win_version_file)
 
             # 复制assets并创建归档包
             copy_assets(dist_dir)
-            create_archive(
-                dist_dir, archive_path, args.exclude,
-                include_updater=not args.skip_updater,
-                platform_info=platform_info
-            )
+            create_archive(dist_dir, archive_path, args.exclude, include_updater=not args.skip_updater)
 
         # 设置GitHub Actions输出
         if 'GITHUB_OUTPUT' in os.environ:
             with open(os.environ['GITHUB_OUTPUT'], 'a') as f:
                 f.write(f"archive_file={archive_path}\n")
                 f.write(f"version=v{version}\n")
-                f.write(f"platform={platform_info['platform_tag']}\n")
+                f.write(f"platform={platform_name}\n")
 
         duration = (datetime.datetime.now() - start_time).total_seconds()
         logger.info(f"构建成功完成，用时: {duration:.2f} 秒")
