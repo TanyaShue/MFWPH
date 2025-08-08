@@ -95,6 +95,9 @@ class TaskExecutor(QObject):
                     self.executor.logger.debug(
                         f"识别: {detail.name} - {'成功' if noti_type == NotificationType.Succeeded else '失败'}"
                     )
+                if detail and hasattr(detail, "focus"):
+                    if detail.focus is not None:
+                        self.executor.logger.info(f"{detail.focus}")
 
         return Handler(self)
 
