@@ -272,7 +272,6 @@ class TaskExecutor(QObject):
 
         self.logger.info("任务执行器创建成功")
 
-    # === 任务处理 ===
 
     async def _process_tasks(self):
         """任务处理主循环"""
@@ -322,11 +321,16 @@ class TaskExecutor(QObject):
 
             # 创建任务器
             await self._create_tasker(task.data.resource_path)
-
+            self.logger.info("开始初始化agent")
             # 设置Agent（如果需要）
             agent_success = await self._setup_agent(task)
-            if agent_success:
-                self.logger.info("Agent初始化成功")
+            if not agent_success:
+                self.logger.error("Agent初始化失败")
+                task_manager.set_state(DeviceState.CONNECTED)
+
+                return
+
+            self.logger.info("Agent初始化成功")
 
             # 开始执行任务
             task_manager.set_state(DeviceState.RUNNING)

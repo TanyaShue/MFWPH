@@ -205,6 +205,7 @@ def run_pyinstaller(version_file: str, win_version_file: str):
         '--onefile',
         f'--name={APP_NAME}',
         '--clean',
+        '--runtime-tmpdir=.',  # 添加这行，使用当前目录作为临时目录
     ]
 
     # 平台特定参数

@@ -169,17 +169,6 @@ jobs:
             ## 版本 ${{ github.ref_name }} 更新日志
 
             ${{ steps.changelog.outputs.CHANGELOG }}
-
-            ---
-            
-            ### 下载链接
-            
-            | 平台 | 下载 |
-            |------|------|
-            | Windows x64 | MFWPH_windows-x64.zip |
-            | macOS Intel | MFWPH_macos-x64.tar.gz |
-            | macOS Apple Silicon | MFWPH_macos-arm64.tar.gz |
-            | Linux x64 | MFWPH_linux-x64.tar.gz |
             
             ### 安装说明
             
@@ -202,20 +191,3 @@ jobs:
           artifacts: ./release_files/*
           artifactContentType: application/octet-stream
           artifactErrorsFailBuild: true
-
-  cleanup:
-    name: Cleanup
-    needs: release
-    runs-on: ubuntu-latest
-    if: always()
-
-    steps:
-      - name: Delete workflow artifacts
-        uses: geekyeggo/delete-artifact@v4
-        with:
-          name: |
-            windows-x64-build
-            macos-x64-build
-            macos-arm64-build
-            linux-x64-build
-          failOnError: false
