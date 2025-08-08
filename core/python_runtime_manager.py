@@ -598,7 +598,6 @@ class GlobalPythonRuntimeManager:
             return False
 
         pip_sources = self.config.get("pip_sources", [])
-        kwargs = self._get_subprocess_kwargs()
 
         # 记录安装开始
         self.logger.info(f"开始安装依赖: {requirements_path}")
@@ -621,6 +620,9 @@ class GlobalPythonRuntimeManager:
                             str(info.python_exe), "-m", "pip", "install",
                             "--upgrade", "pip", "-i", source
                         ]
+
+                        # 静默升级pip
+                        kwargs = self._get_subprocess_kwargs()
                         process = await asyncio.create_subprocess_exec(*upgrade_cmd, **kwargs)
                         await process.communicate()
 
@@ -629,28 +631,54 @@ class GlobalPythonRuntimeManager:
                         str(info.python_exe), "-m", "pip", "install",
                         "-r", str(requirements_path),
                         "-i", source,
-                        "--no-cache-dir"  # 避免缓存问题
+                        "--no-cache-dir",  # 避免缓存问题
+                        "-v"  # 添加verbose以获取更多输出
                     ]
 
-                    process = await asyncio.create_subprocess_exec(*cmd, **kwargs)
-                    stdout, stderr = await process.communicate()
+                    # 创建进程并捕获输出
+                    process = await asyncio.create_subprocess_exec(
+                        *cmd,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.STDOUT,  # 合并stderr到stdout
+                        env={**os.environ, 'PYTHONIOENCODING': 'utf-8'}  # 确保UTF-8编码
+                    )
 
-                    if process.returncode == 0:
+                    # 收集所有输出
+                    all_output = []
+
+                    # 实时读取并记录到debug
+                    while True:
+                        line = await process.stdout.readline()
+                        if not line:
+                            break
+
+                        decoded_line = line.decode('utf-8', errors='ignore').rstrip()
+                        if decoded_line:
+                            # 全部输出到debug日志
+                            self.logger.debug(f"[pip] {decoded_line}")
+                            all_output.append(decoded_line)
+
+                    returncode = await process.wait()
+
+                    # 将完整输出也保存到debug（方便查看完整日志）
+                    if all_output:
+                        self.logger.debug(f"=== pip完整输出 ({source}) ===\n" + "\n".join(all_output))
+
+                    if returncode == 0:
                         self.logger.info("✅ 依赖安装成功")
                         install_success = True
                         break
-
-                    self.logger.warning(f"使用源 {source} 安装失败: {stderr.decode('utf-8', errors='ignore')[:200]}")
-                    # ✅ 记录 pip 输出到 debug 日志
-                    if stdout:
-                        self.logger.info(f"pip stdout ({source}):\n{stdout.decode(errors='ignore')}")
-                    if stderr:
-                        self.logger.info(f"pip stderr ({source}):\n{stderr.decode(errors='ignore')}")
+                    else:
+                        # 失败时，将最后几行输出提升到warning级别
+                        self.logger.warning(f"使用源 {source} 安装失败 (返回码: {returncode})")
+                        if all_output:
+                            last_lines = all_output[-10:]  # 取最后10行
+                            self.logger.warning(f"失败输出末尾:\n" + "\n".join(last_lines))
 
                 except asyncio.TimeoutError:
                     self.logger.warning(f"使用源 {source} 安装超时")
                 except Exception as e:
-                    self.logger.warning(f"安装出错: {e}")
+                    self.logger.error(f"安装出错: {e}", exc_info=True)
                     continue
 
             if install_success:

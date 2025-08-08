@@ -261,7 +261,7 @@ class HomePage(QFrame):
         """处理应用日志更新"""
         # 如果日志显示可见，更新它
         if self.log_display.isVisible():
-            self.log_display.request_logs_update()
+            self.log_display.on_app_log_updated()
 
     def toggle_logs(self, checked):
         """切换日志显示区域的可见性"""
