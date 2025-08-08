@@ -273,8 +273,7 @@ class HomePage(QFrame):
             self.log_display.setVisible(True)  # 先确保控件可见
             self.content_splitter.setSizes([int(total_height * 2 / 3), int(total_height * 1 / 3)])
             self.toggle_logs_btn.setText("隐藏日志")
-            # 请求日志更新
-            self.log_display.request_logs_update()
+
         else:
             # 隐藏日志 - 先设置大小，然后隐藏控件
             self.content_splitter.setSizes([total_height, 0])

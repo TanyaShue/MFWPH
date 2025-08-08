@@ -1,58 +1,228 @@
+# python_runtime_manager.py
 import asyncio
+import hashlib
+import json
 import os
 import platform
-import zipfile
-import tarfile
-from pathlib import Path
-import filelock
 import shutil
-import json
+import subprocess
+import tarfile
+import time
+import zipfile
+from pathlib import Path
+from typing import Optional, Dict, Any, List, Tuple
+from dataclasses import dataclass
 import aiohttp
 import aiofiles
-import time
-import subprocess
-from typing import Optional, Dict, Any
+import filelock
 
+from app.models.logging.log_manager import app_logger
 from app.utils.notification_manager import notification_manager
 
 
-class PythonRuntimeManager:
-    """Python运行时管理器 - 优化版（隐藏命令行窗口）"""
+@dataclass
+class RuntimeInfo:
+    """运行时信息"""
+    version: str
+    resource_name: str
+    resource_hash: str
+    venv_name: str
+    venv_path: Path
+    python_exe: Path
+    last_used: float
+    dependencies_hash: Optional[str] = None
 
-    def __init__(self, runtime_base_dir: str, logger=None):
-        self.runtime_base_dir = Path(runtime_base_dir)
-        self.runtime_base_dir.mkdir(parents=True, exist_ok=True)
-        self.logger = logger or self._get_default_logger()
-        self.config = self._load_config()
-        self._download_session: Optional[aiohttp.ClientSession] = None
-        self.logger.info(f"🚀 Python运行时管理器初始化: {self.runtime_base_dir.absolute()}")
 
-    def _get_subprocess_kwargs(self) -> dict:
-        """获取子进程参数，用于隐藏命令行窗口"""
-        kwargs = {
-            'stdout': asyncio.subprocess.PIPE,
-            'stderr': asyncio.subprocess.PIPE
-        }
+class PythonRuntime:
+    """单个Python运行时实例"""
 
-        # Windows系统特殊处理
+    def __init__(self, version: str, runtime_dir: Path, logger):
+        self.version = version
+        self.runtime_dir = runtime_dir
+        self.logger = logger
+        self.python_dir = runtime_dir / f"python{version}"
+        self.envs_dir = self.python_dir / "envs"
+        self.envs_dir.mkdir(parents=True, exist_ok=True)
+
+        # 运行时信息缓存
+        self._runtime_cache: Dict[str, RuntimeInfo] = {}
+        self._load_runtime_cache()
+
+    def _load_runtime_cache(self):
+        """加载运行时缓存信息"""
+        cache_file = self.envs_dir / ".runtime_cache.json"
+        if cache_file.exists():
+            try:
+                with open(cache_file, 'r', encoding='utf-8') as f:
+                    data = json.load(f)
+                    for key, info in data.items():
+                        self._runtime_cache[key] = RuntimeInfo(
+                            version=info['version'],
+                            resource_name=info['resource_name'],
+                            resource_hash=info['resource_hash'],
+                            venv_name=info['venv_name'],
+                            venv_path=Path(info['venv_path']),
+                            python_exe=Path(info['python_exe']),
+                            last_used=info['last_used'],
+                            dependencies_hash=info.get('dependencies_hash')
+                        )
+            except Exception as e:
+                self.logger.error(f"加载运行时缓存失败: {e}")
+
+    def _save_runtime_cache(self):
+        """保存运行时缓存信息"""
+        cache_file = self.envs_dir / ".runtime_cache.json"
+        try:
+            data = {}
+            for key, info in self._runtime_cache.items():
+                data[key] = {
+                    'version': info.version,
+                    'resource_name': info.resource_name,
+                    'resource_hash': info.resource_hash,
+                    'venv_name': info.venv_name,
+                    'venv_path': str(info.venv_path),
+                    'python_exe': str(info.python_exe),
+                    'last_used': info.last_used,
+                    'dependencies_hash': info.dependencies_hash
+                }
+            with open(cache_file, 'w', encoding='utf-8') as f:
+                json.dump(data, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            self.logger.error(f"保存运行时缓存失败: {e}")
+
+    def get_python_executable(self) -> Path:
+        """获取Python可执行文件路径"""
         if platform.system() == "Windows":
-            # 使用 CREATE_NO_WINDOW 标志来隐藏窗口
-            kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
-            # 或者使用以下方式（适用于较旧的Python版本）
-            # kwargs['creationflags'] = 0x08000000  # CREATE_NO_WINDOW
+            return self.python_dir / "python.exe"
+        return self.python_dir / "bin" / "python"
 
-        return kwargs
+    def _get_resource_hash(self, resource_name: str) -> str:
+        """计算资源名称的MD5哈希"""
+        return hashlib.md5(resource_name.encode('utf-8')).hexdigest()[:16]
 
-    def _get_default_logger(self):
-        """获取默认logger"""
-        import logging
-        logger = logging.getLogger("PythonRuntimeManager")
-        if not logger.handlers:
-            handler = logging.StreamHandler()
-            handler.setFormatter(logging.Formatter('%(asctime)s - %(levelname)s - %(message)s'))
-            logger.addHandler(handler)
-            logger.setLevel(logging.INFO)
-        return logger
+    def get_venv_info(self, resource_name: str) -> RuntimeInfo:
+        """获取虚拟环境信息"""
+        resource_hash = self._get_resource_hash(resource_name)
+
+        if resource_hash in self._runtime_cache:
+            info = self._runtime_cache[resource_hash]
+            info.last_used = time.time()
+            self._save_runtime_cache()
+            return info
+
+        # 创建新的运行时信息
+        venv_name = f"venv_{resource_hash}"
+        venv_path = self.envs_dir / venv_name
+
+        if platform.system() == "Windows":
+            python_exe = venv_path / "Scripts" / "python.exe"
+        else:
+            python_exe = venv_path / "bin" / "python"
+
+        info = RuntimeInfo(
+            version=self.version,
+            resource_name=resource_name,
+            resource_hash=resource_hash,
+            venv_name=venv_name,
+            venv_path=venv_path,
+            python_exe=python_exe,
+            last_used=time.time()
+        )
+
+        self._runtime_cache[resource_hash] = info
+        self._save_runtime_cache()
+        return info
+
+    def is_python_installed(self) -> bool:
+        """检查Python是否已安装"""
+        return self.get_python_executable().exists()
+
+    def is_venv_exists(self, resource_name: str) -> bool:
+        """检查虚拟环境是否存在"""
+        info = self.get_venv_info(resource_name)
+        return info.venv_path.exists() and info.python_exe.exists()
+
+    async def check_dependencies_changed(self, resource_name: str, requirements_path: Path) -> tuple[bool, str]:
+        """检查依赖是否发生变化
+        返回: (是否变化, 当前hash值)
+        """
+        if not requirements_path.exists():
+            return False, ""
+
+        # 计算当前requirements的hash
+        with open(requirements_path, 'rb') as f:
+            current_hash = hashlib.md5(f.read()).hexdigest()
+
+        info = self.get_venv_info(resource_name)
+
+        # 比较hash，但不更新缓存
+        if info.dependencies_hash != current_hash:
+            return True, current_hash
+
+        return False, current_hash
+
+    def update_dependencies_hash(self, resource_name: str, hash_value: str):
+        """更新依赖的hash值（在安装成功后调用）"""
+        info = self.get_venv_info(resource_name)
+        info.dependencies_hash = hash_value
+        self._save_runtime_cache()
+
+    def clear_dependencies_hash(self, resource_name: str):
+        """清除依赖hash（用于安装失败或需要重新安装的情况）"""
+        info = self.get_venv_info(resource_name)
+        info.dependencies_hash = None
+        self._save_runtime_cache()
+
+    def cleanup_old_envs(self, keep_days: int = 30):
+        """清理长时间未使用的虚拟环境"""
+        current_time = time.time()
+        cutoff_time = current_time - (keep_days * 24 * 3600)
+
+        to_remove = []
+        for resource_hash, info in self._runtime_cache.items():
+            if info.last_used < cutoff_time:
+                if info.venv_path.exists():
+                    shutil.rmtree(info.venv_path, ignore_errors=True)
+                    self.logger.info(f"清理旧虚拟环境: {info.venv_name}")
+                to_remove.append(resource_hash)
+
+        for resource_hash in to_remove:
+            del self._runtime_cache[resource_hash]
+
+        if to_remove:
+            self._save_runtime_cache()
+
+
+class GlobalPythonRuntimeManager:
+    """全局Python运行时管理器（单例）"""
+
+    _instance = None
+    _lock = asyncio.Lock()
+
+    def __new__(cls):
+        if cls._instance is None:
+            cls._instance = super().__new__(cls)
+        return cls._instance
+
+    def __init__(self):
+        if not hasattr(self, '_initialized'):
+            self.runtime_base_dir = Path("./runtime")
+            self.runtime_base_dir.mkdir(parents=True, exist_ok=True)
+            self.logger = app_logger
+            self.config = self._load_config()
+
+            # 运行时实例缓存
+            self._runtimes: Dict[str, PythonRuntime] = {}
+
+            # 下载会话
+            self._download_session: Optional[aiohttp.ClientSession] = None
+
+            # 安装锁（防止并发安装）
+            self._install_locks: Dict[str, asyncio.Lock] = {}
+
+            self._initialized = True
+            self.logger.info(f"🚀 全局Python运行时管理器初始化: {self.runtime_base_dir.absolute()}")
+
 
     def _load_config(self) -> Dict[str, Any]:
         """加载配置文件"""
@@ -66,39 +236,24 @@ class PythonRuntimeManager:
             "python_download_sources": {
                 "windows": [
                     "https://mirrors.aliyun.com/python-release/windows/python-{version}-embed-amd64.zip",
-                    "https://mirrors.huaweicloud.com/python/{version}/python-{version}-embed-amd64.zip",
-                    "https://registry.npmmirror.com/-/binary/python/{version}/python-{version}-embed-amd64.zip",
-                    "https://npm.taobao.org/mirrors/python/{version}/python-{version}-embed-amd64.zip",
                     "https://www.python.org/ftp/python/{version}/python-{version}-embed-amd64.zip"
                 ],
                 "linux": [
                     "https://mirrors.aliyun.com/python-release/source/Python-{version}.tgz",
-                    "https://mirrors.huaweicloud.com/python/{version}/Python-{version}.tgz",
-                    "https://registry.npmmirror.com/-/binary/python/{version}/Python-{version}.tgz",
-                    "https://npm.taobao.org/mirrors/python/{version}/Python-{version}.tgz",
                     "https://www.python.org/ftp/python/{version}/Python-{version}.tgz"
                 ],
                 "darwin": [
                     "https://mirrors.aliyun.com/python-release/source/Python-{version}.tgz",
-                    "https://mirrors.huaweicloud.com/python/{version}/Python-{version}.tgz",
-                    "https://registry.npmmirror.com/-/binary/python/{version}/Python-{version}.tgz",
-                    "https://npm.taobao.org/mirrors/python/{version}/Python-{version}.tgz",
                     "https://www.python.org/ftp/python/{version}/Python-{version}.tgz"
                 ]
             },
             "pip_sources": [
                 "https://pypi.tuna.tsinghua.edu.cn/simple/",
                 "https://mirrors.aliyun.com/pypi/simple/",
-                "https://pypi.douban.com/simple/",
-                "https://pypi.mirrors.ustc.edu.cn/simple/",
-                "https://mirrors.cloud.tencent.com/pypi/simple/",
                 "https://pypi.org/simple/"
             ],
             "get_pip_sources": [
                 "https://mirrors.aliyun.com/pypi/get-pip.py",
-                "https://pypi.tuna.tsinghua.edu.cn/mirrors/pypi/get-pip.py",
-                "https://mirrors.huaweicloud.com/repository/pypi/get-pip.py",
-                "https://registry.npmmirror.com/-/binary/pypa/get-pip.py",
                 "https://bootstrap.pypa.io/get-pip.py"
             ]
         }
@@ -111,12 +266,116 @@ class PythonRuntimeManager:
             self.logger.error(f"加载配置失败: {e}")
         return default_config
 
+    def get_runtime(self, version: str) -> PythonRuntime:
+        """获取指定版本的Python运行时"""
+        if version not in self._runtimes:
+            self._runtimes[version] = PythonRuntime(
+                version,
+                self.runtime_base_dir,
+                self.logger
+            )
+        return self._runtimes[version]
+
+    async def _get_install_lock(self, version: str) -> asyncio.Lock:
+        """获取安装锁"""
+        if version not in self._install_locks:
+            self._install_locks[version] = asyncio.Lock()
+        return self._install_locks[version]
+
     async def _get_session(self) -> aiohttp.ClientSession:
         """获取或创建aiohttp会话"""
         if self._download_session is None or self._download_session.closed:
-            timeout = aiohttp.ClientTimeout(total=1800, connect=60)  # 30分钟总超时
+            timeout = aiohttp.ClientTimeout(total=1800, connect=60)
             self._download_session = aiohttp.ClientSession(timeout=timeout)
         return self._download_session
+
+    def _get_patch_version(self, version: str) -> str:
+        """获取完整版本号"""
+        if len(version.split('.')) == 3:
+            return version
+
+        fallback = self.config.get("fallback_versions", {})
+        return fallback.get(version, "3.11.9")
+
+    def _get_subprocess_kwargs(self) -> dict:
+        """获取子进程参数，用于隐藏命令行窗口"""
+        kwargs = {
+            'stdout': asyncio.subprocess.PIPE,
+            'stderr': asyncio.subprocess.PIPE
+        }
+
+        if platform.system() == "Windows":
+            kwargs['creationflags'] = subprocess.CREATE_NO_WINDOW
+
+        return kwargs
+
+    async def ensure_python_installed(self, version: str) -> bool:
+        """确保Python版本已安装"""
+        runtime = self.get_runtime(version)
+
+        if runtime.is_python_installed():
+            self.logger.info(f"✅ Python {version} 已安装")
+            return await self._ensure_pip_installed(runtime)
+
+        # 使用锁防止并发安装
+        lock = await self._get_install_lock(version)
+        async with lock:
+            # 再次检查
+            if runtime.is_python_installed():
+                return True
+
+            self.logger.info(f"Python {version} 未安装，开始下载...")
+            return await self._download_and_install_python(runtime)
+
+    async def _download_and_install_python(self, runtime: PythonRuntime) -> bool:
+        """下载并安装Python"""
+        system = platform.system().lower()
+        patch_version = self._get_patch_version(runtime.version)
+
+        sources = self.config.get("python_download_sources", {}).get(system, [])
+        if not sources:
+            self.logger.error(f"不支持的系统: {system}")
+            return False
+
+        urls = [url.format(version=patch_version) for url in sources]
+
+        for url in urls:
+            try:
+                filename = url.split("/")[-1]
+                temp_dir = self.runtime_base_dir / f"temp_{runtime.version}"
+                temp_dir.mkdir(exist_ok=True)
+                temp_file = temp_dir / filename
+
+                # 下载文件
+                await self._download_file_async(url, temp_file)
+
+                # 解压文件
+                await self._extract_archive(temp_file, runtime.python_dir)
+
+                # Linux/Mac需要编译
+                if system in ["linux", "darwin"]:
+                    await self._compile_python(runtime.python_dir, patch_version)
+
+                # Windows嵌入式版本设置
+                if system == "windows":
+                    await self._setup_windows_embedded(runtime.version, runtime.python_dir)
+
+                # 清理临时文件
+                shutil.rmtree(temp_dir, ignore_errors=True)
+
+                # 安装pip
+                await self._ensure_pip_installed(runtime)
+
+                self.logger.info(f"✅ Python {runtime.version} 安装完成")
+                notification_manager.show_success(f"Python {runtime.version} 安装成功", "完成")
+                return True
+
+            except Exception as e:
+                self.logger.error(f"从 {url} 下载失败: {e}")
+                continue
+
+        notification_manager.show_error(f"Python {runtime.version} 安装失败", "错误")
+        return False
 
     async def _download_file_async(self, url: str, filepath: Path):
         """异步下载文件"""
@@ -133,42 +392,12 @@ class PythonRuntimeManager:
 
                 downloaded = 0
                 chunk_size = 8192
-                start_time = time.time()
-                last_log_time = start_time
 
                 async with aiofiles.open(filepath, 'wb') as file:
                     async for chunk in response.content.iter_chunked(chunk_size):
                         await file.write(chunk)
                         downloaded += len(chunk)
 
-                        current_time = time.time()
-
-                        # 每2秒记录一次进度
-                        if current_time - last_log_time >= 2.0 or downloaded >= total_size:
-                            progress = (downloaded / total_size) * 100 if total_size > 0 else 0
-                            elapsed = current_time - start_time
-
-                            # 计算速度和剩余时间
-                            if elapsed > 0:
-                                speed = downloaded / elapsed  # bytes/sec
-                                remaining_bytes = total_size - downloaded
-                                eta = remaining_bytes / speed if speed > 0 else 0
-
-                                # 格式化时间
-                                if eta < 60:
-                                    eta_str = f"{int(eta)}秒"
-                                elif eta < 3600:
-                                    eta_str = f"{int(eta / 60)}分{int(eta % 60)}秒"
-                                else:
-                                    eta_str = f"{int(eta / 3600)}小时{int((eta % 3600) / 60)}分"
-
-                                self.logger.debug(f"下载进度: {progress:.1f}% | 剩余: {eta_str}")
-                            else:
-                                self.logger.debug(f"下载进度: {progress:.1f}%")
-
-                            last_log_time = current_time
-
-                        # 定期让出控制权，保持UI响应
                         if downloaded % (chunk_size * 100) == 0:
                             await asyncio.sleep(0)
 
@@ -180,115 +409,6 @@ class PythonRuntimeManager:
             if filepath.exists():
                 filepath.unlink()
             raise
-
-    def _get_patch_version(self, version: str) -> str:
-        """获取完整版本号"""
-        # 简化版本处理
-        if len(version.split('.')) == 3:
-            return version
-
-        fallback = self.config.get("fallback_versions", {})
-        return fallback.get(version, "3.11.9")
-
-    def get_python_dir(self, version: str) -> Path:
-        """获取Python版本目录"""
-        return self.runtime_base_dir / f"python{version}"
-
-    def get_python_executable(self, version: str) -> Path:
-        """获取Python可执行文件路径"""
-        python_dir = self.get_python_dir(version)
-        if platform.system() == "Windows":
-            return python_dir / "python.exe"
-        return python_dir / "bin" / "python"
-
-    def get_venv_dir(self, version: str, resource_name: str) -> Path:
-        """获取虚拟环境目录"""
-        return self.get_python_dir(version) / "envs" / resource_name
-
-    def get_venv_python(self, version: str, resource_name: str) -> Path:
-        """获取虚拟环境中的Python路径"""
-        venv_dir = self.get_venv_dir(version, resource_name)
-        if platform.system() == "Windows":
-            return venv_dir / "Scripts" / "python.exe"
-        return venv_dir / "bin" / "python"
-
-    async def ensure_python_installed(self, version: str) -> bool:
-        """确保Python版本已安装"""
-        python_exe = self.get_python_executable(version)
-
-        if python_exe.exists():
-            self.logger.info(f"✅ Python {version} 已安装")
-            return await self._ensure_pip_installed(version)
-
-        self.logger.info(f"Python {version} 未安装，开始下载...")
-        return await self._download_and_install_python(version)
-
-    async def _download_and_install_python(self, version: str) -> bool:
-        """下载并安装Python"""
-        system = platform.system().lower()
-        patch_version = self._get_patch_version(version)
-
-        # 获取下载URL
-        sources = self.config.get("python_download_sources", {}).get(system, [])
-        if not sources:
-            self.logger.error(f"不支持的系统: {system}")
-            return False
-
-        urls = [url.format(version=patch_version) for url in sources]
-        python_dir = self.get_python_dir(version)
-
-        # 使用文件锁避免并发下载
-        lock_file = self.runtime_base_dir / f".lock_{version}"
-        lock = filelock.FileLock(str(lock_file), timeout=300)
-
-        try:
-            with lock:
-                # 再次检查是否已安装
-                if self.get_python_executable(version).exists():
-                    return True
-
-                # 下载Python
-                temp_dir = self.runtime_base_dir / f"temp_{version}"
-                temp_dir.mkdir(exist_ok=True)
-
-                for url in urls:
-                    try:
-                        filename = url.split("/")[-1]
-                        temp_file = temp_dir / filename
-
-                        await self._download_file_async(url, temp_file)
-
-                        # 解压文件
-                        await self._extract_archive(temp_file, python_dir)
-
-                        # Linux/Mac需要编译
-                        if system in ["linux", "darwin"]:
-                            await self._compile_python(python_dir, patch_version)
-
-                        # Windows嵌入式版本设置
-                        if system == "windows":
-                            await self._setup_windows_embedded(version)
-
-                        # 清理临时文件
-                        shutil.rmtree(temp_dir, ignore_errors=True)
-
-                        # 安装pip
-                        await self._ensure_pip_installed(version)
-
-                        self.logger.info(f"✅ Python {version} 安装完成")
-                        notification_manager.show_success(f"Python {version} 安装成功", "完成")
-                        return True
-
-                    except Exception as e:
-                        self.logger.error(f"下载失败: {e}")
-                        continue
-
-                notification_manager.show_error(f"Python {version} 安装失败", "错误")
-                return False
-
-        except Exception as e:
-            self.logger.error(f"安装Python失败: {e}")
-            return False
 
     async def _extract_archive(self, archive_path: Path, extract_to: Path):
         """异步解压文件"""
@@ -302,11 +422,8 @@ class PythonRuntimeManager:
                 with tarfile.open(archive_path, 'r:gz') as tf:
                     tf.extractall(extract_to)
 
-        # 在异步环境中运行同步解压操作
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, extract)
-
-        # 删除压缩包
         archive_path.unlink()
 
     async def _compile_python(self, python_dir: Path, version: str):
@@ -322,24 +439,19 @@ class PythonRuntimeManager:
         for cmd, step in commands:
             self.logger.info(f"执行{step}...")
 
-            # 使用隐藏窗口的参数
             kwargs = self._get_subprocess_kwargs()
             kwargs['cwd'] = source_dir
 
-            process = await asyncio.create_subprocess_exec(
-                *cmd, **kwargs
-            )
+            process = await asyncio.create_subprocess_exec(*cmd, **kwargs)
             await process.communicate()
 
             if process.returncode != 0:
                 raise Exception(f"{step}失败")
 
-        # 清理源码
         shutil.rmtree(source_dir, ignore_errors=True)
 
-    async def _setup_windows_embedded(self, version: str):
+    async def _setup_windows_embedded(self, version: str, python_dir: Path):
         """设置Windows嵌入式Python"""
-        python_dir = self.get_python_dir(version)
         pth_file = python_dir / f"python{version.replace('.', '')}._pth"
 
         if pth_file.exists():
@@ -348,12 +460,12 @@ class PythonRuntimeManager:
                 content = content.replace("#import site", "import site")
                 pth_file.write_text(content)
 
-    async def _ensure_pip_installed(self, version: str) -> bool:
+    async def _ensure_pip_installed(self, runtime: PythonRuntime) -> bool:
         """确保pip已安装"""
-        python_exe = self.get_python_executable(version)
-
-        # 检查pip - 使用隐藏窗口的参数
+        python_exe = runtime.get_python_executable()
         kwargs = self._get_subprocess_kwargs()
+
+        # 检查pip
         process = await asyncio.create_subprocess_exec(
             str(python_exe), "-m", "pip", "--version",
             **kwargs
@@ -361,10 +473,9 @@ class PythonRuntimeManager:
         await process.communicate()
 
         if process.returncode != 0:
-            # 尝试安装pip
             self.logger.info("安装pip...")
 
-            # 先尝试ensurepip
+            # 尝试ensurepip
             process = await asyncio.create_subprocess_exec(
                 str(python_exe), "-m", "ensurepip", "--upgrade",
                 **kwargs
@@ -372,13 +483,13 @@ class PythonRuntimeManager:
             await process.communicate()
 
             if process.returncode != 0:
-                # 从配置中读取 get-pip.py 源
+                # 使用get-pip.py
                 get_pip_urls = self.config.get("get_pip_sources", [])
                 get_pip_file = python_exe.parent / "get-pip.py"
 
-                for get_pip_url in get_pip_urls:
+                for url in get_pip_urls:
                     try:
-                        await self._download_file_async(get_pip_url, get_pip_file)
+                        await self._download_file_async(url, get_pip_file)
 
                         process = await asyncio.create_subprocess_exec(
                             str(python_exe), str(get_pip_file),
@@ -388,17 +499,15 @@ class PythonRuntimeManager:
                         get_pip_file.unlink()
 
                         if process.returncode == 0:
-                            return True
-                        else:
-                            self.logger.warning(f"从 {get_pip_url} 安装 pip 失败，尝试下一个源。")
-
+                            break
                     except Exception as e:
-                        self.logger.warning(f"从 {get_pip_url} 下载失败: {e}")
+                        self.logger.warning(f"从 {url} 下载失败: {e}")
+                        continue
+                else:
+                    self.logger.error("安装pip失败")
+                    return False
 
-                self.logger.error("安装 pip 失败：所有源尝试均未成功。")
-                return False
-
-        # 安装virtualenv - 使用隐藏窗口的参数
+        # 升级pip和安装virtualenv
         process = await asyncio.create_subprocess_exec(
             str(python_exe), "-m", "pip", "install", "--upgrade",
             "pip", "setuptools", "wheel", "virtualenv",
@@ -408,147 +517,173 @@ class PythonRuntimeManager:
 
         return process.returncode == 0
 
-    async def create_venv(self, version: str, resource_name: str) -> bool:
-        """使用virtualenv创建虚拟环境"""
-        venv_dir = self.get_venv_dir(version, resource_name)
+    async def create_venv(self, version: str, resource_name: str) -> Optional[RuntimeInfo]:
+        """创建虚拟环境"""
+        runtime = self.get_runtime(version)
+        info = runtime.get_venv_info(resource_name)
 
-        if venv_dir.exists():
-            self.logger.info(f"虚拟环境已存在: {resource_name}")
-            return True
+        if info.venv_path.exists():
+            self.logger.info(f"虚拟环境已存在: {info.venv_name}")
+            return info
 
-        python_exe = self.get_python_executable(version)
-        venv_dir.parent.mkdir(parents=True, exist_ok=True)
+        python_exe = runtime.get_python_executable()
+        info.venv_path.parent.mkdir(parents=True, exist_ok=True)
 
-        # 获取隐藏窗口的参数
         kwargs = self._get_subprocess_kwargs()
 
-        # 先确保virtualenv已安装
+        # 创建虚拟环境
         process = await asyncio.create_subprocess_exec(
-            str(python_exe), "-m", "pip", "list",
-            **kwargs
-        )
-        stdout, _ = await process.communicate()
-
-        if "virtualenv" not in stdout.decode():
-            self.logger.info("安装virtualenv...")
-            process = await asyncio.create_subprocess_exec(
-                str(python_exe), "-m", "pip", "install", "virtualenv",
-                **kwargs
-            )
-            await process.communicate()
-
-        # 使用virtualenv创建虚拟环境 - 使用隐藏窗口的参数
-        process = await asyncio.create_subprocess_exec(
-            str(python_exe), "-m", "virtualenv", str(venv_dir),
+            str(python_exe), "-m", "virtualenv", str(info.venv_path),
             **kwargs
         )
         stdout, stderr = await process.communicate()
 
         if process.returncode == 0:
-            self.logger.info(f"✅ 虚拟环境创建成功: {resource_name}")
+            self.logger.info(f"✅ 虚拟环境创建成功: {info.venv_name}")
 
-            # 升级虚拟环境中的pip - 使用隐藏窗口的参数
-            venv_python = self.get_venv_python(version, resource_name)
+            # 升级虚拟环境中的pip
             process = await asyncio.create_subprocess_exec(
-                str(venv_python), "-m", "pip", "install", "--upgrade", "pip", "setuptools", "wheel",
+                str(info.python_exe), "-m", "pip", "install", "--upgrade",
+                "pip", "setuptools", "wheel",
                 **kwargs
             )
             await process.communicate()
 
-            return True
+            return info
 
         self.logger.error(f"创建虚拟环境失败: {stderr.decode()}")
+        return None
+
+    async def install_requirements(
+            self,
+            version: str,
+            resource_name: str,
+            requirements_path: Path,
+            force_reinstall: bool = False,
+            max_retries: int = 1
+    ) -> bool:
+        """安装requirements.txt中的依赖
+
+        Args:
+            version: Python版本
+            resource_name: 资源名称
+            requirements_path: requirements.txt路径
+            force_reinstall: 是否强制重新安装
+            max_retries: 最大重试次数
+
+        Returns:
+            bool: 安装是否成功
+        """
+        if not requirements_path.exists():
+            self.logger.info(f"requirements.txt不存在: {requirements_path}")
+            return True
+
+        runtime = self.get_runtime(version)
+        info = runtime.get_venv_info(resource_name)
+
+        # 检查依赖是否变化
+        current_hash = ""
+        if not force_reinstall:
+            changed, current_hash = await runtime.check_dependencies_changed(resource_name, requirements_path)
+            if not changed:
+                self.logger.info("依赖未变化，跳过安装")
+                return True
+        else:
+            # 强制重装时也计算hash，用于后续保存
+            with open(requirements_path, 'rb') as f:
+                current_hash = hashlib.md5(f.read()).hexdigest()
+
+        if not info.python_exe.exists():
+            self.logger.error(f"虚拟环境不存在: {info.venv_name}")
+            return False
+
+        pip_sources = self.config.get("pip_sources", [])
+        kwargs = self._get_subprocess_kwargs()
+
+        # 记录安装开始
+        self.logger.info(f"开始安装依赖: {requirements_path}")
+
+        # 多次重试机制
+        for retry in range(max_retries + 1):
+            if retry > 0:
+                self.logger.info(f"第 {retry} 次重试安装依赖...")
+                await asyncio.sleep(2)  # 重试前等待
+
+            install_success = False
+
+            for source in pip_sources:
+                try:
+                    self.logger.info(f"使用pip源安装依赖: {source}")
+
+                    # 先升级pip（仅在第一次尝试时）
+                    if retry == 0:
+                        upgrade_cmd = [
+                            str(info.python_exe), "-m", "pip", "install",
+                            "--upgrade", "pip", "-i", source
+                        ]
+                        process = await asyncio.create_subprocess_exec(*upgrade_cmd, **kwargs)
+                        await process.communicate()
+
+                    # 安装依赖
+                    cmd = [
+                        str(info.python_exe), "-m", "pip", "install",
+                        "-r", str(requirements_path),
+                        "-i", source,
+                        "--no-cache-dir"  # 避免缓存问题
+                    ]
+
+                    process = await asyncio.create_subprocess_exec(*cmd, **kwargs)
+                    stdout, stderr = await process.communicate()
+
+                    if process.returncode == 0:
+                        self.logger.info("✅ 依赖安装成功")
+                        install_success = True
+                        break
+
+                    self.logger.warning(f"使用源 {source} 安装失败: {stderr.decode('utf-8', errors='ignore')[:200]}")
+                    # ✅ 记录 pip 输出到 debug 日志
+                    if stdout:
+                        self.logger.info(f"pip stdout ({source}):\n{stdout.decode(errors='ignore')}")
+                    if stderr:
+                        self.logger.info(f"pip stderr ({source}):\n{stderr.decode(errors='ignore')}")
+
+                except asyncio.TimeoutError:
+                    self.logger.warning(f"使用源 {source} 安装超时")
+                except Exception as e:
+                    self.logger.warning(f"安装出错: {e}")
+                    continue
+
+            if install_success:
+                # 只有在安装成功后才更新hash缓存
+                runtime.update_dependencies_hash(resource_name, current_hash)
+                self.logger.info(f"已更新依赖hash缓存: {current_hash[:8]}...")
+                return True
+
+        # 所有重试都失败，清除hash以便下次重新尝试
+        runtime.clear_dependencies_hash(resource_name)
+        self.logger.error(f"依赖安装失败（尝试了 {max_retries + 1} 次）")
         return False
 
-    async def install_packages(self, version: str, resource_name: str, packages: list) -> bool:
-        """在虚拟环境中安装包"""
-        venv_python = self.get_venv_python(version, resource_name)
+    async def get_venv_python(self, version: str, resource_name: str) -> Optional[str]:
+        """获取虚拟环境的Python可执行文件路径"""
+        runtime = self.get_runtime(version)
+        info = runtime.get_venv_info(resource_name)
 
-        if not venv_python.exists():
-            self.logger.error(f"虚拟环境不存在: {resource_name}")
-            return False
+        if info.python_exe.exists():
+            return str(info.python_exe)
+        return None
 
-        # 使用隐藏窗口的参数安装包
-        kwargs = self._get_subprocess_kwargs()
-
-        self.logger.info(f"安装包: {', '.join(packages)}")
-        process = await asyncio.create_subprocess_exec(
-            str(venv_python), "-m", "pip", "install", *packages,
-            **kwargs
-        )
-        stdout, stderr = await process.communicate()
-
-        if process.returncode == 0:
-            self.logger.info(f"✅ 包安装成功")
-            return True
-        else:
-            self.logger.error(f"包安装失败: {stderr.decode()}")
-            return False
-
-    async def install_requirements(self, version: str, resource_name: str, requirements_path: str) -> bool:
-        """
-        使用 requirements.txt 安装依赖包
-        :param version: Python 版本号（用于查找虚拟环境）
-        :param resource_name: 虚拟环境资源名称
-        :param requirements_path: requirements.txt 文件路径
-        :return: 安装是否成功
-        """
-        venv_python = self.get_venv_python(version, resource_name)
-
-        if not venv_python.exists():
-            self.logger.error(f"虚拟环境不存在: {resource_name}")
-            return False
-
-        if not os.path.isfile(requirements_path):
-            self.logger.error(f"requirements.txt 不存在: {requirements_path}")
-            return False
-
-        # 使用隐藏窗口的参数安装包
-        kwargs = self._get_subprocess_kwargs()
-
-        self.logger.info(f"安装依赖自: {requirements_path}")
-        process = await asyncio.create_subprocess_exec(
-            str(venv_python), "-m", "pip", "install", "-r", requirements_path,
-            **kwargs
-        )
-        stdout, stderr = await process.communicate()
-
-        if process.returncode == 0:
-            self.logger.info("✅ requirements.txt 安装成功")
-            return True
-        else:
-            self.logger.error(f"requirements.txt 安装失败: {stderr.decode()}")
-            return False
-
-    async def run_python_script(self, version: str, resource_name: str, script_path: str, *args) -> tuple:
-        """在虚拟环境中运行Python脚本"""
-        venv_python = self.get_venv_python(version, resource_name)
-
-        if not venv_python.exists():
-            self.logger.error(f"虚拟环境不存在: {resource_name}")
-            return (None, "Virtual environment does not exist")
-
-        # 使用隐藏窗口的参数运行脚本
-        kwargs = self._get_subprocess_kwargs()
-
-        process = await asyncio.create_subprocess_exec(
-            str(venv_python), script_path, *args,
-            **kwargs
-        )
-        stdout, stderr = await process.communicate()
-
-        return (stdout.decode() if stdout else None,
-                stderr.decode() if stderr else None)
+    def cleanup_old_environments(self, keep_days: int = 30):
+        """清理所有版本的旧虚拟环境"""
+        for runtime in self._runtimes.values():
+            runtime.cleanup_old_envs(keep_days)
 
     async def cleanup(self):
         """清理资源"""
         if self._download_session:
             await self._download_session.close()
+            self._download_session = None
 
-    def __del__(self):
-        """析构函数"""
-        if hasattr(self, '_download_session') and self._download_session:
-            try:
-                asyncio.create_task(self._download_session.close())
-            except:
-                pass
+
+# 全局实例
+python_runtime_manager = GlobalPythonRuntimeManager()

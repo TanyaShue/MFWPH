@@ -71,7 +71,6 @@ class Agent:
     agent_params: str = ""
     requirements_path: str = ""
     use_venv: bool = True
-    pip_index_url: Optional[str] = None
 
 
 @dataclass
@@ -195,7 +194,6 @@ class ResourceConfig:
                 "agent_params": self.agent.agent_params,
                 "requirements_path":self.agent.requirements_path,
                 "use_venv": self.agent.use_venv,
-                "pip_index_url": self.agent.pip_index_url,
             },
             "resource_tasks": [task.__dict__ for task in self.resource_tasks],
             "options": [option_to_dict(option) for option in self.options],

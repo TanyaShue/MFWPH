@@ -31,7 +31,6 @@
 | `agent_params`      | `str`           | `""`       | 启动参数                |
 | `requirements_path` | `str`           | `""`       | requirements.txt 路径 |
 | `use_venv`          | `bool`          | `True`     | 是否使用虚拟环境            |
-| `pip_index_url`     | `Optional[str]` | `None`     | 自定义 PyPI 镜像源 URL    |
 
 ---
 

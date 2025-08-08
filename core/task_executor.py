@@ -1,12 +1,10 @@
+# task_executor.py
 # -*- coding: UTF-8 -*-
 """
-任务执行器
-使用简化的状态管理器管理任务生命周期
+任务执行器 - 使用全局Python运行时管理器
 """
 
 import asyncio
-import hashlib
-import json
 import os
 import subprocess
 import threading
@@ -28,7 +26,7 @@ from maa.agent_client import AgentClient
 from app.models.config.app_config import DeviceConfig, DeviceType
 from app.models.config.global_config import RunTimeConfigs, global_config
 from app.models.logging.log_manager import log_manager
-from core.python_runtime_manager import PythonRuntimeManager
+from core.python_runtime_manager import python_runtime_manager  # 使用全局实例
 from core.device_state_machine import SimpleStateManager, DeviceState
 from core.device_status_manager import device_status_manager
 
@@ -44,10 +42,10 @@ class Task:
 
 
 class TaskExecutor(QObject):
-    """重构后的任务执行器"""
+    """重构后的任务执行器 - 使用全局Python运行时管理器"""
 
     # 信号定义
-    task_state_changed = Signal(str, DeviceState, dict)  # task_id, new_state, context
+    task_state_changed = Signal(str, DeviceState, dict)
     executor_started = Signal()
     executor_stopped = Signal()
 
@@ -82,7 +80,6 @@ class TaskExecutor(QObject):
 
         # 通知处理器
         self._notification_handler = self._create_notification_handler()
-        self.runtime_manager = PythonRuntimeManager("./runtime", self.logger)
 
     def _create_notification_handler(self):
         """创建通知处理器"""
@@ -307,12 +304,10 @@ class TaskExecutor(QObject):
 
             while self._task_queue:
                 task = self._task_queue.pop(0)
-                # 检查任务状态是否为排队中
                 if task.state_manager.get_state() == DeviceState.QUEUED:
                     self._current_task = task
                     return task
                 else:
-                    # 任务已被取消或处理
                     device_status_manager.remove_task_manager(task.id)
 
             return None
@@ -379,15 +374,14 @@ class TaskExecutor(QObject):
 
             # 检查并重置设备状态
             if self.get_queue_length() == 0:
-                # 没有更多任务，设备回到连接状态
                 self.device_manager.set_state(DeviceState.CONNECTED)
                 self.logger.info("没有更多任务，设备状态重置为CONNECTED")
 
     async def _setup_agent(self, task: Task) -> bool:
-        """设置Agent"""
+        """设置Agent - 使用全局Python运行时管理器"""
         resource_config = global_config.get_resource_config(task.data.resource_name)
         if not resource_config or not resource_config.agent.agent_path:
-            return True  # 不需要Agent
+            return True
 
         try:
             # 设置为更新状态
@@ -395,7 +389,6 @@ class TaskExecutor(QObject):
 
             # 如果Agent已运行，直接返回
             if self._agent_process and self._agent_process.poll() is None:
-                # 更新完成，根据是否有任务决定下一个状态
                 next_state = DeviceState.PREPARING if task else DeviceState.CONNECTED
                 self.device_manager.set_state(next_state)
                 return True
@@ -408,9 +401,10 @@ class TaskExecutor(QObject):
             # 获取配置
             agent_config = resource_config.agent
 
-            # 准备Python环境
-            python_exe = await self._prepare_python_environment(
-                task,
+            # 准备Python环境 - 使用全局管理器
+            python_exe = await self._prepare_python_environment_global(
+                task.data.resource_name,
+                task.data.resource_path,
                 agent_config.version,
                 agent_config.use_venv,
                 agent_config.requirements_path
@@ -443,6 +437,69 @@ class TaskExecutor(QObject):
             await self._cleanup_agent()
             return False
 
+    async def _prepare_python_environment_global(
+            self,
+            resource_name: str,
+            resource_path: str,
+            python_version: str,
+            use_venv: bool,
+            requirements_path: str
+    ) -> Optional[str]:
+        """使用全局管理器准备Python环境"""
+        try:
+            # 确保Python已安装
+            if not await python_runtime_manager.ensure_python_installed(python_version):
+                # 使用系统Python
+                import sys
+                python_exe = sys.executable
+                self.logger.info(f"使用系统Python: {python_exe}")
+                use_venv = False
+                return python_exe
+
+            if use_venv:
+                # 创建虚拟环境
+                runtime_info = await python_runtime_manager.create_venv(
+                    python_version,
+                    resource_name
+                )
+
+                if not runtime_info:
+                    self.logger.error("创建虚拟环境失败")
+                    return None
+                # 安装依赖
+                if requirements_path:
+                    req_file = Path(resource_path) / requirements_path
+                    success = await python_runtime_manager.install_requirements(
+                        python_version,
+                        resource_name,
+                        req_file,
+                        force_reinstall=False
+                    )
+
+                    if not success:
+                        self.logger.error("安装依赖失败")
+                        return None
+
+                return str(runtime_info.python_exe)
+            else:
+                # 直接使用Python运行时
+                runtime = python_runtime_manager.get_runtime(python_version)
+                python_exe = runtime.get_python_executable()
+
+                # 如果有requirements，安装到全局Python
+                if requirements_path:
+                    req_file = Path(resource_path) / requirements_path
+                    if req_file.exists():
+                        self.logger.warning("不使用虚拟环境，依赖将安装到全局Python")
+                        # 这里可以选择是否安装到全局Python
+                        # 建议：对于不使用虚拟环境的情况，跳过依赖安装或给出警告
+
+                return str(python_exe)
+
+        except Exception as e:
+            self.logger.error(f"Python环境准备失败: {e}", exc_info=True)
+            return None
+
     async def _run_tasks(self, task: Task) -> dict:
         """执行任务列表"""
         task_list = task.data.task_list
@@ -450,7 +507,6 @@ class TaskExecutor(QObject):
 
         self.logger.info(f"执行任务列表，共 {len(task_list)} 个子任务")
 
-        # 确保设备状态显示为运行中
         if self.device_manager.get_state() != DeviceState.RUNNING:
             self.logger.warning(f"执行任务时设备状态异常: {self.device_manager.get_state()}")
 
@@ -494,148 +550,6 @@ class TaskExecutor(QObject):
             self.logger.info(f"子任务 {sub_task.task_entry} 执行完毕")
 
         return {"result": "success", "data": task.data}
-
-    async def _prepare_python_environment(
-            self, task: Task, python_version: str, use_venv: bool,
-            requirements_path: str
-    ) -> Optional[str]:
-        """准备Python环境"""
-        try:
-            # 确保Python已安装
-            if not await self.runtime_manager.ensure_python_installed(python_version):
-                import sys
-                python_exe = sys.executable
-                self.logger.info(f"使用系统Python: {python_exe}")
-                use_venv = False
-            else:
-                python_exe = str(self.runtime_manager.get_python_executable(python_version))
-
-            # 准备环境
-            if use_venv:
-                python_exe = await self._setup_venv_environment(
-                    task.data.resource_name,
-                    task.data.resource_path,
-                    python_version,
-                    requirements_path
-                )
-            else:
-                await self._install_requirements(
-                    python_exe,
-                    task.data.resource_path,
-                    requirements_path
-                )
-
-            return python_exe
-
-        except Exception as e:
-            self.logger.error(f"Python环境准备失败: {e}")
-            return None
-
-    async def _setup_venv_environment(
-            self, resource_name: str, resource_path: str,
-            python_version: str, requirements_path: str
-    ) -> str:
-        """设置虚拟环境"""
-        venv_dir = self.runtime_manager.get_venv_dir(python_version, resource_name)
-        venv_python = self.runtime_manager.get_venv_python(python_version, resource_name)
-
-        if not venv_python.exists():
-            self.logger.info(f"创建虚拟环境: {resource_name}")
-            await self.runtime_manager.create_venv(python_version, resource_name)
-
-        await self._check_and_install_deps(
-            str(venv_python),
-            resource_path,
-            requirements_path,
-            venv_dir
-        )
-
-        return str(venv_python)
-
-    async def _check_and_install_deps(
-            self, python_exe: str, resource_path: str,
-            requirements_path: str, venv_dir: Path
-    ):
-        """检查并安装依赖"""
-        req_file = Path(resource_path) / requirements_path
-
-        if not req_file.exists():
-            self.logger.info("未找到requirements.txt")
-            return
-
-        # 计算hash
-        def calc_hash():
-            with open(req_file, 'rb') as f:
-                return hashlib.md5(f.read()).hexdigest()
-
-        req_hash = await self._run_in_executor(calc_hash)
-
-        # 检查缓存
-        hash_file = venv_dir / ".deps_hash"
-        if hash_file.exists():
-            cached_hash = await self._run_in_executor(hash_file.read_text)
-            if cached_hash.strip() == req_hash:
-                self.logger.info("依赖未变化")
-                return
-
-        # 安装依赖
-        await self._install_requirements(
-            python_exe,
-            resource_path,
-            requirements_path
-        )
-
-        # 保存hash
-        hash_file.parent.mkdir(parents=True, exist_ok=True)
-        await self._run_in_executor(hash_file.write_text, req_hash)
-
-    async def _install_requirements(
-            self, python_exe: str, resource_path: str,
-            requirements_path: str
-    ):
-        """安装依赖"""
-        req_file = Path(resource_path) / requirements_path
-        if not req_file.exists():
-            return
-
-        self.logger.info(f"安装依赖: {req_file}")
-
-        await self.runtime_manager.install_requirements()
-        # 从配置文件加载pip源
-        pip_sources = await self._load_pip_sources()
-
-        # 升级pip
-        await self._run_pip_command(python_exe, ["-m", "pip", "install", "--upgrade", "pip"])
-
-        # 尝试安装
-        for i, source in enumerate(pip_sources):
-            try:
-                self.logger.info(f"使用pip源 {i + 1}/{len(pip_sources)}: {source}")
-
-                cmd = [
-                    python_exe, "-m", "pip", "install",
-                    "-r", str(req_file),
-                    "-i", source
-                ]
-
-                process = await asyncio.create_subprocess_exec(
-                    *cmd,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE
-                )
-
-                stdout, stderr = await process.communicate()
-
-                if process.returncode == 0:
-                    self.logger.info("依赖安装完成")
-                    return
-
-                self.logger.warning(f"pip源 {source} 安装失败")
-
-            except Exception as e:
-                self.logger.warning(f"使用pip源 {source} 出错: {e}")
-
-        raise Exception("所有pip源都无法安装依赖")
 
     async def _start_agent_process(self, task: Task, agent_config, python_exe: str):
         """启动Agent进程"""
