@@ -394,12 +394,6 @@ class TaskExecutor(QObject):
             # 设置为更新状态
             self.device_manager.set_state(DeviceState.UPDATING)
 
-            # 如果Agent已运行，直接返回
-            if self._agent_process and self._agent_process.poll() is None:
-                next_state = DeviceState.PREPARING if task else DeviceState.CONNECTED
-                self.device_manager.set_state(next_state)
-                return True
-
             # 创建Agent客户端
             if not self._agent:
                 self._agent = AgentClient()

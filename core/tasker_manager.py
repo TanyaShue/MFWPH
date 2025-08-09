@@ -162,10 +162,6 @@ class TaskerManager(QObject):
         elif state == DeviceState.COMPLETED:
             # 任务完成
             self._total_tasks_completed += 1
-            self.logger.info(
-                f"设备 {device_name} 的任务 {task_id} 已完成 "
-                f"(总完成数: {self._total_tasks_completed})"
-            )
 
             # 检查是否所有任务都完成了
             with QMutexLocker(self._mutex):
