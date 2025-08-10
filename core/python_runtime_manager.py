@@ -248,8 +248,8 @@ class GlobalPythonRuntimeManager:
                 ]
             },
             "pip_sources": [
-                "https://pypi.tuna.tsinghua.edu.cn/simple/",
                 "https://mirrors.aliyun.com/pypi/simple/",
+                "https://pypi.tuna.tsinghua.edu.cn/simple/",
                 "https://pypi.org/simple/"
             ],
             "get_pip_sources": [
@@ -613,7 +613,7 @@ class GlobalPythonRuntimeManager:
             for source in pip_sources:
                 try:
                     self.logger.info(f"使用pip源安装依赖: {source}")
-
+                    notification_manager.show_info("首次安装等待时间较长,请耐心等待...","安装依赖",5000)
                     # 先升级pip（仅在第一次尝试时）
                     if retry == 0:
                         upgrade_cmd = [
