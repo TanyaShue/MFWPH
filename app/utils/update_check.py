@@ -1,3 +1,4 @@
+import re
 import time
 from pathlib import Path
 
@@ -13,7 +14,12 @@ from app.models.logging.log_manager import log_manager
 # 获取应用程序日志记录器
 logger = log_manager.get_app_logger()
 
-
+platform_patterns={
+    "windows": [r"windows.*\.zip$", r"\.zip$"],
+    "linux": [r"linux.*\.tar\.gz$", r"\.tar\.gz$"],
+    "macos-arm64": [r"macos-arm64.*\.tar\.gz$", r"\.zip$"],
+    "macos-x64": [r"macos-x64.*\.tar\.gz$", r"\.zip$"]
+}
 class UpdateChecker(QThread):
     """资源更新检查线程"""
     # 信号定义
@@ -176,8 +182,22 @@ class UpdateChecker(QThread):
 
         return False
 
-    def _check_github_update(self, resource):
-        """检查 GitHub 更新"""
+    def _check_github_update(self, resource, platform_name="windows", platform_patterns=None):
+        """
+        检查 GitHub 更新（支持按平台匹配下载包）
+        :param resource: 资源对象，包含 resource_rep_url, resource_name, resource_version
+        :param platform_name: 平台名，如 "windows", "linux", "macos-arm64", "macos-x64"
+        :param platform_patterns: dict，每个平台对应一个正则表达式列表
+                                  例如：
+                                  {
+                                      "windows": [r"windows.*\.zip$", r"\.zip$"],
+                                      "linux": [r"linux.*\.tar\.gz$", r"\.tar\.gz$"],
+                                      "macos-arm64": [r"macos-arm64.*\.tar\.gz$", r"\.zip$"],
+                                      "macos-x64": [r"macos-x64.*\.tar\.gz$", r"\.zip$"]
+                                  }
+        """
+        if platform_patterns is None:
+            platform_patterns = platform_patterns
         repo_url = resource.resource_rep_url
 
         if not repo_url or "github.com" not in repo_url:
@@ -195,7 +215,7 @@ class UpdateChecker(QThread):
 
             owner_repo = repo_parts[1]
 
-            # 获取最新发布版本
+            # 获取最新 release
             api_url = f"{self.github_api_url}/repos/{owner_repo}/releases/latest"
             headers = {"Accept": "application/vnd.github.v3+json"}
 
@@ -208,9 +228,8 @@ class UpdateChecker(QThread):
 
             # 处理 HTTP 错误
             if response.status_code == 403:
-                error_message = "请求被拒绝 (403)：可能是超出了 API 请求速率限制"
                 if self.single_mode:
-                    self.check_failed.emit(resource.resource_name, error_message)
+                    self.check_failed.emit(resource.resource_name, "请求被拒绝 (403)：可能是超出了 API 请求速率限制")
                 return False
 
             if response.status_code != 200:
@@ -222,13 +241,30 @@ class UpdateChecker(QThread):
 
             # 解析返回结果
             if "/releases/latest" in api_url:
-                # 处理 releases 数据
                 latest_version = result.get("tag_name", "")
                 download_assets = result.get("assets", [])
-                if download_assets:
+
+                # 平台匹配
+                download_url = ""
+                if platform_name in platform_patterns:
+                    patterns = platform_patterns[platform_name]
+                    for pattern in patterns:
+                        for asset in download_assets:
+                            url = asset.get("browser_download_url", "")
+                            if re.search(pattern, url, re.IGNORECASE):
+                                download_url = url
+                                break
+                        if download_url:
+                            break
+
+                # 如果没匹配到，使用第一个资源
+                if not download_url and download_assets:
                     download_url = download_assets[0].get("browser_download_url", "")
-                else:
+
+                # 如果还没匹配到，则用 zipball_url
+                if not download_url:
                     download_url = result.get("zipball_url", "")
+
             else:
                 # 处理 tags 数据
                 if not result or not isinstance(result, list):
@@ -238,7 +274,6 @@ class UpdateChecker(QThread):
 
                 latest_tag = result[0]
                 latest_version = latest_tag.get("name", "").lstrip("v")
-
                 download_url = f"https://github.com/{owner_repo}/archive/refs/tags/{latest_tag.get('name', '')}.zip"
 
             # 比较版本
@@ -261,7 +296,6 @@ class UpdateChecker(QThread):
             return False
 
         return False
-
 
 class UpdateDownloader(QThread):
     """更新下载线程"""
