@@ -563,21 +563,32 @@ class TaskExecutor(QObject):
 
         self.logger.debug(f"Agent启动命令: {' '.join(cmd)}")
 
-        # 启动进程
         def start_process():
-            return subprocess.Popen(
-                cmd,
-                cwd=os.getcwd(),
-                stdout=subprocess.PIPE,
-                stderr=subprocess.PIPE,
-                env=os.environ.copy(),
-                creationflags=subprocess.CREATE_NO_WINDOW if os.name == 'nt' else 0
-            )
+            if os.name == 'nt':
+                return subprocess.Popen(
+                    cmd,
+                    cwd=os.getcwd(),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=os.environ.copy(),
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+                )
+            else:
+                return subprocess.Popen(
+                    cmd,
+                    cwd=os.getcwd(),
+                    stdout=subprocess.PIPE,
+                    stderr=subprocess.PIPE,
+                    env=os.environ.copy(),
+                    preexec_fn=os.setsid
+                )
 
         self._agent_process = await self._run_in_executor(start_process)
         self.logger.info(f"Agent进程已启动，PID: {self._agent_process.pid}")
-        # 保存 PID，方便退出时杀掉
-        global_config.agent_pid = self._agent_process.pid
+
+        # 保存进程对象，方便退出时直接杀进程组
+        global_config.agent_process = self._agent_process
+
         # 启动日志线程
         self._start_log_threads()
 
