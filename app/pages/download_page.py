@@ -632,19 +632,19 @@ class DownloadPage(QWidget):
         layout.setSpacing(12)
 
         # 添加资源按钮
-        self.add_btn = QPushButton(" 添加资源")
+        self.add_btn = QPushButton(" 添加资源(更新中)")
         self.add_btn.setObjectName("addResourceButton")
         self.add_btn.setIcon(QIcon("assets/icons/add.png"))
         self.add_btn.setFixedHeight(42)
         self.add_btn.setCursor(Qt.PointingHandCursor)
-        self.add_btn.clicked.connect(self.show_add_resource_dialog)        # 添加资源按钮
+        # self.add_btn.clicked.connect(self.show_add_resource_dialog)        # 添加资源按钮
 
-        self.add_new_btn = QPushButton(" 新建资源")
+        self.add_new_btn = QPushButton(" 新建资源(更新中,)")
         self.add_new_btn.setObjectName("addResourceButton")
         self.add_new_btn.setIcon(QIcon("assets/icons/add.png"))
         self.add_new_btn.setFixedHeight(42)
         self.add_new_btn.setCursor(Qt.PointingHandCursor)
-        self.add_new_btn.clicked.connect(self.show_add_resource_dialog)
+        # self.add_new_btn.clicked.connect(self.show_add_resource_dialog)
 
         # 检查全部按钮
         self.check_all_btn = QPushButton(" 检查全部")
