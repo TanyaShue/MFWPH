@@ -46,6 +46,23 @@ def load_light_palette() -> QPalette:
 def kill_processes():
     app_logger = log_manager.get_app_logger()
 
+    # 终止所有agent进程
+    try:
+        from app.models.config import global_config
+        if hasattr(global_config, "agent_pid") and global_config.agent_pid:
+            try:
+                proc = psutil.Process(global_config.agent_pid)
+                for child in proc.children(recursive=True):
+                    child.kill()
+                    app_logger.info(f"Killed agent child process {child.name()} with pid {child.pid}")
+                proc.kill()
+                app_logger.info(f"Killed agent process with pid {global_config.agent_pid}")
+            except psutil.NoSuchProcess:
+                app_logger.info(f"Agent process {global_config.agent_pid} already terminated")
+            except Exception as e:
+                app_logger.error(f"Failed to kill agent process {global_config.agent_pid}: {e}")
+    except Exception as e:
+        app_logger.error(f"Error checking agent process PID: {e}")
     # 获取当前进程
     current_process = psutil.Process(os.getpid())
     current_process_name = current_process.name()

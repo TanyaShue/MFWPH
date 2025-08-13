@@ -576,7 +576,8 @@ class TaskExecutor(QObject):
 
         self._agent_process = await self._run_in_executor(start_process)
         self.logger.info(f"Agent进程已启动，PID: {self._agent_process.pid}")
-
+        # 保存 PID，方便退出时杀掉
+        global_config.agent_pid = self._agent_process.pid
         # 启动日志线程
         self._start_log_threads()
 
