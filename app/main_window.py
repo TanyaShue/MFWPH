@@ -408,7 +408,7 @@ class MainWindow(QMainWindow):
             os.makedirs(resource_dir)
 
         global_config.load_all_resources_from_directory(resource_dir)
-        scheduled_task_manager.setup_all_device_scheduled_tasks()
+        # scheduled_task_manager.setup_all_device_scheduled_tasks()
         # task_manager.setup_all_device_scheduled_tasks()
 
     def show_previous_device_or_home(self, deleted_device_name):

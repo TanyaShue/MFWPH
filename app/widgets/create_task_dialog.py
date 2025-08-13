@@ -67,13 +67,9 @@ class CreateTaskDialog(QDialog):
         device_layout.setSpacing(5)
 
         self.device_combo = QComboBox()
-        self.device_combo.addItem("-- 请选择设备 --")
-        try:
-            devices = global_config.get_all_device_names()
-            for device in devices:
-                self.device_combo.addItem(device)
-        except:
-            self.device_combo.addItems(["Device_1", "Device_2", "Device_3"])
+        devices = global_config.get_app_config().devices
+        for device in devices:
+            self.device_combo.addItem(device.device_name)
         self.device_combo.currentTextChanged.connect(self.on_device_changed)
         device_layout.addWidget(self.device_combo)
         device_group.setLayout(device_layout)
@@ -87,6 +83,10 @@ class CreateTaskDialog(QDialog):
 
         self.resource_combo = QComboBox()
         self.resource_combo.addItem("-- 请选择资源 --")
+        device_config = global_config.resource_configs.keys()
+        for resource_name in device_config:
+            self.resource_combo.addItem(resource_name)
+
         self.resource_combo.currentTextChanged.connect(self.on_resource_changed)
         resource_layout.addWidget(self.resource_combo)
 
@@ -207,23 +207,8 @@ class CreateTaskDialog(QDialog):
         else:
             self.selected_device = device_name
             self.resource_group.setEnabled(True)
-            self.load_device_resources(device_name)
         self.update_create_button()
 
-    def load_device_resources(self, device_name):
-        self.resource_combo.clear()
-        self.resource_combo.addItem("-- 请选择资源 --")
-        try:
-            device_config = global_config.get_device_config(device_name)
-            if device_config and hasattr(device_config, 'resources'):
-                for resource_name in device_config.resources:
-                    self.resource_combo.addItem(resource_name)
-            else:
-                for i in range(1, 6):
-                    self.resource_combo.addItem(f"Resource_{i}")
-        except:
-            for i in range(1, 6):
-                self.resource_combo.addItem(f"Resource_{i}")
 
     def on_resource_changed(self, resource_name):
         if resource_name == "-- 请选择资源 --":

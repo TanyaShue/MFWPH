@@ -55,14 +55,118 @@ class ResourceSettings:
     selected_tasks: List[str] = field(default_factory=list)
     options: List[OptionConfig] = field(default_factory=list)
 
-# 首先，创建一个新的数据类来表示资源的定时任务配置
+
+# app_config.py - 定时任务相关的数据类
+
+from dataclasses import dataclass, field
+from typing import List, Optional, Any, Dict
+
+
 @dataclass
 class ResourceSchedule:
     """资源的定时任务配置。"""
     enabled: bool = False
-    schedule_time: str = ""  # Changed from List[str] to a single string
-    settings_name: str = ""  # 该定时任务启用的配置文件
+    schedule_time: str = ""  # 格式: "HH:mm:ss"
+    schedule_type: str = "daily"  # "once", "daily", "weekly"
+    week_days: List[str] = field(default_factory=list)  # 周执行时的星期列表 ["周一", "周二", ...]
+    settings_name: str = ""  # 使用的配置方案
+    notify: bool = False  # 是否发送通知
+    task_id: Optional[str] = None  # 任务ID，用于关联管理器中的任务
 
+    def to_ui_format(self) -> dict:
+        """转换为UI所需的格式"""
+        result = {
+            'schedule_type': self.get_schedule_type_display(),
+            'time': self.schedule_time,
+            'config_scheme': self.settings_name or '默认配置',
+            'notify': self.notify,
+            'enabled': self.enabled
+        }
+        if self.schedule_type == 'weekly' and self.week_days:
+            result['week_days'] = self.week_days
+        if self.task_id:
+            result['id'] = self.task_id
+        return result
+
+    def get_schedule_type_display(self) -> str:
+        """获取显示用的调度类型"""
+        type_map = {
+            'once': '单次执行',
+            'daily': '每日执行',
+            'weekly': '每周执行'
+        }
+        return type_map.get(self.schedule_type, '每日执行')
+
+    @staticmethod
+    def from_ui_format(ui_data: dict) -> 'ResourceSchedule':
+        """从UI格式创建ResourceSchedule对象"""
+        schedule_type_map = {
+            '单次执行': 'once',
+            '每日执行': 'daily',
+            '每周执行': 'weekly'
+        }
+
+        return ResourceSchedule(
+            enabled=ui_data.get('status', '活动') == '活动',
+            schedule_time=ui_data.get('time', ''),
+            schedule_type=schedule_type_map.get(ui_data.get('schedule_type', '每日执行'), 'daily'),
+            week_days=ui_data.get('week_days', []),
+            settings_name=ui_data.get('config_scheme', '默认配置'),
+            notify=ui_data.get('notify', False),
+            task_id=ui_data.get('id')
+        )
+
+
+@dataclass
+class Resource:
+    """Resource configuration within a device."""
+    resource_name: str
+    settings_name: str  # 引用 ResourceSettings 的名称
+    enable: bool = False
+    schedules_enable: bool = False  # 是否启用资源的定时任务
+    schedules: List[ResourceSchedule] = field(default_factory=list)  # 资源的定时任务列表
+    # 内部引用，不会被序列化
+    _app_config: Optional['AppConfig'] = field(default=None, repr=False, compare=False)
+
+    @property
+    def selected_tasks(self) -> List[str]:
+        """从引用的设置中获取 selected_tasks。"""
+        if not self._app_config:
+            return []
+        for settings in self._app_config.resource_settings:
+            if settings.name == self.settings_name and settings.resource_name == self.resource_name:
+                return settings.selected_tasks
+        return []
+
+    @property
+    def options(self) -> List['OptionConfig']:
+        """从引用的设置中获取 options。"""
+        if not self._app_config:
+            return []
+        for settings in self._app_config.resource_settings:
+            if settings.name == self.settings_name and settings.resource_name == self.resource_name:
+                return settings.options
+        return []
+
+    def set_app_config(self, app_config: 'AppConfig'):
+        """设置对 AppConfig 的引用。"""
+        self._app_config = app_config
+
+
+def resource_schedule_to_dict(schedule: ResourceSchedule) -> Dict[str, Any]:
+    """辅助函数，将 ResourceSchedule 对象转换为字典。"""
+    result = {
+        'enabled': schedule.enabled,
+        'schedule_time': schedule.schedule_time,
+        'schedule_type': schedule.schedule_type,
+        'settings_name': schedule.settings_name,
+        'notify': schedule.notify
+    }
+    if schedule.week_days:
+        result['week_days'] = schedule.week_days
+    if schedule.task_id:
+        result['task_id'] = schedule.task_id
+    return result
 # 修改 Resource 类，添加schedules字段
 @dataclass
 class Resource:
@@ -364,10 +468,10 @@ def resource_to_dict(resource: Resource) -> Dict[str, Any]:
         result['schedules'] = [resource_schedule_to_dict(schedule) for schedule in resource.schedules]
 
     return result
-# 添加新的辅助函数，将 ResourceSchedule 对象转换为字典
-def resource_schedule_to_dict(schedule: ResourceSchedule) -> Dict[str, Any]:
-    """辅助函数，将 ResourceSchedule 对象转换为字典。"""
-    return schedule.__dict__
+# # 添加新的辅助函数，将 ResourceSchedule 对象转换为字典
+# def resource_schedule_to_dict(schedule: ResourceSchedule) -> Dict[str, Any]:
+#     """辅助函数，将 ResourceSchedule 对象转换为字典。"""
+#     return schedule.__dict__
 
 def resource_settings_to_dict(settings: ResourceSettings) -> Dict[str, Any]:
     """辅助函数，将 ResourceSettings 对象转换为字典。"""

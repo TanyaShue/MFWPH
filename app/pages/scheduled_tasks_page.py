@@ -1,10 +1,9 @@
-# scheduled_task_page.py
+# scheduled_tasks_page.py
 from PySide6.QtCore import Qt, Signal, QDateTime
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QLabel, QPushButton, QCheckBox,
-    QMessageBox, QTableWidget,
-    QTableWidgetItem, QHeaderView, QAbstractItemView
+    QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
 )
 
 from app.utils.notification_manager import notification_manager
@@ -12,7 +11,7 @@ from app.widgets.create_task_dialog import CreateTaskDialog
 
 
 class TaskPlanTableWidget(QWidget):
-    """任务计划表组件 - 简化版"""
+    """任务计划表组件 - 与定时任务管理器集成"""
 
     task_deleted = Signal(int)
     task_toggled = Signal(int, bool)
@@ -21,8 +20,8 @@ class TaskPlanTableWidget(QWidget):
 
     def __init__(self, parent=None):
         super().__init__(parent)
-        self.task_counter = 0
-        self.all_tasks = []
+        self.task_manager = None  # 将在初始化后设置
+        self.all_tasks = []  # 本地任务列表缓存
         self.init_ui()
 
     def init_ui(self):
@@ -221,80 +220,78 @@ class TaskPlanTableWidget(QWidget):
         # 允许用户通过双击列边界自动调整列宽
         header.setSectionsClickable(True)
 
-    def adjust_column_widths(self):
-        """根据内容自动调整某些列的宽度"""
-        if self.table.rowCount() == 0:
+    def set_task_manager(self, task_manager):
+        """设置定时任务管理器"""
+        self.task_manager = task_manager
+
+        # 连接信号
+        self.task_manager.task_added.connect(self.on_task_added_by_manager)
+        self.task_manager.task_removed.connect(self.on_task_removed_by_manager)
+        self.task_manager.task_status_changed.connect(self.on_task_status_changed_by_manager)
+        self.task_manager.task_modified.connect(self.on_task_modified_by_manager)
+
+        # 加载现有任务
+        self.load_existing_tasks()
+
+    def load_existing_tasks(self):
+        """从定时任务管理器加载现有任务"""
+        if not self.task_manager:
             return
 
-        # 仅调整需要根据内容变化的列
-        for col in [1, 3, 4, 7]:  # 设备、类型、执行时间、状态
-            self.table.resizeColumnToContents(col)
-            # 确保不会太窄或太宽
-            current_width = self.table.columnWidth(col)
-            if col == 1:  # 设备
-                self.table.setColumnWidth(col, min(max(current_width, 80), 150))
-            elif col == 3:  # 类型
-                self.table.setColumnWidth(col, min(max(current_width, 50), 80))
-            elif col == 4:  # 执行时间
-                self.table.setColumnWidth(col, min(max(current_width, 100), 200))
-            elif col == 7:  # 状态
-                self.table.setColumnWidth(col, min(max(current_width, 50), 80))
+        # 清空现有表格
+        self.table.setRowCount(0)
+        self.all_tasks.clear()
 
-    def add_task(self, task_info):
-        self.task_counter += 1
-        task_id = self.task_counter
+        # 初始化任务（从配置加载）
+        existing_tasks = self.task_manager.initialize_from_config()
 
-        task_data = {
-            'id': task_id,
-            'device': task_info['device'],
-            'resource': task_info['resource'],
-            'schedule_type': task_info['schedule_type'],
-            'time': task_info['time'],
-            'config_scheme': task_info.get('config_scheme', '默认配置'),
-            'notify': task_info.get('notify', False),
-            'status': "活动",
-            'create_time': QDateTime.currentDateTime()
-        }
+        # 添加到本地列表和表格
+        for task_info in existing_tasks:
+            self.all_tasks.append(task_info)
+            self.add_task_to_table(task_info)
 
-        if task_info['schedule_type'] == '每周执行' and 'week_days' in task_info:
-            task_data['week_days'] = task_info['week_days']
-
-        self.all_tasks.append(task_data)
         self.update_filter_options()
-        self.add_task_to_table(task_data)
         self.update_stats()
-
-        # 添加任务后调整列宽
         self.adjust_column_widths()
 
+    def add_task(self, task_info):
+        """通过管理器添加任务"""
+        if self.task_manager:
+            # 通过管理器添加任务，管理器会发出信号
+            task_id = self.task_manager.add_task(task_info)
+            task_info['id'] = task_id
+            # UI更新会通过信号自动处理
+
     def add_task_to_table(self, task_data):
+        """添加任务到表格（内部方法）"""
         row = self.table.rowCount()
         self.table.insertRow(row)
 
         # ID
-        id_item = QTableWidgetItem(str(task_data['id']))
+        id_item = QTableWidgetItem(str(task_data.get('id', '')))
         id_item.setTextAlignment(Qt.AlignCenter)
         id_item.setData(Qt.UserRole, task_data)
         self.table.setItem(row, 0, id_item)
 
         # 设备
-        self.table.setItem(row, 1, QTableWidgetItem(task_data['device']))
+        self.table.setItem(row, 1, QTableWidgetItem(task_data.get('device', '')))
 
         # 资源
-        self.table.setItem(row, 2, QTableWidgetItem(task_data['resource']))
+        self.table.setItem(row, 2, QTableWidgetItem(task_data.get('resource', '')))
 
         # 类型
+        schedule_type = task_data.get('schedule_type', '每日执行')
         type_text = {'单次执行': '单次', '每日执行': '每日', '每周执行': '每周'}.get(
-            task_data['schedule_type'], task_data['schedule_type']
+            schedule_type, schedule_type
         )
         type_item = QTableWidgetItem(type_text)
         type_item.setTextAlignment(Qt.AlignCenter)
         self.table.setItem(row, 3, type_item)
 
         # 执行时间
-        time_text = task_data['time']
-        if 'week_days' in task_data:
-            days = [d[1:] for d in task_data['week_days']]
+        time_text = task_data.get('time', '00:00:00')
+        if 'week_days' in task_data and task_data['week_days']:
+            days = [d[1:] if d.startswith('周') else d for d in task_data['week_days']]
             time_text = f"{task_data['time']} ({','.join(days)})"
         self.table.setItem(row, 4, QTableWidgetItem(time_text))
 
@@ -304,7 +301,7 @@ class TaskPlanTableWidget(QWidget):
         config_combo.setCurrentText(task_data.get('config_scheme', '默认配置'))
         config_combo.setStyleSheet("font-size: 10px; padding: 2px;")
         config_combo.currentTextChanged.connect(
-            lambda text, tid=task_data['id']: self.on_config_changed(tid, text)
+            lambda text, tid=task_data.get('id'): self.on_config_changed(tid, text)
         )
         self.table.setCellWidget(row, 5, config_combo)
 
@@ -317,16 +314,17 @@ class TaskPlanTableWidget(QWidget):
         notify_checkbox = QCheckBox()
         notify_checkbox.setChecked(task_data.get('notify', False))
         notify_checkbox.stateChanged.connect(
-            lambda state, tid=task_data['id']: self.on_notify_changed(tid, state == Qt.Checked)
+            lambda state, tid=task_data.get('id'): self.on_notify_changed(tid, state == Qt.Checked)
         )
         notify_layout.addWidget(notify_checkbox)
 
         self.table.setCellWidget(row, 6, notify_widget)
 
         # 状态
-        status_item = QTableWidgetItem(task_data['status'])
+        status = task_data.get('status', '活动')
+        status_item = QTableWidgetItem(status)
         status_item.setTextAlignment(Qt.AlignCenter)
-        status_item.setForeground(QColor("#4caf50") if task_data['status'] == "活动" else QColor("#ff9800"))
+        status_item.setForeground(QColor("#4caf50") if status == "活动" else QColor("#ff9800"))
         status_item.setFont(QFont("", 10, QFont.Bold))
         self.table.setItem(row, 7, status_item)
 
@@ -336,7 +334,7 @@ class TaskPlanTableWidget(QWidget):
         op_layout.setContentsMargins(5, 2, 5, 2)
         op_layout.setSpacing(5)
 
-        toggle_btn = QPushButton("暂停" if task_data['status'] == "活动" else "启动")
+        toggle_btn = QPushButton("暂停" if status == "活动" else "启动")
         toggle_btn.setFixedSize(35, 22)
         toggle_btn.setStyleSheet("""
             QPushButton {
@@ -371,44 +369,145 @@ class TaskPlanTableWidget(QWidget):
         self.table.setCellWidget(row, 8, op_widget)
 
     def toggle_task(self, row):
+        """切换任务状态"""
         id_item = self.table.item(row, 0)
         status_item = self.table.item(row, 7)
 
-        if id_item and status_item:
-            task_data = id_item.data(Qt.UserRole)
-            new_status = "暂停" if status_item.text() == "活动" else "活动"
+        if id_item and status_item and self.task_manager:
+            task_id = id_item.text()
+            new_enabled = status_item.text() != "活动"
 
-            status_item.setText(new_status)
-            status_item.setForeground(QColor("#4caf50") if new_status == "活动" else QColor("#ff9800"))
-            task_data['status'] = new_status
-
-            widget = self.table.cellWidget(row, 8)
-            if widget:
-                toggle_btn = widget.findChildren(QPushButton)[0]
-                toggle_btn.setText("暂停" if new_status == "活动" else "启动")
-
-            self.task_toggled.emit(task_data['id'], new_status == "活动")
-            self.update_stats()
+            # 通过管理器切换状态
+            if self.task_manager.toggle_task_status(task_id, new_enabled):
+                # UI更新会通过信号自动处理
+                pass
 
     def delete_task(self, row):
+        """删除任务"""
         id_item = self.table.item(row, 0)
-        if id_item:
+        if id_item and self.task_manager:
+            task_id = id_item.text()
             task_data = id_item.data(Qt.UserRole)
 
             reply = QMessageBox.question(
                 self, "确认删除",
-                f"确定要删除任务 ID:{task_data['id']} 吗？",
+                f"确定要删除任务 ID:{task_id} 吗？",
                 QMessageBox.Yes | QMessageBox.No
             )
 
             if reply == QMessageBox.Yes:
-                self.all_tasks = [t for t in self.all_tasks if t['id'] != task_data['id']]
+                # 通过管理器删除任务
+                if self.task_manager.remove_task(task_id):
+                    # UI更新会通过信号自动处理
+                    pass
+
+    def on_config_changed(self, task_id, config_text):
+        """配置方案变更"""
+        if self.task_manager:
+            self.task_manager.update_task_config(str(task_id), config_text)
+            # 更新本地缓存
+            for task in self.all_tasks:
+                if str(task.get('id')) == str(task_id):
+                    task['config_scheme'] = config_text
+                    break
+        self.task_config_changed.emit(int(task_id) if task_id else 0, config_text, 'config_scheme')
+
+    def on_notify_changed(self, task_id, notify):
+        """通知设置变更"""
+        if self.task_manager:
+            self.task_manager.update_task_notify(str(task_id), notify)
+            # 更新本地缓存
+            for task in self.all_tasks:
+                if str(task.get('id')) == str(task_id):
+                    task['notify'] = notify
+                    break
+        self.task_notify_changed.emit(int(task_id) if task_id else 0, notify)
+
+    def on_task_added_by_manager(self, task_info):
+        """处理管理器的任务添加信号"""
+        # 添加到本地列表
+        self.all_tasks.append(task_info)
+        # 如果符合当前筛选条件，添加到表格
+        if self._task_matches_filter(task_info):
+            self.add_task_to_table(task_info)
+        self.update_filter_options()
+        self.update_stats()
+        self.adjust_column_widths()
+
+    def on_task_removed_by_manager(self, task_id):
+        """处理管理器的任务删除信号"""
+        # 从本地列表删除
+        self.all_tasks = [t for t in self.all_tasks if str(t.get('id')) != str(task_id)]
+
+        # 从表格删除
+        for row in range(self.table.rowCount()):
+            id_item = self.table.item(row, 0)
+            if id_item and id_item.text() == str(task_id):
                 self.table.removeRow(row)
-                self.update_filter_options()
-                self.task_deleted.emit(task_data['id'])
-                self.update_stats()
+                break
+
+        self.update_filter_options()
+        self.update_stats()
+
+    def on_task_status_changed_by_manager(self, task_id, enabled):
+        """处理管理器的任务状态变化信号"""
+        # 更新本地缓存
+        for task in self.all_tasks:
+            if str(task.get('id')) == str(task_id):
+                task['status'] = '活动' if enabled else '暂停'
+                break
+
+        # 更新表格
+        for row in range(self.table.rowCount()):
+            id_item = self.table.item(row, 0)
+            if id_item and id_item.text() == str(task_id):
+                status_item = self.table.item(row, 7)
+                if status_item:
+                    new_status = "活动" if enabled else "暂停"
+                    status_item.setText(new_status)
+                    status_item.setForeground(
+                        QColor("#4caf50") if enabled else QColor("#ff9800")
+                    )
+
+                    # 更新按钮文本
+                    widget = self.table.cellWidget(row, 8)
+                    if widget:
+                        buttons = widget.findChildren(QPushButton)
+                        if buttons:
+                            toggle_btn = buttons[0]
+                            toggle_btn.setText("暂停" if enabled else "启动")
+                break
+
+        self.update_stats()
+
+    def on_task_modified_by_manager(self, task_id, task_info):
+        """处理管理器的任务修改信号"""
+        # 更新本地缓存
+        for i, task in enumerate(self.all_tasks):
+            if str(task.get('id')) == str(task_id):
+                self.all_tasks[i] = task_info
+                break
+
+        # 重新应用筛选以更新表格
+        self.apply_filter()
+
+    def _task_matches_filter(self, task):
+        """检查任务是否符合当前筛选条件"""
+        device_filter = self.device_filter.currentText()
+        type_filter = self.type_filter.currentText()
+        status_filter = self.status_filter.currentText()
+
+        if device_filter != "全部设备" and task.get('device') != device_filter:
+            return False
+        if type_filter != "全部类型" and task.get('schedule_type') != type_filter:
+            return False
+        if status_filter != "全部状态" and task.get('status') != status_filter:
+            return False
+
+        return True
 
     def apply_filter(self):
+        """应用筛选条件"""
         self.table.setRowCount(0)
 
         device_filter = self.device_filter.currentText()
@@ -416,23 +515,22 @@ class TaskPlanTableWidget(QWidget):
         status_filter = self.status_filter.currentText()
 
         for task in self.all_tasks:
-            if device_filter != "全部设备" and task['device'] != device_filter:
+            if device_filter != "全部设备" and task.get('device') != device_filter:
                 continue
-            if type_filter != "全部类型" and task['schedule_type'] != type_filter:
+            if type_filter != "全部类型" and task.get('schedule_type') != type_filter:
                 continue
-            if status_filter != "全部状态" and task['status'] != status_filter:
+            if status_filter != "全部状态" and task.get('status') != status_filter:
                 continue
 
             self.add_task_to_table(task)
 
         self.update_stats()
-
-        # 应用筛选后调整列宽
         self.adjust_column_widths()
 
     def update_filter_options(self):
+        """更新筛选选项"""
         current = self.device_filter.currentText()
-        devices = sorted(set(task['device'] for task in self.all_tasks))
+        devices = sorted(set(task.get('device', '') for task in self.all_tasks if task.get('device')))
 
         self.device_filter.blockSignals(True)
         self.device_filter.clear()
@@ -446,45 +544,45 @@ class TaskPlanTableWidget(QWidget):
         self.device_filter.blockSignals(False)
 
     def clear_filter(self):
+        """清除筛选条件"""
         self.device_filter.setCurrentIndex(0)
         self.type_filter.setCurrentIndex(0)
         self.status_filter.setCurrentIndex(0)
         self.apply_filter()
 
-    def on_config_changed(self, task_id, config_text):
-        for task in self.all_tasks:
-            if task['id'] == task_id:
-                task['config_scheme'] = config_text
-                break
-        self.task_config_changed.emit(task_id, config_text, 'config_scheme')
-
-    def on_notify_changed(self, task_id, notify):
-        for task in self.all_tasks:
-            if task['id'] == task_id:
-                task['notify'] = notify
-                break
-        self.task_notify_changed.emit(task_id, notify)
-
     def pause_all_tasks(self):
-        count = sum(1 for task in self.all_tasks if task['status'] == "活动")
+        """暂停所有任务"""
+        if not self.task_manager:
+            return
+
+        count = 0
+        for task in self.all_tasks:
+            if task.get('status') == "活动":
+                task_id = str(task.get('id'))
+                if self.task_manager.toggle_task_status(task_id, False):
+                    count += 1
+
         if count > 0:
-            for task in self.all_tasks:
-                if task['status'] == "活动":
-                    task['status'] = "暂停"
-            self.apply_filter()
             QMessageBox.information(self, "批量操作", f"已暂停 {count} 个任务")
 
     def start_all_tasks(self):
-        count = sum(1 for task in self.all_tasks if task['status'] == "暂停")
+        """启动所有任务"""
+        if not self.task_manager:
+            return
+
+        count = 0
+        for task in self.all_tasks:
+            if task.get('status') == "暂停":
+                task_id = str(task.get('id'))
+                if self.task_manager.toggle_task_status(task_id, True):
+                    count += 1
+
         if count > 0:
-            for task in self.all_tasks:
-                if task['status'] == "暂停":
-                    task['status'] = "活动"
-            self.apply_filter()
             QMessageBox.information(self, "批量操作", f"已启动 {count} 个任务")
 
     def clear_all_tasks(self):
-        if not self.all_tasks:
+        """清空所有任务"""
+        if not self.all_tasks or not self.task_manager:
             return
 
         reply = QMessageBox.question(
@@ -494,25 +592,47 @@ class TaskPlanTableWidget(QWidget):
         )
 
         if reply == QMessageBox.Yes:
-            self.all_tasks.clear()
-            self.table.setRowCount(0)
-            self.update_stats()
-            self.device_filter.clear()
-            self.device_filter.addItem("全部设备")
+            # 通过管理器删除所有任务
+            task_ids = [str(task.get('id')) for task in self.all_tasks]
+            for task_id in task_ids:
+                self.task_manager.remove_task(task_id)
+            # UI会通过信号自动更新
 
     def update_stats(self):
+        """更新统计信息"""
         total = len(self.all_tasks)
-        active = sum(1 for task in self.all_tasks if task['status'] == "活动")
-        paused = sum(1 for task in self.all_tasks if task['status'] == "暂停")
+        active = sum(1 for task in self.all_tasks if task.get('status') == "活动")
+        paused = sum(1 for task in self.all_tasks if task.get('status') == "暂停")
         self.stats_label.setText(f"任务总数: {total} | 活动: {active} | 暂停: {paused}")
+
+    def adjust_column_widths(self):
+        """根据内容自动调整某些列的宽度"""
+        if self.table.rowCount() == 0:
+            return
+
+        # 仅调整需要根据内容变化的列
+        for col in [1, 3, 4, 7]:  # 设备、类型、执行时间、状态
+            self.table.resizeColumnToContents(col)
+            # 确保不会太窄或太宽
+            current_width = self.table.columnWidth(col)
+            if col == 1:  # 设备
+                self.table.setColumnWidth(col, min(max(current_width, 80), 150))
+            elif col == 3:  # 类型
+                self.table.setColumnWidth(col, min(max(current_width, 50), 80))
+            elif col == 4:  # 执行时间
+                self.table.setColumnWidth(col, min(max(current_width, 100), 200))
+            elif col == 7:  # 状态
+                self.table.setColumnWidth(col, min(max(current_width, 50), 80))
 
 
 class ScheduledTaskPage(QWidget):
-    """定时任务设置页面 - 简化版"""
+    """定时任务设置页面 - 集成版"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
+        self.scheduled_task_manager = None
         self.init_ui()
+        self.setup_task_manager()
 
     def init_ui(self):
         layout = QVBoxLayout(self)
@@ -524,29 +644,46 @@ class ScheduledTaskPage(QWidget):
 
         self.connect_signals()
 
+    def setup_task_manager(self):
+        """设置定时任务管理器"""
+        # 使用全局的定时任务管理器
+        from core.scheduled_task_manager import scheduled_task_manager
+
+        self.scheduled_task_manager = scheduled_task_manager
+
+        # 设置到表格组件
+        self.task_plan_widget.set_task_manager(self.scheduled_task_manager)
+
     def show_create_dialog(self):
+        """显示创建任务对话框"""
         dialog = CreateTaskDialog(self)
         dialog.task_created.connect(self.on_task_created)
         dialog.exec()
 
     def connect_signals(self):
+        """连接信号"""
         self.task_plan_widget.task_deleted.connect(self.on_task_deleted)
         self.task_plan_widget.task_toggled.connect(self.on_task_toggled)
         self.task_plan_widget.task_config_changed.connect(self.on_task_config_changed)
         self.task_plan_widget.task_notify_changed.connect(self.on_task_notify_changed)
 
     def on_task_created(self, task_info):
+        """处理新任务创建"""
         self.task_plan_widget.add_task(task_info)
-        notification_manager.show_success("创建定时任务成功","添加成功",1000)
+        notification_manager.show_success("创建定时任务成功", "添加成功", 1000)
 
     def on_task_deleted(self, task_id):
-        notification_manager.show_success(f"删除定时任务{task_id}成功","删除成功",1000)
+        """处理任务删除（兼容旧信号）"""
+        notification_manager.show_success(f"删除定时任务{task_id}成功", "删除成功", 1000)
 
     def on_task_toggled(self, task_id, enabled):
+        """处理任务状态切换（兼容旧信号）"""
         print(f"任务 {task_id} 状态: {'启用' if enabled else '暂停'}")
 
     def on_task_config_changed(self, task_id, config_text, field):
+        """处理配置变更（兼容旧信号）"""
         print(f"任务 {task_id} 的 {field} 改为: {config_text}")
 
     def on_task_notify_changed(self, task_id, notify):
+        """处理通知设置变更（兼容旧信号）"""
         print(f"任务 {task_id} 通知: {'开启' if notify else '关闭'}")
