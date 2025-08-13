@@ -107,8 +107,8 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self.add_device_btn)
 
         # Add resource download button after the add device button (moved from above)
-        self.scheduled = NavigationButton("定时任务", "assets/icons/updata_res.svg")
-        sidebar_layout.addWidget(self.scheduled)
+        # self.scheduled = NavigationButton("定时任务", "assets/icons/updata_res.svg")
+        # sidebar_layout.addWidget(self.scheduled)
         # Add resource download button after the add device button (moved from above)
         self.download_btn = NavigationButton("资源下载", "assets/icons/updata_res.svg")
         sidebar_layout.addWidget(self.download_btn)
@@ -138,7 +138,7 @@ class MainWindow(QMainWindow):
         # Initialize pages
         self.pages = {
             "home": HomePage(),
-            "scheduled":ScheduledTaskPage(),
+            # "scheduled":ScheduledTaskPage(),
             "download": DownloadPage(),
             "settings": SettingsPage()
         }
@@ -150,7 +150,7 @@ class MainWindow(QMainWindow):
         self.home_btn.setChecked(True)
         self.home_btn.clicked.connect(lambda: self.show_page("home"))
         self.download_btn.clicked.connect(lambda: self.show_page("download"))
-        self.scheduled.clicked.connect(lambda: self.show_page("scheduled"))
+        # self.scheduled.clicked.connect(lambda: self.show_page("scheduled"))
         self.settings_btn.clicked.connect(lambda: self.show_page("settings"))
 
         # Connect signals
