@@ -223,6 +223,12 @@ class StartupResourceUpdateChecker:
 
 def main():
     """修复后的主函数"""
+    if getattr(sys, 'frozen', False):
+        base_path = sys._MEIPASS  # PyInstaller 临时目录
+    else:
+        base_path = os.path.dirname(os.path.abspath(__file__))
+
+    os.chdir(base_path)
     # ---------- 强制浅色主题设置开始 ----------
     app = QApplication(sys.argv)
 
