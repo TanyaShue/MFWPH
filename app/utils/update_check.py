@@ -98,8 +98,8 @@ class UpdateChecker(QThread):
             "cdk": cdk,
             "user_agent": "MaaYYsGUI",
             "channel": channel,
-            "os": platform.system(),
-            "arch": platform.machine(),
+            "os": platform.system().lower(),
+            "arch": platform.machine().lower(),
         }
 
         # 记录日志时隐藏 CDK
@@ -195,11 +195,15 @@ class UpdateChecker(QThread):
         channel = "beta" if global_config.get_app_config().receive_beta_update else "stable"
         logger.info(f"正在以 '{channel}' 通道为资源 '{resource.resource_name}' 检查 GitHub 更新...")
 
-        system = platform.system()
-        machine = platform.machine()
-        platform_key = "macos-x64" if system == "Darwin" and machine not in ("arm64", "aarch64") else \
-            "macos-arm64" if system == "Darwin" else \
-                "linux" if system == "Linux" else "windows"
+        system = platform.system().lower()
+        machine = platform.machine().lower()
+
+        platform_key = (
+            "macos-x64" if system == "darwin" and machine not in ("arm64", "aarch64") else
+            "macos-arm64" if system == "darwin" else
+            "linux" if system == "linux" else
+            "windows"
+        )
 
         repo_url = resource.resource_rep_url
         if not repo_url or "github.com" not in repo_url:
