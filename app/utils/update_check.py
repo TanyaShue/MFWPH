@@ -1,3 +1,4 @@
+import platform
 import re
 import time
 from pathlib import Path
@@ -6,6 +7,7 @@ import time
 from pathlib import Path
 
 import requests
+import semver
 from PySide6.QtCore import QThread, Signal
 
 from app.models.config.global_config import global_config
@@ -14,12 +16,15 @@ from app.models.logging.log_manager import log_manager
 # 获取应用程序日志记录器
 logger = log_manager.get_app_logger()
 
-platform_patterns={
-    "windows": [r"windows.*\.zip$", r"\.zip$"],
-    "linux": [r"linux.*\.tar\.gz$", r"\.tar\.gz$"],
-    "macos-arm64": [r"macos-arm64.*\.tar\.gz$", r"\.zip$"],
-    "macos-x64": [r"macos-x64.*\.tar\.gz$", r"\.zip$"]
+# 平台对应的资源文件名匹配规则
+platform_patterns = {
+    "windows": [r"windows.*\.zip$", r".*win.*\.zip$", r"\.zip$"],
+    "linux": [r"linux.*\.tar\.gz$", r".*linux.*\.tar\.gz$", r"\.tar\.gz$"],
+    "macos-arm64": [r"macos-arm64.*\.tar\.gz$", r".*arm64.*\.zip$", r".*arm64.*\.tar\.gz$"],
+    "macos-x64": [r"macos-x64.*\.tar\.gz$", r".*x64.*\.zip$", r".*x64.*\.tar\.gz$"]
 }
+
+
 class UpdateChecker(QThread):
     """资源更新检查线程"""
     # 信号定义
@@ -44,28 +49,25 @@ class UpdateChecker(QThread):
         self.mirror_base_url = "https://mirrorchyan.com/api"
         self.github_api_url = "https://api.github.com"
         self.is_cancelled = False
+        self.platform_patterns = platform_patterns
 
     def run(self):
         """执行更新检查"""
         updates_found = 0
-
         for resource in self.resources:
             if self.is_cancelled:
                 break
-
             try:
                 if self.update_method == "MirrorChyan":
                     update_result = self._check_mirror_update(resource)
                 else:
                     update_result = self._check_github_update(resource)
-
                 updates_found += 1 if update_result else 0
             except Exception as e:
                 logger.error(f"检查资源 {resource.resource_name} 更新时出错: {str(e)}")
                 if self.single_mode:
                     self.check_failed.emit(resource.resource_name, str(e))
 
-        # 批处理模式下发出完成信号
         if not self.single_mode:
             self.check_completed.emit(len(self.resources), updates_found)
 
@@ -75,6 +77,7 @@ class UpdateChecker(QThread):
 
     def _check_mirror_update(self, resource):
         """检查 Mirror 酱更新"""
+        # ... (此部分代码未修改，保持原样)
         # 获取资源更新服务 ID
         rid = resource.resource_update_service_id
         if not rid:
@@ -94,7 +97,9 @@ class UpdateChecker(QThread):
             "current_version": resource.resource_version,
             "cdk": cdk,
             "user_agent": "MaaYYsGUI",
-            "channel": channel
+            "channel": channel,
+            "os": platform.system(),
+            "arch": platform.machine(),
         }
 
         # 记录日志时隐藏 CDK
@@ -182,120 +187,117 @@ class UpdateChecker(QThread):
 
         return False
 
-    def _check_github_update(self, resource, platform_name="windows", platform_patterns=None):
+    def _check_github_update(self, resource):
         """
-        检查 GitHub 更新（支持按平台匹配下载包）
-        :param resource: 资源对象，包含 resource_rep_url, resource_name, resource_version
-        :param platform_name: 平台名，如 "windows", "linux", "macos-arm64", "macos-x64"
-        :param platform_patterns: dict，每个平台对应一个正则表达式列表
-                                  例如：
-                                  {
-                                      "windows": [r"windows.*\.zip$", r"\.zip$"],
-                                      "linux": [r"linux.*\.tar\.gz$", r"\.tar\.gz$"],
-                                      "macos-arm64": [r"macos-arm64.*\.tar\.gz$", r"\.zip$"],
-                                      "macos-x64": [r"macos-x64.*\.tar\.gz$", r"\.zip$"]
-                                  }
+        检查 GitHub 更新。
+        通过解析 SemVer 标签来区分 stable 和 beta 更新。
         """
-        if platform_patterns is None:
-            platform_patterns = platform_patterns
-        repo_url = resource.resource_rep_url
+        channel = "beta" if global_config.get_app_config().receive_beta_update else "stable"
+        logger.info(f"正在以 '{channel}' 通道为资源 '{resource.resource_name}' 检查 GitHub 更新...")
 
+        system = platform.system()
+        machine = platform.machine()
+        platform_key = "macos-x64" if system == "Darwin" and machine not in ("arm64", "aarch64") else \
+            "macos-arm64" if system == "Darwin" else \
+                "linux" if system == "Linux" else "windows"
+
+        repo_url = resource.resource_rep_url
         if not repo_url or "github.com" not in repo_url:
-            if self.single_mode:
-                self.check_failed.emit(resource.resource_name, "未配置有效的GitHub仓库URL")
+            if self.single_mode: self.check_failed.emit(resource.resource_name, "未配置有效的GitHub仓库URL")
             return False
 
         try:
-            # 解析 GitHub 仓库 URL
-            repo_parts = repo_url.rstrip("/").split("github.com/")
-            if len(repo_parts) != 2:
-                if self.single_mode:
-                    self.check_failed.emit(resource.resource_name, "GitHub仓库URL格式无效")
-                return False
-
-            owner_repo = repo_parts[1]
-
-            # 获取最新 release
-            api_url = f"{self.github_api_url}/repos/{owner_repo}/releases/latest"
+            owner_repo = repo_url.rstrip("/").split("github.com/")[1]
+            api_url = f"{self.github_api_url}/repos/{owner_repo}/releases"
             headers = {"Accept": "application/vnd.github.v3+json"}
 
             response = requests.get(api_url, headers=headers)
 
-            if response.status_code == 404:
-                # 尝试获取 tags
-                api_url = f"{self.github_api_url}/repos/{owner_repo}/tags"
-                response = requests.get(api_url, headers=headers)
-
-            # 处理 HTTP 错误
             if response.status_code == 403:
-                if self.single_mode:
-                    self.check_failed.emit(resource.resource_name, "请求被拒绝 (403)：可能是超出了 API 请求速率限制")
+                if self.single_mode: self.check_failed.emit(resource.resource_name, "请求被拒绝 (403)：API速率限制")
                 return False
-
             if response.status_code != 200:
-                if self.single_mode:
-                    self.check_failed.emit(resource.resource_name, f"GitHub API返回错误 ({response.status_code})")
+                if self.single_mode: self.check_failed.emit(resource.resource_name,
+                                                            f"GitHub API返回错误 ({response.status_code})")
                 return False
 
-            result = response.json()
+            releases = response.json()
+            if not isinstance(releases, list):
+                if self.single_mode: self.check_failed.emit(resource.resource_name, "未能获取有效的版本列表")
+                return False
 
-            # 解析返回结果
-            if "/releases/latest" in api_url:
-                latest_version = result.get("tag_name", "")
-                download_assets = result.get("assets", [])
+            valid_releases = []
+            for release in releases:
+                tag_name = release.get("tag_name", "").lstrip("v")
+                try:
+                    # 尝试将tag解析为SemVer对象
+                    version_info = semver.VersionInfo.parse(tag_name)
+                    # 将(版本对象, 原始release数据)存入列表
+                    valid_releases.append((version_info, release))
+                except ValueError:
+                    logger.debug(f"已跳过非SemVer标签: {release.get('tag_name')}")
 
-                # 平台匹配
-                download_url = ""
-                if platform_name in platform_patterns:
-                    patterns = platform_patterns[platform_name]
-                    for pattern in patterns:
-                        for asset in download_assets:
-                            url = asset.get("browser_download_url", "")
-                            if re.search(pattern, url, re.IGNORECASE):
-                                download_url = url
-                                break
-                        if download_url:
-                            break
+            if not valid_releases:
+                if self.single_mode: self.check_failed.emit(resource.resource_name, "未找到任何有效的SemVer版本标签")
+                return False
 
-                # 如果没匹配到，使用第一个资源
-                if not download_url and download_assets:
-                    download_url = download_assets[0].get("browser_download_url", "")
+            # 按版本号从高到低排序
+            valid_releases.sort(key=lambda item: item[0], reverse=True)
 
-                # 如果还没匹配到，则用 zipball_url
-                if not download_url:
-                    download_url = result.get("zipball_url", "")
-
+            # --- 根据通道选择版本 ---
+            target_release_data = None
+            if channel == "beta":
+                # Beta通道：直接取最新的版本
+                target_release_data = valid_releases[0][1]
+                logger.info(f"Beta通道找到最新版本: {target_release_data.get('tag_name')}")
             else:
-                # 处理 tags 数据
-                if not result or not isinstance(result, list):
-                    if self.single_mode:
-                        self.check_failed.emit(resource.resource_name, "无法找到任何版本标签")
-                    return False
+                # Stable通道：寻找最新的、非预发布版本
+                for version_info, release_data in valid_releases:
+                    if version_info.prerelease is None:
+                        target_release_data = release_data
+                        logger.info(f"Stable通道找到最新版本: {target_release_data.get('tag_name')}")
+                        break
 
-                latest_tag = result[0]
-                latest_version = latest_tag.get("name", "").lstrip("v")
-                download_url = f"https://github.com/{owner_repo}/archive/refs/tags/{latest_tag.get('name', '')}.zip"
+            if not target_release_data:
+                msg = f"在 '{channel}' 通道中未找到合适的更新"
+                logger.warning(msg)
+                if self.single_mode: self.check_failed.emit(resource.resource_name, msg)
+                return False
 
-            # 比较版本
-            if latest_version and latest_version != resource.resource_version:
-                self.update_found.emit(
-                    resource.resource_name,
-                    latest_version,
-                    resource.resource_version,
-                    download_url,
-                    "full"  # GitHub 默认为完整更新
-                )
+            # --- 确定下载链接和版本号 ---
+            latest_version = target_release_data.get("tag_name", "").lstrip("v")
+            download_url = ""
+            download_assets = target_release_data.get("assets", [])
+
+            if platform_key in self.platform_patterns:
+                for pattern in self.platform_patterns[platform_key]:
+                    for asset in download_assets:
+                        if re.search(pattern, asset.get("name", ""), re.IGNORECASE):
+                            download_url = asset.get("browser_download_url", "")
+                            break
+                    if download_url: break
+
+            if not download_url and download_assets:
+                download_url = download_assets[0].get("browser_download_url", "")
+            if not download_url:
+                download_url = target_release_data.get("zipball_url", "")
+
+            # --- 版本比较和信号发射 ---
+            if semver.compare(latest_version, resource.resource_version.lstrip("v")) > 0:
+                logger.info(
+                    f"发现新版本: {resource.resource_name} (当前: {resource.resource_version}, 最新: {latest_version})")
+                self.update_found.emit(resource.resource_name, latest_version, resource.resource_version, download_url,
+                                       "full")
                 return True
-            elif self.single_mode:
-                self.update_not_found.emit(resource.resource_name)
+            else:
+                if self.single_mode: self.update_not_found.emit(resource.resource_name)
                 return False
 
         except Exception as e:
-            if self.single_mode:
-                self.check_failed.emit(resource.resource_name, f"检查GitHub更新时出错: {str(e)}")
+            logger.error(f"检查GitHub更新时出错: {str(e)}")
+            if self.single_mode: self.check_failed.emit(resource.resource_name, f"检查GitHub更新时出错: {str(e)}")
             return False
 
-        return False
 
 class UpdateDownloader(QThread):
     """更新下载线程"""
