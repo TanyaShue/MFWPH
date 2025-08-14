@@ -1,4 +1,5 @@
 import os
+import platform
 import sys
 from pathlib import Path
 
@@ -35,8 +36,26 @@ class AppUpdateChecker(QThread):
         self.github_api_url = "https://api.github.com"
         self.repo_owner = "TanyaShue"
         self.repo_name = "MFWPH"
-        self.asset_name = "MFWPH_RELEASE.zip"
+        self.asset_name = self._detect_asset_name()
 
+    def _detect_asset_name(self):
+        os_name = sys.platform
+        arch = platform.machine().lower()
+
+        if os_name.startswith("linux"):
+            return "MFWPH_linux-x64.tar.gz"
+
+        elif os_name == "darwin":  # macOS
+            if arch in ("arm64", "aarch64"):
+                return "MFWPH_macos-arm64.tar.gz"
+            else:
+                return "MFWPH_macos-x64.tar.gz"
+
+        elif os_name.startswith("win"):
+            return "MFWPH_windows-x64.zip"
+
+        else:
+            raise RuntimeError(f"Unsupported platform: {os_name}, arch: {arch}")
     def run(self):
         try:
             # 获取最新发布版本
