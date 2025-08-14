@@ -39,11 +39,19 @@ class MainWindow(QMainWindow):
                 width, height = map(int, app_config.window_size.split('x'))
                 self.resize(width, height)
             except (ValueError, AttributeError):
-                # 如果解析出错，使用默认大小
                 self.resize(800, 600)
         else:
-            # 没有配置时使用默认大小
             self.resize(800, 600)
+
+        # 从配置中获取并设置窗口位置
+        if hasattr(app_config, 'window_position') and app_config.window_position:
+            try:
+                if app_config.window_position.strip().lower() != "center":
+                    x, y = map(int, app_config.window_position.split(','))
+                    self.move(x, y)
+                # 如果是 "center" 则保持 Qt 默认居中行为
+            except (ValueError, AttributeError):
+                pass  # 忽略位置解析错误
 
         # Initialize theme manager
         self.theme_manager = theme_manager
@@ -166,19 +174,24 @@ class MainWindow(QMainWindow):
         self.update_scroll_area_visibility()
 
     def closeEvent(self, event):
-        """窗口关闭时保存当前窗口大小到配置"""
+        """窗口关闭时保存当前窗口大小和位置到配置"""
         # 获取当前窗口大小
         size = self.size()
         window_size = f"{size.width()}x{size.height()}"
 
-        # 保存窗口大小到配置
+        # 获取当前窗口位置
+        pos = self.pos()
+        window_position = f"{pos.x()},{pos.y()}"
+
+        # 保存到配置
         app_config = global_config.get_app_config()
         app_config.window_size = window_size
+        app_config.window_position = window_position
 
         # 保存所有配置
         global_config.save_all_configs()
 
-        # 调用父类的closeEvent
+        # 调用父类的 closeEvent
         super().closeEvent(event)
 
     def load_devices(self):

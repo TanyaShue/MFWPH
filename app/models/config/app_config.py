@@ -224,6 +224,7 @@ class AppConfig:
     receive_beta_update: bool = False
     auto_check_update: bool = False
     window_size:"str"=field(default="800x600")
+    window_position: str = field(default="center")  # 新增字段，记录窗口位置（x,y）
     debug_model:bool = False
 
     def link_resources_to_config(self):
@@ -400,6 +401,7 @@ class AppConfig:
         config.receive_beta_update = data.get('receive_beta_update', False)
         config.auto_check_update = data.get('auto_check_update', False)
         config.window_size = data.get('window_size', "800x600")
+        config.window_position = data.get('window_position', "center")
         config.debug_model=data.get('debug_model', False)
 
         # 将资源链接到AppConfig
@@ -420,6 +422,7 @@ class AppConfig:
         result["devices"] = [device_config_to_dict(device) for device in self.devices]
         result["resource_settings"] = [resource_settings_to_dict(settings) for settings in self.resource_settings]
         result["window_size"]= self.window_size
+        result["window_position"]= self.window_position
         result["debug_model"]=self.debug_model
         return result
 
