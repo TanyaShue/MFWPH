@@ -556,7 +556,7 @@ class TaskExecutor(QObject):
         """启动Agent进程"""
         agent_full_path = Path(task.data.resource_path) / agent_config.agent_path
 
-        cmd = [python_exe, str(agent_full_path)]
+        cmd = [python_exe, "-u",str(agent_full_path)]
         if agent_config.agent_params:
             cmd.extend(agent_config.agent_params.split())
         cmd.extend(["-id", self._agent.identifier])
