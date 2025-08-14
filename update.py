@@ -341,9 +341,22 @@ class StandaloneUpdater:
 
         return True
 
+def get_base_path():
+    """
+    获取资源文件的绝对基础路径。
+    这对于在开发环境和打包后的应用中都能正确定位资源文件至关重要。
+    """
+    if getattr(sys, 'frozen', False):
+        # 如果应用被 PyInstaller 打包（无论是单文件还是单目录）
+        # `sys.executable` 指向的是可执行文件（例如 MFWPH）的路径
+        return os.path.dirname(sys.executable)
+    else:
+        # 如果是在正常的开发环境中运行 .py 脚本
+        # `__file__` 指向当前脚本的路径
+        return os.path.dirname(os.path.abspath(__file__))
 
 def main():
-    base_path = os.path.dirname(os.path.abspath(__file__))
+    base_path = get_base_path()
 
     os.chdir(base_path)
     parser = argparse.ArgumentParser(description='独立更新程序')
