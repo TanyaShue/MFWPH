@@ -42,8 +42,12 @@ class HomePage(QFrame):
         app_logger.info("MFWPH已启动")
         app_logger.info(f"日志存储路径: {os.path.abspath(log_manager.log_dir)}")
 
-        # 如果刚才进行了日志备份，记录一条信息
         backup_dir = log_manager.backup_dir
+        # 确保目录存在
+        if not os.path.exists(backup_dir):
+            os.makedirs(backup_dir)
+
+        # 获取以 logs_backup_ 开头的文件列表
         backup_files = [f for f in os.listdir(backup_dir) if f.startswith("logs_backup_")]
         if backup_files:
             # 获取最新的备份文件
