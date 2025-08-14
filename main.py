@@ -221,15 +221,34 @@ class StartupResourceUpdateChecker:
             logger.info("所有资源均为最新版本")
 
 
+def get_base_path():
+    """
+    获取资源文件的绝对基础路径。
+    这对于在开发环境和打包后的应用中都能正确定位资源文件至关重要。
+    """
+    if getattr(sys, 'frozen', False):
+        # 如果应用被 PyInstaller 打包（无论是单文件还是单目录）
+        # `sys.executable` 指向的是可执行文件（例如 MFWPH）的路径
+        return os.path.dirname(sys.executable)
+    else:
+        # 如果是在正常的开发环境中运行 .py 脚本
+        # `__file__` 指向当前脚本的路径
+        return os.path.dirname(os.path.abspath(__file__))
+
 def main():
-    """修复后的主函数"""
-    base_path = os.path.dirname(os.path.abspath(__file__))
+    """
+    修复后的主函数
+    """
+    # 1. 获取可靠的程序根目录
+    base_path = get_base_path()
+
+    # 2. (可选，但推荐) 不再使用 os.chdir()。
+    #    依赖 os.chdir() 是不稳定的。更好的做法是在整个应用中
+    #    使用 base_path 来构建所有资源的绝对路径。
 
     os.chdir(base_path)
     # ---------- 强制浅色主题设置开始 ----------
     app = QApplication(sys.argv)
-
-    # 1. 强制使用 Fusion 样式（不跟随系统主题）
     app.setStyle(QStyleFactory.create("Fusion"))
 
     # 2. 应用自定义浅色调 Palette
@@ -253,7 +272,7 @@ def main():
     # 设置退出时的清理
     app.aboutToQuit.connect(kill_processes)
 
-    # 关键修改：使用 qasync 的方式运行事件循环
+    # 运行事件循环
     with loop:
         loop.run_forever()
 
