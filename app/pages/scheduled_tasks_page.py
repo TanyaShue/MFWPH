@@ -1,10 +1,12 @@
 # scheduled_tasks_page.py
+import asyncio
 from PySide6.QtCore import Qt
 from PySide6.QtGui import QFont, QColor
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QComboBox, QLabel, QPushButton,
     QMessageBox, QTableWidget, QTableWidgetItem, QHeaderView, QAbstractItemView
 )
+from qasync import asyncSlot
 
 from app.utils.notification_manager import notification_manager
 from app.widgets.create_task_dialog import CreateTaskDialog
@@ -99,10 +101,10 @@ class TaskPlanTableWidget(QWidget):
             QPushButton:hover {{ background: {color}dd; }} """
 
     def setup_table(self):
-        self.table.clear()
         self.table.setColumnCount(9)
         self.table.setHorizontalHeaderLabels(
-            ["ID", "设备", "资源", "类型", "执行时间", "配置方案", "通知", "状态", "操作"])
+            ["ID", "设备", "资源", "类型", "执行时间", "配置方案", "通知", "状态", "操作"]
+        )
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
         self.table.setEditTriggers(QAbstractItemView.NoEditTriggers)
@@ -114,17 +116,30 @@ class TaskPlanTableWidget(QWidget):
             QTableWidget::item:selected { background: #e3f2fd; color: black; }
             QHeaderView::section { background: #f5f5f5; font-weight: bold; padding: 6px; border: none;
                                    border-bottom: 1px solid #e0e0e0; border-right: 1px solid #e0e0e0;
-                                   font-size: 11px; } """)
+                                   font-size: 11px; }
+        """)
+
+        self.table.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
         header = self.table.horizontalHeader()
-        header.setSectionResizeMode(2, QHeaderView.Stretch)
+
+        # 固定宽度列
+        header.setSectionResizeMode(0, QHeaderView.Fixed)  # ID
         self.table.setColumnWidth(0, 40)
-        self.table.setColumnWidth(1, 100)
-        self.table.setColumnWidth(3, 60)
-        self.table.setColumnWidth(4, 150)
-        self.table.setColumnWidth(5, 100)
+
+        header.setSectionResizeMode(6, QHeaderView.Fixed)  # 通知
         self.table.setColumnWidth(6, 50)
+
+        header.setSectionResizeMode(7, QHeaderView.Fixed)  # 状态
         self.table.setColumnWidth(7, 60)
-        self.table.setColumnWidth(8, 120)
+
+        header.setSectionResizeMode(8, QHeaderView.Fixed)  # 操作按钮
+        self.table.setColumnWidth(8, 120)  # 三个按钮大概这个宽度
+
+        # 自适应列（占剩余空间）
+        for col in [1, 2, 3, 4, 5]:
+            header.setSectionResizeMode(col, QHeaderView.Stretch)
+
+        header.setStretchLastSection(True)
 
     def set_task_manager(self, task_manager):
         self.task_manager = task_manager
@@ -141,10 +156,9 @@ class TaskPlanTableWidget(QWidget):
         existing_tasks = self.task_manager.initialize_from_config()
         for task_info in existing_tasks:
             self.all_tasks.append(task_info)
-        self.apply_filter()  # 用apply_filter来初始化表格
+        self.apply_filter()
         self.update_filter_options()
         self.update_stats()
-        self.adjust_column_widths()
 
     def add_task_to_table(self, task_data):
         row = self.table.rowCount()
@@ -154,8 +168,16 @@ class TaskPlanTableWidget(QWidget):
         id_item.setTextAlignment(Qt.AlignCenter)
         id_item.setData(Qt.UserRole, task_data)
         self.table.setItem(row, 0, id_item)
-        self.table.setItem(row, 1, QTableWidgetItem(task_data.get('device_name', '')))
-        self.table.setItem(row, 2, QTableWidgetItem(task_data.get('resource_name', '')))
+
+        device_name = task_data.get('device_name', '')
+        device_item = QTableWidgetItem(device_name)
+        device_item.setToolTip(device_name)
+        self.table.setItem(row, 1, device_item)
+
+        resource_name = task_data.get('resource_name', '')
+        resource_item = QTableWidgetItem(resource_name)
+        resource_item.setToolTip(resource_name)
+        self.table.setItem(row, 2, resource_item)
 
         schedule_type = task_data.get('schedule_type', '每日执行')
         type_item = QTableWidgetItem(schedule_type)
@@ -166,9 +188,13 @@ class TaskPlanTableWidget(QWidget):
         if 'week_days' in task_data and task_data['week_days']:
             days_text = ",".join(task_data['week_days'])
             time_text = f"{time_text} ({days_text})"
-        self.table.setItem(row, 4, QTableWidgetItem(time_text))
+        time_item = QTableWidgetItem(time_text)
+        time_item.setToolTip(time_text)
+        self.table.setItem(row, 4, time_item)
 
-        config_item = QTableWidgetItem(task_data.get('config_scheme', '默认配置'))
+        config_scheme = task_data.get('config_scheme', '默认配置')
+        config_item = QTableWidgetItem(config_scheme)
+        config_item.setToolTip(config_scheme)
         self.table.setItem(row, 5, config_item)
 
         notify_text = "是" if task_data.get('notify', False) else "否"
@@ -196,19 +222,20 @@ class TaskPlanTableWidget(QWidget):
         delete_btn = QPushButton("删除")
         delete_btn.setFixedSize(35, 22)
         delete_btn.setStyleSheet(""" QPushButton { background: #f44336; color: white; ...} """)
-        toggle_btn.clicked.connect(lambda: self.toggle_task(row))
-        edit_btn.clicked.connect(lambda: self.edit_task(row))
-        delete_btn.clicked.connect(lambda: self.delete_task(row))
+        toggle_btn.clicked.connect(lambda _, r=row: self.toggle_task(r))
+        edit_btn.clicked.connect(lambda _, r=row: self.edit_task(r))
+        delete_btn.clicked.connect(lambda _, r=row: self.delete_task(r))
         op_layout.addWidget(toggle_btn)
         op_layout.addWidget(edit_btn)
         op_layout.addWidget(delete_btn)
         self.table.setCellWidget(row, 8, op_widget)
 
-    def toggle_task(self, row):
+    @asyncSlot()
+    async def toggle_task(self, row):
         id_item = self.table.item(row, 0)
         if id_item and self.task_manager:
             task_data = id_item.data(Qt.UserRole)
-            self.task_manager.toggle_task_status(task_data['id'], task_data['status'] != "活动")
+            await self.task_manager.toggle_task_status(task_data['id'], task_data['status'] != "活动")
 
     def edit_task(self, row):
         id_item = self.table.item(row, 0)
@@ -218,19 +245,24 @@ class TaskPlanTableWidget(QWidget):
             dialog.task_saved.connect(self.on_task_edited)
             dialog.exec()
 
-    def on_task_edited(self, updated_task_info):
+    @asyncSlot(dict)
+    async def on_task_edited(self, updated_task_info):
         if self.task_manager:
-            self.task_manager.update_task(updated_task_info)
+            await self.task_manager.update_task(updated_task_info)
             notification_manager.show_success("更新定时任务成功", f"ID: {updated_task_info['id']} 已更新", 1000)
 
-    def delete_task(self, row):
+    @asyncSlot()
+    async def delete_task(self, row):
         id_item = self.table.item(row, 0)
-        if id_item and self.task_manager:
-            task_id = id_item.text()
+        if not id_item: return
+        task_data = id_item.data(Qt.UserRole)
+        task_id = task_data.get('id')
+
+        if task_id and self.task_manager:
             reply = QMessageBox.question(self, "确认删除", f"确定要删除任务 ID:{task_id} 吗？",
                                          QMessageBox.Yes | QMessageBox.No)
             if reply == QMessageBox.Yes:
-                self.task_manager.remove_task(task_id)
+                await self.task_manager.remove_task(task_id)
 
     def on_task_added_by_manager(self, task_info):
         self.all_tasks.append(task_info)
@@ -259,6 +291,7 @@ class TaskPlanTableWidget(QWidget):
                 self.all_tasks[i] = task_info
                 break
         self.apply_filter()
+        self.update_filter_options()
 
     def _task_matches_filter(self, task):
         device_filter = self.device_filter.currentText()
@@ -274,7 +307,6 @@ class TaskPlanTableWidget(QWidget):
         for task in self.all_tasks:
             if self._task_matches_filter(task):
                 self.add_task_to_table(task)
-        self.adjust_column_widths()
 
     def update_filter_options(self):
         current_device = self.device_filter.currentText()
@@ -292,31 +324,46 @@ class TaskPlanTableWidget(QWidget):
         self.type_filter.setCurrentIndex(0)
         self.status_filter.setCurrentIndex(0)
 
-    def pause_all_tasks(self):
+    @asyncSlot()
+    async def pause_all_tasks(self):
         if not self.task_manager: return
-        count = sum(1 for task in self.all_tasks if self.task_manager.toggle_task_status(str(task.get('id')), False))
-        if count > 0: QMessageBox.information(self, "批量操作", f"已暂停 {count} 个任务")
+        tasks_to_pause = [
+            self.task_manager.toggle_task_status(str(task.get('id')), False)
+            for task in self.all_tasks if task.get('status') == '活动'
+        ]
+        if tasks_to_pause:
+            results = await asyncio.gather(*tasks_to_pause)
+            count = sum(1 for r in results if r)
+            if count > 0: QMessageBox.information(self, "批量操作", f"已暂停 {count} 个任务")
 
-    def start_all_tasks(self):
+    @asyncSlot()
+    async def start_all_tasks(self):
         if not self.task_manager: return
-        count = sum(1 for task in self.all_tasks if self.task_manager.toggle_task_status(str(task.get('id')), True))
-        if count > 0: QMessageBox.information(self, "批量操作", f"已启动 {count} 个任务")
+        tasks_to_start = [
+            self.task_manager.toggle_task_status(str(task.get('id')), True)
+            for task in self.all_tasks if task.get('status') == '暂停'
+        ]
+        if tasks_to_start:
+            results = await asyncio.gather(*tasks_to_start)
+            count = sum(1 for r in results if r)
+            if count > 0: QMessageBox.information(self, "批量操作", f"已启动 {count} 个任务")
 
-    def clear_all_tasks(self):
+    @asyncSlot()
+    async def clear_all_tasks(self):
         if not self.all_tasks or not self.task_manager: return
         reply = QMessageBox.question(self, "确认清空", f"确定要清空所有 {len(self.all_tasks)} 个任务吗？",
                                      QMessageBox.Yes | QMessageBox.No)
         if reply == QMessageBox.Yes:
-            for task in self.all_tasks: self.task_manager.remove_task(str(task.get('id')))
+            tasks_to_remove = [
+                self.task_manager.remove_task(str(task.get('id')))
+                for task in self.all_tasks
+            ]
+            await asyncio.gather(*tasks_to_remove)
 
     def update_stats(self):
         total = len(self.all_tasks)
         active = sum(1 for task in self.all_tasks if task.get('status') == "活动")
         self.stats_label.setText(f"任务总数: {total} | 活动: {active} | 暂停: {total - active}")
-
-    def adjust_column_widths(self):
-        if self.table.rowCount() > 0:
-            self.table.resizeColumnsToContents()
 
 
 class ScheduledTaskPage(QWidget):
@@ -345,7 +392,8 @@ class ScheduledTaskPage(QWidget):
         dialog.task_saved.connect(self.on_task_created)
         dialog.exec()
 
-    def on_task_created(self, task_info):
+    @asyncSlot(dict)
+    async def on_task_created(self, task_info):
         if self.scheduled_task_manager:
-            self.scheduled_task_manager.add_task(task_info)
+            await self.scheduled_task_manager.add_task(task_info)
             notification_manager.show_success("创建定时任务成功", "添加成功", 1000)

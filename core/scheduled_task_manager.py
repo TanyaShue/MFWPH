@@ -1,4 +1,5 @@
-# scheduled_task_manager.py - 修复了每周任务计算逻辑并添加了详细调试日志的最终版本
+# scheduled_task_manager.py
+import asyncio
 from datetime import datetime, timedelta, time
 from typing import Dict, List, Optional, Any
 from PySide6.QtCore import QObject, Signal, QTimer, QMutexLocker, QRecursiveMutex
@@ -13,7 +14,6 @@ from core.tasker_manager import task_manager
 class ScheduledTaskManager(QObject):
     """统一的定时任务管理器，直接管理AppConfig中的全局定时任务。"""
 
-    # 信号定义
     task_added = Signal(dict)
     task_removed = Signal(str)
     task_modified = Signal(str, dict)
@@ -23,14 +23,22 @@ class ScheduledTaskManager(QObject):
     def __init__(self, tasker_manager: 'TaskerManager', parent=None):
         super().__init__(parent)
         self._tasker_manager = tasker_manager
-        self._timers: Dict[str, Dict] = {}  # {schedule_id: task_info}
+        self._timers: Dict[str, Dict] = {}
         self._mutex = QRecursiveMutex()
         self.logger = log_manager.get_app_logger()
         self.task_triggered.connect(self._on_scheduled_task_triggered)
         self.logger.info("ScheduledTaskManager 初始化完成")
 
+    async def _save_config_async(self):
+        """异步保存配置到磁盘，避免阻塞UI线程"""
+        try:
+            loop = asyncio.get_running_loop()
+            await loop.run_in_executor(None, global_config.save_all_configs)
+            self.logger.debug("全局配置已异步保存到磁盘。")
+        except Exception as e:
+            self.logger.error(f"异步保存配置失败: {e}", exc_info=True)
+
     def initialize_from_config(self) -> List[dict]:
-        """从AppConfig初始化所有定时任务，返回任务列表供UI显示"""
         all_tasks_for_ui = []
         app_config = global_config.get_app_config()
         self.logger.info(f"开始从全局配置加载定时任务，共 {len(app_config.schedule_tasks)} 个任务")
@@ -47,15 +55,14 @@ class ScheduledTaskManager(QObject):
         return all_tasks_for_ui
 
     def get_tasks_for_device(self, device_name: str) -> List[dict]:
-        """获取特定设备的所有任务信息。"""
         with QMutexLocker(self._mutex):
             return [
                 task_info.copy() for task_info in self._timers.values()
                 if task_info.get('device_name') == device_name
             ]
 
-    def add_task(self, task_info: dict) -> str:
-        """添加新的定时任务"""
+    @asyncSlot(dict, result=str)
+    async def add_task(self, task_info: dict) -> str:
         with QMutexLocker(self._mutex):
             new_task = ScheduleTask.from_ui_format(
                 task_info,
@@ -63,30 +70,39 @@ class ScheduledTaskManager(QObject):
                 task_info['resource_name']
             )
             self.logger.debug(f"正在添加新任务: {new_task}")
-            self._update_config_add_task(new_task)
+
+            app_config = global_config.get_app_config()
+            app_config.schedule_tasks.append(new_task)
+
             internal_task_info = self._create_task_info_from_task(new_task)
             if new_task.enabled:
                 self._setup_timer(internal_task_info)
             self._timers[new_task.schedule_id] = internal_task_info
-            self.task_added.emit(internal_task_info)
-            self.logger.info(f"添加定时任务成功: ID={new_task.schedule_id}, 设备={new_task.device_name}")
-            return new_task.schedule_id
 
-    def remove_task(self, schedule_id: str) -> bool:
-        """删除定时任务"""
+        await self._save_config_async()
+        self.task_added.emit(internal_task_info)
+        self.logger.info(f"添加定时任务成功: ID={new_task.schedule_id}, 设备={new_task.device_name}")
+        return new_task.schedule_id
+
+    @asyncSlot(str, result=bool)
+    async def remove_task(self, schedule_id: str) -> bool:
         with QMutexLocker(self._mutex):
             if schedule_id not in self._timers: return False
             task_info = self._timers.pop(schedule_id)
-            if 'timer' in task_info:
+            if 'timer' in task_info and task_info.get('timer'):
                 task_info['timer'].stop()
                 task_info['timer'].deleteLater()
-            self._update_config_remove_task(schedule_id)
-            self.task_removed.emit(schedule_id)
-            self.logger.info(f"删除定时任务成功: ID={schedule_id}")
-            return True
 
-    def toggle_task_status(self, schedule_id: str, enabled: bool) -> bool:
-        """切换任务状态（启用/禁用）"""
+            app_config = global_config.get_app_config()
+            app_config.schedule_tasks = [t for t in app_config.schedule_tasks if t.schedule_id != schedule_id]
+
+        await self._save_config_async()
+        self.task_removed.emit(schedule_id)
+        self.logger.info(f"删除定时任务成功: ID={schedule_id}")
+        return True
+
+    @asyncSlot(str, bool, result=bool)
+    async def toggle_task_status(self, schedule_id: str, enabled: bool) -> bool:
         with QMutexLocker(self._mutex):
             if schedule_id not in self._timers: return False
             task_info = self._timers[schedule_id]
@@ -98,21 +114,25 @@ class ScheduledTaskManager(QObject):
 
             if enabled:
                 self._setup_timer(task_info)
-            elif 'timer' in task_info and task_info['timer']:
+            elif 'timer' in task_info and task_info.get('timer'):
                 task_info['timer'].stop()
 
-            self._update_config_task_status(schedule_id, enabled)
-            self.task_status_changed.emit(schedule_id, enabled)
-            self.logger.info(f"任务 {schedule_id} 状态已更改为: {new_status_str}")
-            return True
+            self._update_task_field_in_config(schedule_id, 'enabled', enabled, save=False)
 
-    def update_task(self, task_info: dict) -> bool:
-        """全面更新一个定时任务，并记录详细的变更日志。"""
+        await self._save_config_async()
+        self.task_status_changed.emit(schedule_id, enabled)
+        self.logger.info(f"任务 {schedule_id} 状态已更改为: {new_status_str}")
+        return True
+
+    @asyncSlot(dict, result=bool)
+    async def update_task(self, task_info: dict) -> bool:
         schedule_id = task_info.get('id')
         if not schedule_id:
             self.logger.error("更新任务失败：缺少任务ID")
             return False
 
+        updated_task_obj = None
+        new_internal_info = None
         with QMutexLocker(self._mutex):
             if schedule_id not in self._timers:
                 self.logger.error(f"更新任务失败：找不到任务ID {schedule_id}")
@@ -121,91 +141,73 @@ class ScheduledTaskManager(QObject):
             old_task_info = self._timers[schedule_id]
             self.logger.debug(f"开始更新任务 {schedule_id}...")
 
-            # --- DEBUG: 打印变更详情 ---
-            changes = []
-            for key, new_value in task_info.items():
-                # 使用.get()以避免旧信息中没有该键
-                old_value = old_task_info.get(key)
-                if old_value != new_value:
-                    changes.append(f"  - {key}: '{old_value}' -> '{new_value}'")
-            if changes:
-                self.logger.debug(f"任务 {schedule_id} 的变更内容:\n" + "\n".join(changes))
-            else:
-                self.logger.debug(f"任务 {schedule_id} 内容无变化，仅刷新定时器。")
-            # --- END DEBUG ---
-
-            # 1. 更新配置文件
-            updated_task_obj = None
             try:
                 app_config = global_config.get_app_config()
+                task_found = False
                 for i, task in enumerate(app_config.schedule_tasks):
                     if task.schedule_id == schedule_id:
+                        # --- FIX: 使用 task_info 中的新 device_name 和 resource_name ---
                         updated_task_obj = ScheduleTask.from_ui_format(
-                            task_info, task.device_name, task.resource_name
+                            task_info,
+                            task_info['device_name'],  # 使用新的设备名
+                            task_info['resource_name']  # 使用新的资源名
                         )
                         updated_task_obj.schedule_id = schedule_id
                         app_config.schedule_tasks[i] = updated_task_obj
+                        task_found = True
                         break
-                if updated_task_obj:
-                    global_config.save_all_configs()
-                else:
+
+                if not task_found:
                     self.logger.warning(f"尝试更新配置失败，未找到任务ID: {schedule_id}")
                     return False
             except Exception as e:
-                self.logger.error(f"更新配置文件时出错: {e}", exc_info=True)
+                self.logger.error(f"更新配置对象时出错: {e}", exc_info=True)
                 return False
 
-            # 2. 完全使用新的配置对象来创建内部信息
             new_internal_info = self._create_task_info_from_task(updated_task_obj)
             self._timers[schedule_id] = new_internal_info
 
-            # 3. 重置定时器
             if new_internal_info['status'] == '活动':
                 self._setup_timer(new_internal_info)
-            elif 'timer' in new_internal_info and new_internal_info['timer']:
-                new_internal_info['timer'].stop()
+            elif 'timer' in old_task_info and old_task_info.get('timer'):
+                old_task_info['timer'].stop()
 
-            # 4. 发出信号
+        await self._save_config_async()
+        if new_internal_info:
             self.task_modified.emit(schedule_id, new_internal_info)
-            self.logger.info(f"任务 {schedule_id} 已成功更新")
-            return True
+        self.logger.info(f"任务 {schedule_id} 已成功更新")
+        return True
 
     def _setup_timer(self, task_info: dict):
-        """为指定的任务信息设置或重置定时器"""
         schedule_id = task_info['id']
+        with QMutexLocker(self._mutex):
+            if schedule_id in self._timers and 'timer' in self._timers[schedule_id] and self._timers[schedule_id].get(
+                    'timer'):
+                self._timers[schedule_id]['timer'].stop()
+                self._timers[schedule_id]['timer'].deleteLater()
 
-        if schedule_id in self._timers and 'timer' in self._timers[schedule_id] and self._timers[schedule_id]['timer']:
-            self._timers[schedule_id]['timer'].stop()
-            self._timers[schedule_id]['timer'].deleteLater()
-
-        timer = QTimer(self)
+            timer = QTimer(self)
+            task_info['timer'] = timer
 
         next_run = self._calculate_next_run_time(task_info)
         if not next_run:
             self.logger.warning(
                 f"无法为任务 {schedule_id} 计算下次运行时间（可能是每周任务未选择日期），任务将转为暂停状态。")
-            self.toggle_task_status(schedule_id, False)
+            asyncio.ensure_future(self.toggle_task_status(schedule_id, False))
             return
 
         now = datetime.now()
-        delay_ms = int((next_run - now).total_seconds() * 1000)
-
-        device_name = task_info['device_name']
-        resource_name = task_info['resource_name']
-        settings_name = task_info.get('config_scheme', '')
+        delay_ms = max(0, int((next_run - now).total_seconds() * 1000))
 
         timer.timeout.connect(lambda: self._run_task_and_reschedule(schedule_id))
-
-        task_info['timer'] = timer
         task_info['next_run'] = next_run
 
         timer.setSingleShot(True)
         timer.start(delay_ms)
         self.logger.info(
-            f"定时任务 {schedule_id} ({device_name}) 已设置，将在 {next_run.strftime('%Y-%m-%d %H:%M:%S')} 首次运行 (延迟: {delay_ms} ms)")
+            f"定时任务 {schedule_id} ({task_info['device_name']}) 已设置，将在 {next_run.strftime('%Y-%m-%d %H:%M:%S')} 首次运行 (延迟: {delay_ms} ms)")
 
     def _run_task_and_reschedule(self, schedule_id: str):
-        """执行任务并重新安排下一次执行"""
         with QMutexLocker(self._mutex):
             if schedule_id not in self._timers: return
             task_info = self._timers[schedule_id]
@@ -220,13 +222,12 @@ class ScheduledTaskManager(QObject):
 
             if task_info.get('schedule_type') == '单次执行':
                 self.logger.info(f"单次任务 {schedule_id} 已执行，状态将变为暂停。")
-                self.toggle_task_status(schedule_id, False)
+                asyncio.ensure_future(self.toggle_task_status(schedule_id, False))
             else:
                 self.logger.debug(f"周期性任务 {schedule_id} 已执行，正在安排下一次运行。")
                 self._setup_timer(task_info)
 
     def _calculate_next_run_time(self, task_info: dict) -> Optional[datetime]:
-        """根据任务信息（包括类型和星期）计算精确的下一次运行时间。"""
         try:
             time_str = task_info.get('time', '00:00:00')
             schedule_type = task_info.get('schedule_type', '每日执行')
@@ -269,7 +270,6 @@ class ScheduledTaskManager(QObject):
 
     @asyncSlot(str, str, str)
     async def _on_scheduled_task_triggered(self, device_name: str, resource_name: str, settings_name: str):
-        """处理定时任务触发事件"""
         self.logger.info(f"处理任务触发：设备 {device_name}，资源 {resource_name}，设置 {settings_name}")
         try:
             device_config = global_config.get_device_config(device_name)
@@ -291,7 +291,6 @@ class ScheduledTaskManager(QObject):
                 result = await self._tasker_manager.submit_task(device_name, runtime_config)
                 if result:
                     self.logger.info(f"成功提交任务 {result} (设备 {device_name}, 资源 {resource_name})")
-                    # ... (通知逻辑) ...
                 else:
                     self.logger.error(f"提交任务失败 (设备 {device_name}, 资源 {resource_name})")
             finally:
@@ -300,7 +299,6 @@ class ScheduledTaskManager(QObject):
             self.logger.error(f"运行定时任务时出错: {e}", exc_info=True)
 
     def _create_task_info_from_task(self, task: ScheduleTask) -> dict:
-        """从ScheduleTask对象创建用于内部管理和UI显示的字典"""
         task_info = {
             'id': task.schedule_id,
             'device_name': task.device_name,
@@ -315,29 +313,7 @@ class ScheduledTaskManager(QObject):
             task_info['week_days'] = task.week_days
         return task_info
 
-    def _update_config_add_task(self, new_task: ScheduleTask):
-        try:
-            app_config = global_config.get_app_config()
-            app_config.schedule_tasks.append(new_task)
-            global_config.save_all_configs()
-            self.logger.info(f"已将任务 {new_task.schedule_id} 添加到全局配置")
-        except Exception as e:
-            self.logger.error(f"更新配置以添加任务时失败: {e}", exc_info=True)
-
-    def _update_config_remove_task(self, schedule_id: str):
-        try:
-            app_config = global_config.get_app_config()
-            app_config.schedule_tasks = [t for t in app_config.schedule_tasks if t.schedule_id != schedule_id]
-            global_config.save_all_configs()
-            self.logger.info(f"已从全局配置中删除任务 {schedule_id}")
-        except Exception as e:
-            self.logger.error(f"更新配置以删除任务时失败: {e}", exc_info=True)
-
-    def _update_config_task_status(self, schedule_id: str, enabled: bool):
-        self._update_task_field_in_config(schedule_id, 'enabled', enabled)
-
-    def _update_task_field_in_config(self, schedule_id: str, field_name: str, value: Any):
-        """通用方法，用于更新配置中特定任务的单个字段"""
+    def _update_task_field_in_config(self, schedule_id: str, field_name: str, value: Any, save: bool = True):
         try:
             app_config = global_config.get_app_config()
             task_found = False
@@ -346,13 +322,13 @@ class ScheduledTaskManager(QObject):
                     setattr(task, field_name, value)
                     task_found = True
                     break
-            if task_found:
+            if task_found and save:
+                # This sync save is now only called if needed, but async is preferred.
                 global_config.save_all_configs()
-            else:
+            elif not task_found:
                 self.logger.warning(f"尝试更新配置失败，未找到任务ID: {schedule_id}")
         except Exception as e:
             self.logger.error(f"更新配置中任务 {schedule_id} 的字段 '{field_name}' 时失败: {e}", exc_info=True)
 
 
-# 创建全局单例
 scheduled_task_manager = ScheduledTaskManager(task_manager)
