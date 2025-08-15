@@ -68,13 +68,33 @@ jobs:
 
       # 构建应用
       - name: Build application
-        id: build
+        id: build_app
         shell: bash
         run: |
-          # 运行构建脚本
           python build.py --platform ${{ matrix.os }}
-          
-          # 查找生成的归档文件
+
+      # 新增步骤：为 macOS 应用进行代码签名
+      # 这是解决 macOS 安全限制的关键，否则应用将无法加载 dylib 文件或无法运行。
+      - name: Sign macOS Application
+        if: runner.os == 'macOS'
+        run: |
+          echo "Signing the application for macOS..."
+          APP_PATH="dist/${{ env.APP_NAME }}.app"
+          if [ -d "$APP_PATH" ]; then
+            codesign --force --deep --sign - "$APP_PATH"
+            echo "Ad-hoc signing complete for $APP_PATH"
+          else
+            echo "::error::Application bundle not found at $APP_PATH"
+            exit 1
+          fi
+        env:
+          APP_NAME: MFWPH
+
+      # 准备并重命名构建产物
+      - name: Prepare Artifact
+        id: prepare_artifact
+        shell: bash
+        run: |
           if [[ "${{ runner.os }}" == "Windows" ]]; then
             ARCHIVE=$(find ./dist -name "*.zip" -type f | head -1)
           else
@@ -86,20 +106,19 @@ jobs:
             exit 1
           fi
           
-          # 重命名为标准格式
           ARCHIVE_NAME="MFWPH_${{ matrix.os }}$([[ '${{ runner.os }}' == 'Windows' ]] && echo '.zip' || echo '.tar.gz')"
           mv "$ARCHIVE" "./dist/$ARCHIVE_NAME"
           
           echo "archive_path=./dist/$ARCHIVE_NAME" >> $GITHUB_OUTPUT
           echo "archive_name=$ARCHIVE_NAME" >> $GITHUB_OUTPUT
-          echo "Build completed: $ARCHIVE_NAME"
+          echo "Artifact ready: $ARCHIVE_NAME"
 
       # 上传构建产物
       - name: Upload build artifact
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}-build
-          path: ${{ steps.build.outputs.archive_path }}
+          path: ${{ steps.prepare_artifact.outputs.archive_path }}
           retention-days: 7
 
   release:
@@ -122,11 +141,9 @@ jobs:
       - name: Generate Changelog
         id: changelog
         run: |
-          # 获取当前标签
           CURRENT_TAG="${{ github.ref_name }}"
           echo "Current tag: $CURRENT_TAG"
           
-          # 获取上一个标签
           PREVIOUS_TAG=$(git tag --sort=-creatordate | sed -n '2p')
           if [ -z "$PREVIOUS_TAG" ]; then
             echo "No previous tag found, using first commit"
@@ -134,13 +151,11 @@ jobs:
           fi
           echo "Previous tag/commit: $PREVIOUS_TAG"
           
-          # 生成变更日志
           CHANGELOG=$(git log --pretty=format:"* %s (%h)" "$PREVIOUS_TAG..$CURRENT_TAG")
           if [ -z "$CHANGELOG" ]; then
             CHANGELOG="* 首次发布"
           fi
           
-          # 设置输出
           {
             echo 'CHANGELOG<<EOF'
             echo "$CHANGELOG"
@@ -150,12 +165,10 @@ jobs:
       - name: Prepare release files
         id: prepare
         run: |
-          # 移动所有构建产物到发布目录
           mkdir -p release_files
           find ./artifacts -type f \( -name "*.zip" -o -name "*.tar.gz" \) \
             -exec mv {} ./release_files/ \;
           
-          # 列出所有文件
           echo "Release files:"
           ls -la ./release_files/
 
@@ -178,8 +191,7 @@ jobs:
             
             **macOS:**
             1. 下载并解压 TAR.GZ 文件：`tar -xzf MFWPH_macos-*.tar.gz`
-            2. 运行：`./MFWPH`
-            3. 首次运行可能需要在系统偏好设置中允许
+            2. 首次运行请右键点击程序，然后选择“打开”
             
             **Linux:**
             1. 下载并解压 TAR.GZ 文件：`tar -xzf MFWPH_linux-x64.tar.gz`

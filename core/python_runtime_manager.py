@@ -243,7 +243,7 @@ class GlobalPythonRuntimeManager:
                     "https://www.python.org/ftp/python/{version}/Python-{version}.tgz"
                 ],
                 "darwin": [
-                    "https://mirrors.aliyun.com/python-release/source/Python-{version}.tgz",
+                    "https://mirrors.aliyun.com/python-release/macos//Python-{version}.tgz",
                     "https://www.python.org/ftp/python/{version}/Python-{version}.tgz"
                 ]
             },

@@ -194,7 +194,6 @@ VSVersionInfo(
 
     return version_file, win_version_file
 
-
 def run_pyinstaller(version_file: str, win_version_file: str):
     """运行PyInstaller构建主程序"""
     maa_bin_path = find_site_package_path('maa/bin')
@@ -216,17 +215,16 @@ def run_pyinstaller(version_file: str, win_version_file: str):
     elif sys.platform == 'darwin':
         args.append('--windowed')
 
-    # 添加数据文件
     args.extend([
-        f'--add-data={maa_bin_path}{os.pathsep}maa/bin',
-        f'--add-data={maa_agent_path}{os.pathsep}MaaAgentBinary',
+        f'--add-binary={maa_bin_path}{os.pathsep}maa/bin',
+        f'--add-binary={maa_agent_path}{os.pathsep}MaaAgentBinary',
     ])
 
     if version_file:
         args.append(f'--add-data={version_file}{os.pathsep}.')
 
     logger.info("正在运行PyInstaller构建主程序...")
-    logger.info(f"版本信息文件: {version_file}")
+    logger.info(f"PyInstaller 参数: {' '.join(args)}") # 增加这行日志，方便调试
     PyInstaller.__main__.run(args)
     logger.info("PyInstaller构建主程序成功")
 
