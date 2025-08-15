@@ -363,7 +363,6 @@ class TaskPlanTableWidget(QWidget):
             if reply == QMessageBox.Yes:
                 self.task_manager.remove_task(task_id)
 
-    # ... on_config_changed 和 on_notify_changed 方法不变 ...
     def on_config_changed(self, task_id, config_text):
         if self.task_manager:
             self.task_manager.update_task_config(str(task_id), config_text)
