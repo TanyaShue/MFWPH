@@ -99,10 +99,17 @@ class PythonRuntime:
         """获取Python可执行文件路径"""
         if platform.system() == "Windows":
             return self.python_dir / "python.exe"
-        # 修复macOS下可执行文件的路径
+
+        # --- FIX START: 修复macOS下可执行文件的路径 ---
         if platform.system() == "Darwin":
+            # 从 .pkg 安装后, Python 的核心是 Python.framework
+            # 我们的安装逻辑将整个 Python.framework 移动到了 self.python_dir
             py_version_short = ".".join(self.version.split('.')[:2])
-            return self.python_dir / f"Python {py_version_short}" / "bin" / f"python{py_version_short}"
+            executable_path = (self.python_dir / "Python.framework" / "Versions" /
+                               py_version_short / "bin" / f"python{py_version_short}")
+            return executable_path
+        # --- FIX END ---
+
         return self.python_dir / "bin" / "python"
 
     def _get_resource_hash(self, resource_name: str) -> str:
@@ -172,7 +179,7 @@ class PythonRuntime:
 
     def update_dependencies_hash(self, resource_name: str, hash_value: str):
         """更新依赖的hash值（在安装成功后调用）"""
-        info = self.get_venv_info(resource_name)
+        info = self.get_v_info(resource_name)
         info.dependencies_hash = hash_value
         self._save_runtime_cache()
 
@@ -250,12 +257,10 @@ class GlobalPythonRuntimeManager:
                     "https://mirrors.aliyun.com/python-release/source/Python-{version}.tgz",
                     "https://www.python.org/ftp/python/{version}/Python-{version}.tgz"
                 ],
-                # --- 修改部分：修正macOS的下载链接，指向.pkg文件 ---
                 "darwin": [
                     "https://registry.npmmirror.com/-/binary/python/{version}/python-{version}-macos11.pkg",
                     "https://www.python.org/ftp/python/{version}/python-{version}-macos11.pkg"
                 ]
-                # --- 结束修改 ---
             },
             "pip_sources": [
                 "https://mirrors.aliyun.com/pypi/simple/",
@@ -292,19 +297,15 @@ class GlobalPythonRuntimeManager:
             self._install_locks[version] = asyncio.Lock()
         return self._install_locks[version]
 
-    # --- 修改部分：重写此函数以解决SSL证书问题 ---
     async def _get_session(self) -> aiohttp.ClientSession:
         """获取或创建使用certifi证书的aiohttp会话"""
         if self._download_session is None or self._download_session.closed:
-            # 创建一个使用 certifi 证书库的 SSL 上下文
             ssl_context = ssl.create_default_context(cafile=certifi.where())
             connector = TCPConnector(ssl=ssl_context)
 
-            timeout = aiohttp.ClientTimeout(total=3600, connect=60)  # 延长总超时
+            timeout = aiohttp.ClientTimeout(total=3600, connect=60)
             self._download_session = aiohttp.ClientSession(timeout=timeout, connector=connector)
         return self._download_session
-
-    # --- 结束修改 ---
 
     def _get_patch_version(self, version: str) -> str:
         """获取完整版本号"""
@@ -334,10 +335,8 @@ class GlobalPythonRuntimeManager:
             self.logger.info(f"✅ Python {version} 已安装")
             return await self._ensure_pip_installed(runtime)
 
-        # 使用锁防止并发安装
         lock = await self._get_install_lock(version)
         async with lock:
-            # 再次检查
             if runtime.is_python_installed():
                 return True
 
@@ -364,21 +363,17 @@ class GlobalPythonRuntimeManager:
                     temp_dir.mkdir(exist_ok=True)
                     temp_file = temp_dir / filename
 
-                    # 下载文件
                     await self._download_file_async(url, temp_file)
 
-                    # 根据平台执行不同的安装逻辑
                     if system == "windows":
                         await self._extract_archive(temp_file, runtime.python_dir)
                         await self._setup_windows_embedded(runtime.version, runtime.python_dir)
-                    elif system == "darwin":  # macOS
+                    elif system == "darwin":
                         await self._install_macos_pkg(temp_file, runtime.python_dir, patch_version)
                     elif system == "linux":
-                        # Linux 仍然使用解压和编译
                         await self._extract_archive(temp_dir, runtime.python_dir)
                         await self._compile_python(runtime.python_dir, patch_version)
 
-                    # 安装pip
                     if await self._ensure_pip_installed(runtime):
                         self.logger.info(f"✅ Python {runtime.version} 安装完成")
                         notification_manager.show_success(f"Python {runtime.version} 安装成功", "完成")
@@ -388,19 +383,20 @@ class GlobalPythonRuntimeManager:
 
                 except Exception as e:
                     self.logger.error(f"从 {url} 安装失败: {e}", exc_info=True)
-                    shutil.rmtree(runtime.python_dir, ignore_errors=True)  # 安装失败时清理
+                    shutil.rmtree(runtime.python_dir, ignore_errors=True)
                     continue
         finally:
-            # 确保临时文件被清理
             if temp_dir.exists():
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
         notification_manager.show_error(f"Python {runtime.version} 安装失败", "错误")
         return False
 
+    # --- FIX START: 重写macOS的安装逻辑 ---
     async def _install_macos_pkg(self, pkg_path: Path, target_dir: Path, version_str: str):
         """
-        通过移动.pkg中的内容来安装Python，避免需要sudo权限。
+        通过解压.pkg并移动Python.framework来安装，避免需要sudo权限。
+        这是macOS上创建可移植Python环境的正确方法。
         """
         self.logger.info(f"在macOS上提取 {pkg_path.name}...")
 
@@ -409,7 +405,7 @@ class GlobalPythonRuntimeManager:
         extract_tmp_dir.mkdir(exist_ok=True)
 
         try:
-            # 使用pkgutil展开.pkg文件，这不需要sudo权限
+            # 1. 使用pkgutil展开.pkg文件，这不需要sudo权限
             cmd_expand = ["pkgutil", "--expand", str(pkg_path), str(extract_tmp_dir)]
             process_expand = await asyncio.create_subprocess_exec(*cmd_expand, **self._get_subprocess_kwargs())
             _, stderr_expand = await process_expand.communicate()
@@ -417,12 +413,12 @@ class GlobalPythonRuntimeManager:
             if process_expand.returncode != 0:
                 raise Exception(f"展开.pkg失败: {stderr_expand.decode(errors='ignore')}")
 
-            # 找到最大的payload文件并解压
+            # 2. 找到最大的payload文件并解压
             payload_path = next(extract_tmp_dir.glob("*.pkg/Payload"), None)
             if not payload_path:
                 raise FileNotFoundError("在.pkg内容中找不到Payload")
 
-            # 解压Payload
+            # 3. 解压Payload到同一个临时目录
             cmd_extract_payload = ["tar", "-xzf", str(payload_path), "-C", str(extract_tmp_dir)]
             process_extract = await asyncio.create_subprocess_exec(*cmd_extract_payload,
                                                                    **self._get_subprocess_kwargs())
@@ -431,25 +427,29 @@ class GlobalPythonRuntimeManager:
             if process_extract.returncode != 0:
                 raise Exception(f"解压Payload失败: {stderr_extract.decode(errors='ignore')}")
 
-            # Python框架通常安装在/Applications目录中
-            py_version_short = ".".join(version_str.split('.')[:2])
-            source_app_dir = extract_tmp_dir / f"Applications/Python {py_version_short}"
+            # 4. 核心步骤：找到Python.framework并移动它
+            # .pkg安装包解压后会模拟根目录结构, framework位于其 "Library/Frameworks" 子目录下
+            source_framework_dir = extract_tmp_dir / "Library" / "Frameworks" / "Python.framework"
 
-            if not source_app_dir.exists():
-                # 有时，它可能在根目录下
-                source_app_dir = extract_tmp_dir / f"Python {py_version_short}"
-                if not source_app_dir.exists():
-                    raise FileNotFoundError(f"在解压的内容中找不到Python应用目录: {source_app_dir}")
+            if not source_framework_dir.exists():
+                raise FileNotFoundError(f"在解压的内容中找不到Python.framework目录: {extract_tmp_dir}")
 
-            # 将Python目录内容移动到我们的目标运行时目录
+            # 5. 将整个Python.framework移动到我们的目标运行时目录
             target_dir.mkdir(parents=True, exist_ok=True)
-            for item in source_app_dir.iterdir():
-                shutil.move(str(item), str(target_dir / item.name))
+            target_framework_path = target_dir / "Python.framework"
 
-            self.logger.info(f"Python已从.pkg移动到 {target_dir}")
+            # 如果目标已存在，先删除，防止移动失败
+            if target_framework_path.exists():
+                shutil.rmtree(target_framework_path)
+
+            shutil.move(str(source_framework_dir), str(target_dir))
+
+            self.logger.info(f"Python.framework已成功移动到 {target_dir}")
         finally:
             # 清理展开目录
             shutil.rmtree(extract_tmp_dir, ignore_errors=True)
+
+    # --- FIX END ---
 
     async def _compile_python(self, python_dir: Path, version: str):
         """编译Python (Linux) - 优化版"""
@@ -462,11 +462,10 @@ class GlobalPythonRuntimeManager:
 
         self.logger.info(f"在 {source_dir} 中开始编译Python...")
 
-        # --prefix 指定安装目录, --enable-optimizations 提升性能
         commands = [
             (["./configure", f"--prefix={python_dir}", "--enable-optimizations", "--with-ensurepip=install"], "配置"),
             (["make", "-j", str(os.cpu_count() or 1)], "编译"),
-            (["make", "altinstall"], "安装")  # altinstall避免覆盖系统python
+            (["make", "altinstall"], "安装")
         ]
 
         for cmd, step in commands:
@@ -527,11 +526,8 @@ class GlobalPythonRuntimeManager:
                 with zipfile.ZipFile(archive_path, 'r') as zf:
                     zf.extractall(extract_to)
             elif archive_path.suffix in ['.tgz', '.gz', '.tar']:
-                # 在Linux上解压.tgz时，通常会创建一个Python-X.Y.Z的子目录
-                # 我们希望内容直接在extract_to下
                 target = extract_to
                 if platform.system().lower() == 'linux':
-                    # 在Linux编译场景下，我们期望解压到一个子目录
                     pass
 
                 with tarfile.open(archive_path, 'r:*') as tf:
@@ -540,7 +536,7 @@ class GlobalPythonRuntimeManager:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, extract)
         self.logger.info("解压完成")
-        archive_path.unlink()  # 解压后删除压缩包
+        archive_path.unlink()
 
     async def _setup_windows_embedded(self, version: str, python_dir: Path):
         """设置Windows嵌入式Python"""
@@ -557,7 +553,6 @@ class GlobalPythonRuntimeManager:
         python_exe = runtime.get_python_executable()
         kwargs = self._get_subprocess_kwargs()
 
-        # 检查pip
         process = await asyncio.create_subprocess_exec(
             str(python_exe), "-m", "pip", "--version",
             **kwargs
@@ -567,7 +562,6 @@ class GlobalPythonRuntimeManager:
         if process.returncode != 0:
             self.logger.info("安装pip...")
 
-            # 尝试ensurepip
             process = await asyncio.create_subprocess_exec(
                 str(python_exe), "-m", "ensurepip", "--upgrade",
                 **kwargs
@@ -576,10 +570,10 @@ class GlobalPythonRuntimeManager:
 
             if process.returncode != 0:
                 self.logger.warning(f"ensurepip 失败: {stderr.decode(errors='ignore')}")
-                # 使用get-pip.py
                 get_pip_urls = self.config.get("get_pip_sources", [])
                 get_pip_file = python_exe.parent / "get-pip.py"
-                if platform.system() == "Darwin":  # macOS .pkg安装后可能没有parent
+                if platform.system() == "Darwin":
+                    # 在macOS框架结构中，可执行文件的父目录是bin，把get-pip.py放在运行时根目录更合适
                     get_pip_file = runtime.python_dir / "get-pip.py"
 
                 for url in get_pip_urls:
@@ -602,7 +596,6 @@ class GlobalPythonRuntimeManager:
                     self.logger.error("安装pip失败")
                     return False
 
-        # 升级pip和安装virtualenv
         self.logger.info("升级pip, setuptools, wheel, virtualenv...")
         process = await asyncio.create_subprocess_exec(
             str(python_exe), "-m", "pip", "install", "--upgrade",
@@ -631,7 +624,6 @@ class GlobalPythonRuntimeManager:
 
         kwargs = self._get_subprocess_kwargs()
 
-        # 创建虚拟环境
         process = await asyncio.create_subprocess_exec(
             str(python_exe), "-m", "virtualenv", str(info.venv_path),
             **kwargs
@@ -641,7 +633,6 @@ class GlobalPythonRuntimeManager:
         if process.returncode == 0:
             self.logger.info(f"✅ 虚拟环境创建成功: {info.venv_name}")
 
-            # 升级虚拟环境中的pip
             process = await asyncio.create_subprocess_exec(
                 str(info.python_exe), "-m", "pip", "install", "--upgrade",
                 "pip", "setuptools", "wheel",
@@ -662,18 +653,7 @@ class GlobalPythonRuntimeManager:
             force_reinstall: bool = False,
             max_retries: int = 1
     ) -> bool:
-        """安装requirements.txt中的依赖
-
-        Args:
-            version: Python版本
-            resource_name: 资源名称
-            requirements_path: requirements.txt路径
-            force_reinstall: 是否强制重新安装
-            max_retries: 最大重试次数
-
-        Returns:
-            bool: 安装是否成功
-        """
+        """安装requirements.txt中的依赖"""
         if not requirements_path.exists():
             self.logger.info(f"requirements.txt不存在: {requirements_path}")
             return True
@@ -681,7 +661,6 @@ class GlobalPythonRuntimeManager:
         runtime = self.get_runtime(version)
         info = runtime.get_venv_info(resource_name)
 
-        # 检查依赖是否变化
         current_hash = ""
         if not force_reinstall:
             changed, current_hash = await runtime.check_dependencies_changed(resource_name, requirements_path)
@@ -689,7 +668,6 @@ class GlobalPythonRuntimeManager:
                 self.logger.info("依赖未变化，跳过安装")
                 return True
         else:
-            # 强制重装时也计算hash，用于后续保存
             with open(requirements_path, 'rb') as f:
                 current_hash = hashlib.md5(f.read()).hexdigest()
 
@@ -698,69 +676,53 @@ class GlobalPythonRuntimeManager:
             return False
 
         pip_sources = self.config.get("pip_sources", [])
-
-        # 记录安装开始
         self.logger.info(f"开始安装依赖: {requirements_path}")
 
-        # 多次重试机制
         for retry in range(max_retries + 1):
             if retry > 0:
                 self.logger.info(f"第 {retry} 次重试安装依赖...")
-                await asyncio.sleep(2)  # 重试前等待
+                await asyncio.sleep(2)
 
             install_success = False
-
             for source in pip_sources:
                 try:
                     self.logger.info(f"使用pip源安装依赖: {source}")
                     notification_manager.show_info("首次安装等待时间较长,请耐心等待...", "安装依赖", 5000)
-                    # 先升级pip（仅在第一次尝试时）
                     if retry == 0:
                         upgrade_cmd = [
                             str(info.python_exe), "-m", "pip", "install",
                             "--upgrade", "pip", "-i", source
                         ]
-
-                        # 静默升级pip
                         kwargs = self._get_subprocess_kwargs()
                         process = await asyncio.create_subprocess_exec(*upgrade_cmd, **kwargs)
                         await process.communicate()
 
-                    # 安装依赖
                     cmd = [
                         str(info.python_exe), "-m", "pip", "install",
                         "-r", str(requirements_path),
                         "-i", source,
-                        "--no-cache-dir",  # 避免缓存问题
-                        "-v"  # 添加verbose以获取更多输出
+                        "--no-cache-dir",
+                        "-v"
                     ]
 
-                    # 创建进程并捕获输出
                     process = await asyncio.create_subprocess_exec(
                         *cmd,
                         stdout=asyncio.subprocess.PIPE,
-                        stderr=asyncio.subprocess.STDOUT,  # 合并stderr到stdout
-                        env={**os.environ, 'PYTHONIOENCODING': 'utf-8'}  # 确保UTF-8编码
+                        stderr=asyncio.subprocess.STDOUT,
+                        env={**os.environ, 'PYTHONIOENCODING': 'utf-8'}
                     )
 
-                    # 收集所有输出
                     all_output = []
-
-                    # 实时读取并记录到debug
                     while True:
                         line = await process.stdout.readline()
                         if not line:
                             break
-
                         decoded_line = line.decode('utf-8', errors='ignore').rstrip()
                         if decoded_line:
-                            # 全部输出到debug日志
                             self.logger.debug(f"[pip] {decoded_line}")
                             all_output.append(decoded_line)
-
                     returncode = await process.wait()
 
-                    # 将完整输出也保存到debug（方便查看完整日志）
                     if all_output:
                         self.logger.debug(f"=== pip完整输出 ({source}) ===\n" + "\n".join(all_output))
 
@@ -769,10 +731,9 @@ class GlobalPythonRuntimeManager:
                         install_success = True
                         break
                     else:
-                        # 失败时，将最后几行输出提升到warning级别
                         self.logger.warning(f"使用源 {source} 安装失败 (返回码: {returncode})")
                         if all_output:
-                            last_lines = all_output[-10:]  # 取最后10行
+                            last_lines = all_output[-10:]
                             self.logger.warning(f"失败输出末尾:\n" + "\n".join(last_lines))
 
                 except asyncio.TimeoutError:
@@ -782,12 +743,10 @@ class GlobalPythonRuntimeManager:
                     continue
 
             if install_success:
-                # 只有在安装成功后才更新hash缓存
                 runtime.update_dependencies_hash(resource_name, current_hash)
                 self.logger.info(f"已更新依赖hash缓存: {current_hash[:8]}...")
                 return True
 
-        # 所有重试都失败，清除hash以便下次重新尝试
         runtime.clear_dependencies_hash(resource_name)
         self.logger.error(f"依赖安装失败（尝试了 {max_retries + 1} 次）")
         return False
