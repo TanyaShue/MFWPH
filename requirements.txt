@@ -11,3 +11,4 @@ pandas
 filelock
 aiohttp
 aiofiles
+certifi
