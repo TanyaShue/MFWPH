@@ -620,7 +620,8 @@ class SettingsPage(QWidget):
         if reply == QMessageBox.Yes:
             # 使用独立更新程序安装
             try:
-                self.installer._launch_updater(file_path, "full")
+                self.installer.launch_updater(file_path, "full")
+
                 notification_manager.show_info(
                     "更新程序已启动，应用程序将自动重启以完成更新",
                     "正在更新"
