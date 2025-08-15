@@ -338,44 +338,125 @@ class GlobalPythonRuntimeManager:
             return False
 
         urls = [url.format(version=patch_version) for url in sources]
+        temp_dir = self.runtime_base_dir / f"temp_{runtime.version}"
 
-        for url in urls:
-            try:
-                filename = url.split("/")[-1]
-                temp_dir = self.runtime_base_dir / f"temp_{runtime.version}"
-                temp_dir.mkdir(exist_ok=True)
-                temp_file = temp_dir / filename
+        try:
+            for url in urls:
+                try:
+                    filename = url.split("/")[-1]
+                    temp_dir.mkdir(exist_ok=True)
+                    temp_file = temp_dir / filename
 
-                # 下载文件
-                await self._download_file_async(url, temp_file)
+                    # 下载文件
+                    await self._download_file_async(url, temp_file)
 
-                # 解压文件
-                await self._extract_archive(temp_file, runtime.python_dir)
+                    # 根据平台执行不同的安装逻辑
+                    if system == "windows":
+                        await self._extract_archive(temp_file, runtime.python_dir)
+                        await self._setup_windows_embedded(runtime.version, runtime.python_dir)
+                    elif system == "darwin":  # macOS
+                        await self._install_macos_pkg(temp_file, runtime.python_dir, patch_version)
+                    elif system == "linux":
+                        # Linux 仍然使用解压和编译
+                        await self._extract_archive(temp_file, runtime.python_dir)
+                        await self._compile_python(runtime.python_dir, patch_version)
 
-                # Linux/Mac需要编译
-                if system in ["linux", "darwin"]:
-                    await self._compile_python(runtime.python_dir, patch_version)
+                    # 安装pip
+                    if await self._ensure_pip_installed(runtime):
+                        self.logger.info(f"✅ Python {runtime.version} 安装完成")
+                        notification_manager.show_success(f"Python {runtime.version} 安装成功", "完成")
+                        return True
+                    else:
+                        raise Exception("pip installation failed")
 
-                # Windows嵌入式版本设置
-                if system == "windows":
-                    await self._setup_windows_embedded(runtime.version, runtime.python_dir)
-
-                # 清理临时文件
+                except Exception as e:
+                    self.logger.error(f"从 {url} 安装失败: {e}", exc_info=True)
+                    continue
+        finally:
+            # 确保临时文件被清理
+            if temp_dir.exists():
                 shutil.rmtree(temp_dir, ignore_errors=True)
-
-                # 安装pip
-                await self._ensure_pip_installed(runtime)
-
-                self.logger.info(f"✅ Python {runtime.version} 安装完成")
-                notification_manager.show_success(f"Python {runtime.version} 安装成功", "完成")
-                return True
-
-            except Exception as e:
-                self.logger.error(f"从 {url} 下载失败: {e}")
-                continue
 
         notification_manager.show_error(f"Python {runtime.version} 安装失败", "错误")
         return False
+
+    async def _install_macos_pkg(self, pkg_path: Path, target_dir: Path, version_str: str):
+        """
+        通过移动.pkg中的内容来安装Python，避免需要sudo权限。
+        """
+        self.logger.info(f"在macOS上提取 {pkg_path.name}...")
+
+        # 创建一个临时目录来解压.pkg内容
+        extract_tmp_dir = pkg_path.parent / "pkg_extract"
+        extract_tmp_dir.mkdir(exist_ok=True)
+
+        # 使用pkgutil展开.pkg文件，这不需要sudo权限
+        cmd_expand = ["pkgutil", "--expand", str(pkg_path), str(extract_tmp_dir)]
+        process_expand = await asyncio.create_subprocess_exec(*cmd_expand, **self._get_subprocess_kwargs())
+        _, stderr_expand = await process_expand.communicate()
+
+        if process_expand.returncode != 0:
+            raise Exception(f"展开.pkg失败: {stderr_expand.decode()}")
+
+        # 找到最大的payload文件并解压
+        payload_path = next(extract_tmp_dir.glob("*.pkg/Payload"), None)
+        if not payload_path:
+            raise FileNotFoundError("在.pkg内容中找不到Payload")
+
+        # 解压Payload
+        cmd_extract_payload = ["tar", "-xzf", str(payload_path), "-C", str(extract_tmp_dir)]
+        process_extract = await asyncio.create_subprocess_exec(*cmd_extract_payload, **self._get_subprocess_kwargs())
+        _, stderr_extract = await process_extract.communicate()
+
+        if process_extract.returncode != 0:
+            raise Exception(f"解压Payload失败: {stderr_extract.decode()}")
+
+        # Python框架通常安装在/Applications目录中
+        py_version_short = ".".join(version_str.split('.')[:2])
+        source_app_dir = extract_tmp_dir / f"Applications/Python {py_version_short}"
+
+        if not source_app_dir.exists():
+            raise FileNotFoundError(f"在解压的内容中找不到Python应用目录: {source_app_dir}")
+
+        # 将Python目录内容移动到我们的目标运行时目录
+        target_dir.mkdir(parents=True, exist_ok=True)
+        for item in source_app_dir.iterdir():
+            shutil.move(str(item), str(target_dir))
+
+        self.logger.info(f"Python已从.pkg移动到 {target_dir}")
+
+    async def _compile_python(self, python_dir: Path, version: str):
+        """编译Python (Linux) - 优化版"""
+        source_dir = python_dir / f"Python-{version}"
+        if not source_dir.exists():
+            found_dirs = [d for d in python_dir.iterdir() if d.is_dir() and d.name.lower().startswith('python-')]
+            if not found_dirs:
+                raise FileNotFoundError(f"在 {python_dir} 中找不到Python源码目录。")
+            source_dir = found_dirs[0]
+
+        self.logger.info(f"在 {source_dir} 中开始编译Python...")
+
+        # --prefix 指定安装目录, --enable-optimizations 提升性能
+        commands = [
+            (["./configure", f"--prefix={python_dir}", "--enable-optimizations", "--with-ensurepip=install"], "配置"),
+            (["make", "-j", str(os.cpu_count() or 1)], "编译"),
+            (["make", "altinstall"], "安装")  # altinstall避免覆盖系统python
+        ]
+
+        for cmd, step in commands:
+            self.logger.info(f"执行步骤: {step}...")
+            kwargs = self._get_subprocess_kwargs()
+            kwargs['cwd'] = source_dir
+            process = await asyncio.create_subprocess_exec(*cmd, **kwargs)
+            stdout, stderr = await process.communicate()
+
+            if process.returncode != 0:
+                error_msg = stderr.decode(errors='ignore')
+                self.logger.error(f"{step} 失败。日志: {error_msg}")
+                raise Exception(f"{step} failed. Error: {error_msg}")
+
+        self.logger.info("编译完成，清理源码...")
+        shutil.rmtree(source_dir, ignore_errors=True)
 
     async def _download_file_async(self, url: str, filepath: Path):
         """异步下载文件"""
@@ -425,30 +506,6 @@ class GlobalPythonRuntimeManager:
         loop = asyncio.get_event_loop()
         await loop.run_in_executor(None, extract)
         archive_path.unlink()
-
-    async def _compile_python(self, python_dir: Path, version: str):
-        """编译Python (Linux/Mac)"""
-        source_dir = python_dir / f"Python-{version}"
-
-        commands = [
-            (["./configure", f"--prefix={python_dir}"], "配置"),
-            (["make", "-j4"], "编译"),
-            (["make", "install"], "安装")
-        ]
-
-        for cmd, step in commands:
-            self.logger.info(f"执行{step}...")
-
-            kwargs = self._get_subprocess_kwargs()
-            kwargs['cwd'] = source_dir
-
-            process = await asyncio.create_subprocess_exec(*cmd, **kwargs)
-            await process.communicate()
-
-            if process.returncode != 0:
-                raise Exception(f"{step}失败")
-
-        shutil.rmtree(source_dir, ignore_errors=True)
 
     async def _setup_windows_embedded(self, version: str, python_dir: Path):
         """设置Windows嵌入式Python"""
