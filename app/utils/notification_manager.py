@@ -756,7 +756,6 @@ class NotificationManager(QObject):
                     # 如果主窗口激活，显示通知并提升到前面
                     notification.show()
                     notification.raise_()
-                    notification.activateWindow()
                 else:
                     # 如果主窗口不是活动窗口，只显示通知但不提升
                     notification.show()
@@ -784,7 +783,6 @@ class NotificationManager(QObject):
         for notification in self.notifications:
             try:
                 notification.raise_()
-                notification.activateWindow()
             except RuntimeError:
                 continue
 
@@ -834,7 +832,6 @@ class NotificationManager(QObject):
         # 如果主窗口是活动窗口，将通知提到前面
         if self.reference_window and self.reference_window.isActiveWindow():
             notification.raise_()
-            notification.activateWindow()
 
     def show_progress(self, notification_id, message, title="进度", initial_progress=0.0):
         """显示进度通知"""
@@ -862,8 +859,6 @@ class NotificationManager(QObject):
         # 如果主窗口是活动窗口，将通知提到前面
         if self.reference_window and self.reference_window.isActiveWindow():
             notification.raise_()
-            notification.activateWindow()
-
         return notification
 
     def update_progress(self, notification_id, progress, message=None):
