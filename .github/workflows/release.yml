@@ -1,13 +1,13 @@
-name: Build and Release
+name: MaaYYs Resource Build and Release
 
 on:
   push:
     tags:
       - 'v*'
-  workflow_dispatch:
 
 permissions:
   contents: write
+  actions: write
 
 jobs:
   build:
@@ -21,104 +21,376 @@ jobs:
           # Windows x64
           - os: windows-x64
             runner: windows-latest
+            mfwph_pattern: 'MFWPH_windows-x64.zip'
+            archive_extension: '.zip'
 
           # macOS Intel
           - os: macos-x64
             runner: macos-13
+            mfwph_pattern: 'MFWPH_macos-x64.tar.gz'
+            archive_extension: '.tar.gz'
 
           # macOS Apple Silicon
           - os: macos-arm64
             runner: macos-14
+            mfwph_pattern: 'MFWPH_macos-arm64.tar.gz'
+            archive_extension: '.tar.gz'
 
           # Linux x64
           - os: linux-x64
             runner: ubuntu-latest
+            mfwph_pattern: 'MFWPH_linux-x64.tar.gz'
+            archive_extension: '.tar.gz'
 
     steps:
-      - name: Checkout code
+      - name: Checkout MaaYYs repository
         uses: actions/checkout@v4
         with:
-          submodules: false
-          fetch-depth: 0
+          path: MaaYYs
+          fetch-depth: 0  # 获取完整历史以便生成变更日志
 
-      - name: Set up Python
+      - name: Set up Python (Unix)
+        if: runner.os != 'Windows'
         uses: actions/setup-python@v5
         with:
-          python-version: '3.12'
+          python-version: '3.x'
 
-      - name: Install dependencies
+      - name: Update resource_version in config file (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        working-directory: MaaYYs
         run: |
-          python -m pip install --upgrade pip
-          pip install -r requirements.txt
+          # Get the current tag
+          $currentTag = "${{ github.ref_name }}"
+          Write-Host "Updating resource_config.json with version: $currentTag"
+          
+          # Read and update JSON
+          $config = Get-Content -Path "resource_config.json" -Raw | ConvertFrom-Json
+          $config.resource_version = $currentTag
+          $config | ConvertTo-Json -Depth 10 | Set-Content -Path "resource_config.json"
+          
+          Write-Host "resource_config.json updated successfully"
+          Get-Content -Path "resource_config.json"
 
-      # Windows特定步骤 - 复制DLL文件
-      - name: Copy DLL files (Windows)
+      - name: Update resource_version in config file (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        working-directory: MaaYYs
+        run: |
+          # Get the current tag
+          currentTag="${{ github.ref_name }}"
+          echo "Updating resource_config.json with version: $currentTag"
+          
+          # Use Python for JSON manipulation
+          python3 -c "import json; config = json.load(open('resource_config.json')); config['resource_version'] = '$currentTag'; json.dump(config, open('resource_config.json', 'w'), indent=2, ensure_ascii=False)"
+          
+          echo "resource_config.json updated successfully"
+          cat resource_config.json
+
+      - name: Generate Changelog (Windows)
+        if: runner.os == 'Windows'
+        id: changelog_windows
+        shell: pwsh
+        working-directory: MaaYYs
+        run: |
+          # 获取当前标签
+          $currentTag = "${{ github.ref_name }}"
+          Write-Host "Current tag: $currentTag"
+          
+          # 获取上一个标签
+          $previousTag = git describe --tags --abbrev=0 HEAD^ 2>$null
+          if (-not $previousTag) {
+            Write-Host "No previous tag found, using first commit"
+            $previousTag = git rev-list --max-parents=0 HEAD
+          }
+          Write-Host "Previous tag/commit: $previousTag"
+          
+          # 生成变更日志
+          $changelog = git log --pretty=format:"* %s (%h)" "$previousTag..$currentTag"
+          if (-not $changelog) {
+            $changelog = "* 首次发布"
+          }
+          
+          # 设置变更日志为GitHub Actions输出变量
+          $changelog = $changelog -replace "`n", "%0A"
+          echo "CHANGELOG<<EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          echo $changelog | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          echo "EOF" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+          
+          Write-Host "Generated changelog for release"
+
+      - name: Generate Changelog (Unix)
+        if: runner.os != 'Windows'
+        id: changelog_unix
+        shell: bash
+        working-directory: MaaYYs
+        run: |
+          # 获取当前标签
+          CURRENT_TAG="${{ github.ref_name }}"
+          echo "Current tag: $CURRENT_TAG"
+          
+          # 获取上一个标签
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || git rev-list --max-parents=0 HEAD)
+          echo "Previous tag/commit: $PREVIOUS_TAG"
+          
+          # 生成变更日志
+          CHANGELOG=$(git log --pretty=format:"* %s (%h)" "$PREVIOUS_TAG..$CURRENT_TAG")
+          if [ -z "$CHANGELOG" ]; then
+            CHANGELOG="* 首次发布"
+          fi
+          
+          # 设置输出
+          {
+            echo 'CHANGELOG<<EOF'
+            echo "$CHANGELOG"
+            echo 'EOF'
+          } >> $GITHUB_OUTPUT
+
+      - name: Fetch latest MFWPH release (Windows)
         if: runner.os == 'Windows'
         shell: pwsh
         run: |
-          if (Test-Path -Path "${{ github.workspace }}\DLL") {
-            $dllFiles = Get-ChildItem -Path "${{ github.workspace }}\DLL" -File
-            foreach ($file in $dllFiles) {
-              Copy-Item -Path $file.FullName -Destination "${{ env.pythonLocation }}\$($file.Name)" -Force
-              Write-Host "Copied $($file.Name) to ${{ env.pythonLocation }}"
-            }
-          } else {
-            Write-Host "DLL folder not found."
+          # 创建下载目录
+          New-Item -Path "mfwph-download" -ItemType Directory -Force
+          
+          # 获取最新的MFWPH发布版本
+          Write-Host "Fetching latest MFWPH release..."
+          $release = Invoke-RestMethod -Uri "https://api.github.com/repos/TanyaShue/MFWPH/releases/latest"
+          
+          # 查找对应平台的下载URL
+          $downloadUrl = ($release.assets | Where-Object { $_.name -eq "${{ matrix.mfwph_pattern }}" }).browser_download_url
+          
+          if (-not $downloadUrl) {
+            Write-Host "::error::Could not find ${{ matrix.mfwph_pattern }} in the latest release"
+            exit 1
           }
-
-      # 构建应用
-      - name: Build application
-        id: build_app
-        shell: bash
-        run: |
-          python build.py --platform ${{ matrix.os }}
-
-      # 新增步骤：为 macOS 应用进行代码签名
-      # 这是解决 macOS 安全限制的关键，否则应用将无法加载 dylib 文件或无法运行。
-      - name: Sign macOS Application
-        if: runner.os == 'macOS'
-        run: |
-          echo "Signing the application for macOS..."
-          APP_PATH="dist/${{ env.APP_NAME }}.app"
-          if [ -d "$APP_PATH" ]; then
-            codesign --force --deep --sign - "$APP_PATH"
-            echo "Ad-hoc signing complete for $APP_PATH"
-          else
-            echo "::error::Application bundle not found at $APP_PATH"
-            exit 1
-          fi
-        env:
-          APP_NAME: MFWPH
-
-      # 准备并重命名构建产物
-      - name: Prepare Artifact
-        id: prepare_artifact
-        shell: bash
-        run: |
-          if [[ "${{ runner.os }}" == "Windows" ]]; then
-            ARCHIVE=$(find ./dist -name "*.zip" -type f | head -1)
-          else
-            ARCHIVE=$(find ./dist -name "*.tar.gz" -type f | head -1)
-          fi
           
-          if [ -z "$ARCHIVE" ]; then
-            echo "::error::Build failed - archive file was not created"
+          Write-Host "Downloading MFWPH from: $downloadUrl"
+          Invoke-WebRequest -Uri $downloadUrl -OutFile "mfwph-download/${{ matrix.mfwph_pattern }}"
+          
+          # 解压MFWPH
+          Expand-Archive -Path "mfwph-download/${{ matrix.mfwph_pattern }}" -DestinationPath "mfwph-extracted" -Force
+          Write-Host "MFWPH package extracted successfully"
+
+      - name: Fetch latest MFWPH release (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          # 创建下载目录
+          mkdir -p mfwph-download
+          
+          # 获取最新的MFWPH发布版本
+          echo "Fetching latest MFWPH release..."
+          RELEASE_JSON=$(curl -s https://api.github.com/repos/TanyaShue/MFWPH/releases/latest)
+          
+          # 查找对应平台的下载URL
+          DOWNLOAD_URL=$(echo "$RELEASE_JSON" | python3 -c "import sys, json; data = json.load(sys.stdin); pattern = '${{ matrix.mfwph_pattern }}'; [print(asset['browser_download_url']) for asset in data.get('assets', []) if asset['name'] == pattern]" | head -n1)
+          
+          if [ -z "$DOWNLOAD_URL" ]; then
+            echo "::error::Could not find ${{ matrix.mfwph_pattern }} in the latest release"
+            echo "Available assets:"
+            echo "$RELEASE_JSON" | python3 -c "import sys, json; data = json.load(sys.stdin); [print(asset['name']) for asset in data.get('assets', [])]"
             exit 1
           fi
           
-          ARCHIVE_NAME="MFWPH_${{ matrix.os }}$([[ '${{ runner.os }}' == 'Windows' ]] && echo '.zip' || echo '.tar.gz')"
-          mv "$ARCHIVE" "./dist/$ARCHIVE_NAME"
+          echo "Downloading MFWPH from: $DOWNLOAD_URL"
+          curl -L -o "mfwph-download/${{ matrix.mfwph_pattern }}" "$DOWNLOAD_URL"
           
-          echo "archive_path=./dist/$ARCHIVE_NAME" >> $GITHUB_OUTPUT
-          echo "archive_name=$ARCHIVE_NAME" >> $GITHUB_OUTPUT
-          echo "Artifact ready: $ARCHIVE_NAME"
+          # 创建解压目录
+          mkdir -p mfwph-extracted
+          
+          # 解压MFWPH到指定目录
+          echo "Extracting MFWPH package..."
+          tar -xzf "mfwph-download/${{ matrix.mfwph_pattern }}" -C mfwph-extracted
+          
+          # 检查解压后的内容
+          echo "Extracted contents:"
+          ls -la mfwph-extracted/
+          
+          # 如果解压后有一个MFWPH子目录，将其内容移到上一级
+          if [ -d "mfwph-extracted/MFWPH" ]; then
+            echo "Moving MFWPH contents up one level..."
+            mv mfwph-extracted/MFWPH/* mfwph-extracted/ 2>/dev/null || true
+            mv mfwph-extracted/MFWPH/.* mfwph-extracted/ 2>/dev/null || true
+            rmdir mfwph-extracted/MFWPH 2>/dev/null || true
+          fi
+          
+          echo "Final structure:"
+          ls -la mfwph-extracted/
+          echo "MFWPH package extracted successfully"
 
-      # 上传构建产物
-      - name: Upload build artifact
+      - name: Prepare resource directory (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # 定义要排除的文件和文件夹列表
+          $excludeList = @('.git', '.github', '.idea', '.gitignore', '.gitattributes', 'debug', 'dist', 'mfwph-download', 'mfwph-extracted', 'resources-temp')
+          
+          # 确保资源目录存在
+          New-Item -Path "mfwph-extracted/assets/resource/MaaYYs" -ItemType Directory -Force
+          
+          # 清空目标资源目录（如果存在）
+          if (Test-Path -Path "mfwph-extracted/assets/resource/MaaYYs") {
+            Get-ChildItem -Path "mfwph-extracted/assets/resource/MaaYYs" | Remove-Item -Recurse -Force
+          }
+          
+          # 获取源目录中的所有文件和文件夹
+          $allItems = Get-ChildItem -Path "MaaYYs" -Force
+          
+          # 复制不在排除列表中的所有文件和文件夹
+          foreach ($item in $allItems) {
+            $itemName = $item.Name
+            if ($excludeList -notcontains $itemName) {
+              if (Test-Path -Path $item.FullName -PathType Container) {
+                # 如果是目录，则递归复制
+                New-Item -Path "mfwph-extracted/assets/resource/MaaYYs/$itemName" -ItemType Directory -Force
+                Copy-Item -Path "$($item.FullName)/*" -Destination "mfwph-extracted/assets/resource/MaaYYs/$itemName" -Recurse -Force
+                Write-Host "Copied directory $itemName to resource directory"
+              } else {
+                # 如果是文件，则直接复制
+                Copy-Item -Path $item.FullName -Destination "mfwph-extracted/assets/resource/MaaYYs/$itemName" -Force
+                Write-Host "Copied file $itemName to resource directory"
+              }
+            } else {
+              Write-Host "Excluded $itemName from resource directory"
+            }
+          }
+          Write-Host "Resources copied successfully to MFWPH package"
+
+      - name: Prepare resource directory (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          # 定义要排除的文件和文件夹列表
+          EXCLUDE_LIST=".git .github .idea .gitignore .gitattributes debug dist mfwph-download mfwph-extracted resources-temp"
+          
+          # 确保mfwph-extracted是目录
+          if [ ! -d "mfwph-extracted" ]; then
+            echo "Error: mfwph-extracted is not a directory"
+            ls -la
+            exit 1
+          fi
+          
+          # 确保资源目录存在
+          mkdir -p "mfwph-extracted/assets/resource/MaaYYs"
+          
+          # 清空目标资源目录（如果存在内容）
+          if [ -d "mfwph-extracted/assets/resource/MaaYYs" ]; then
+            rm -rf "mfwph-extracted/assets/resource/MaaYYs"/*
+          fi
+          
+          # 复制资源文件（排除不需要的）
+          for item in MaaYYs/*; do
+            basename_item=$(basename "$item")
+            skip=false
+            for exclude in $EXCLUDE_LIST; do
+              if [ "$basename_item" = "$exclude" ]; then
+                skip=true
+                echo "Excluded $basename_item from resource directory"
+                break
+              fi
+            done
+            
+            if [ "$skip" = false ]; then
+              cp -r "$item" "mfwph-extracted/assets/resource/MaaYYs/"
+              echo "Copied $basename_item to resource directory"
+            fi
+          done
+          
+          # 复制隐藏文件（如果需要）
+          shopt -s dotglob 2>/dev/null || true
+          for item in MaaYYs/.*; do
+            basename_item=$(basename "$item")
+            if [ "$basename_item" != "." ] && [ "$basename_item" != ".." ]; then
+              skip=false
+              for exclude in $EXCLUDE_LIST; do
+                if [ "$basename_item" = "$exclude" ]; then
+                  skip=true
+                  break
+                fi
+              done
+              
+              if [ "$skip" = false ]; then
+                cp -r "$item" "mfwph-extracted/assets/resource/MaaYYs/" 2>/dev/null || true
+              fi
+            fi
+          done
+          
+          echo "Resources copied successfully to MFWPH package"
+
+      - name: Create full package (Windows)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # 创建输出目录
+          New-Item -Path "dist" -ItemType Directory -Force
+          
+          # 创建ZIP包
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::CreateFromDirectory("mfwph-extracted", "${{ github.workspace }}/dist/MAA_YYS_FULL_${{ matrix.os }}.zip")
+          
+          Write-Host "Created full package: MAA_YYS_FULL_${{ matrix.os }}.zip"
+
+      - name: Create full package (Unix)
+        if: runner.os != 'Windows'
+        shell: bash
+        run: |
+          # 创建输出目录
+          mkdir -p dist
+          
+          # 检查mfwph-extracted目录
+          if [ ! -d "mfwph-extracted" ]; then
+            echo "Error: mfwph-extracted directory not found"
+            ls -la
+            exit 1
+          fi
+          
+          # 创建tar.gz包
+          echo "Creating archive from mfwph-extracted directory..."
+          tar -czf "dist/MAA_YYS_FULL_${{ matrix.os }}.tar.gz" mfwph-extracted
+          
+          echo "Created full package: MAA_YYS_FULL_${{ matrix.os }}.tar.gz"
+          ls -lh dist/
+
+      - name: Create resources-only package (Windows only)
+        if: runner.os == 'Windows'
+        shell: pwsh
+        run: |
+          # 定义要包含的文件和文件夹列表
+          $includeList = @('app', 'custom_dir', 'image', 'model', 'pipeline', 'LICENSE', 'README.md', 'resource_config.json')
+          
+          # 创建临时目录用于资源包
+          New-Item -Path "resources-temp" -ItemType Directory -Force
+          
+          # 仅复制包含列表中的文件和文件夹到临时目录
+          foreach ($item in $includeList) {
+            $sourcePath = "MaaYYs/$item"
+            if (Test-Path -Path $sourcePath) {
+              if (Test-Path -Path $sourcePath -PathType Container) {
+                # 如果是目录，则递归复制
+                New-Item -Path "resources-temp/$item" -ItemType Directory -Force
+                Copy-Item -Path "$sourcePath/*" -Destination "resources-temp/$item" -Recurse -Force
+              } else {
+                # 如果是文件，则直接复制
+                Copy-Item -Path $sourcePath -Destination "resources-temp/$item" -Force
+              }
+              Write-Host "Copied $item to resources-only package"
+            } else {
+              Write-Host "Warning: $item not found in source repository for resources-only package"
+            }
+          }
+          
+          # 创建仅包含资源的ZIP文件
+          Add-Type -AssemblyName System.IO.Compression.FileSystem
+          [System.IO.Compression.ZipFile]::CreateFromDirectory("resources-temp", "${{ github.workspace }}/dist/MAA_YYS_RESOURCES_ONLY.zip")
+          
+          Write-Host "Created resources-only package: MAA_YYS_RESOURCES_ONLY.zip"
+
+      - name: Upload build artifacts
         uses: actions/upload-artifact@v4
         with:
           name: ${{ matrix.os }}-build
-          path: ${{ steps.prepare_artifact.outputs.archive_path }}
+          path: dist/*
           retention-days: 7
 
   release:
@@ -141,21 +413,21 @@ jobs:
       - name: Generate Changelog
         id: changelog
         run: |
+          # 获取当前标签
           CURRENT_TAG="${{ github.ref_name }}"
           echo "Current tag: $CURRENT_TAG"
           
-          PREVIOUS_TAG=$(git tag --sort=-creatordate | sed -n '2p')
-          if [ -z "$PREVIOUS_TAG" ]; then
-            echo "No previous tag found, using first commit"
-            PREVIOUS_TAG=$(git rev-list --max-parents=0 HEAD)
-          fi
+          # 获取上一个标签
+          PREVIOUS_TAG=$(git describe --tags --abbrev=0 HEAD^ 2>/dev/null || git rev-list --max-parents=0 HEAD)
           echo "Previous tag/commit: $PREVIOUS_TAG"
           
+          # 生成变更日志
           CHANGELOG=$(git log --pretty=format:"* %s (%h)" "$PREVIOUS_TAG..$CURRENT_TAG")
           if [ -z "$CHANGELOG" ]; then
             CHANGELOG="* 首次发布"
           fi
           
+          # 设置输出
           {
             echo 'CHANGELOG<<EOF'
             echo "$CHANGELOG"
@@ -163,12 +435,13 @@ jobs:
           } >> $GITHUB_OUTPUT
 
       - name: Prepare release files
-        id: prepare
         run: |
+          # 移动所有构建产物到发布目录
           mkdir -p release_files
           find ./artifacts -type f \( -name "*.zip" -o -name "*.tar.gz" \) \
             -exec mv {} ./release_files/ \;
           
+          # 列出所有文件
           echo "Release files:"
           ls -la ./release_files/
 
@@ -180,26 +453,31 @@ jobs:
           name: Release ${{ github.ref_name }}
           body: |
             ## 版本 ${{ github.ref_name }} 更新日志
-
+            
             ${{ steps.changelog.outputs.CHANGELOG }}
             
-            ### 安装说明
+            ## 下载说明
             
-            **Windows:**
-            1. 下载并解压 ZIP 文件
-            2. 运行 `MFWPH.exe`
+            ### 完整包（包含 MFWPH 和 MaaYYs 资源）
+            - **Windows x64**: `MAA_YYS_FULL_windows-x64.zip`
+            - **macOS Intel**: `MAA_YYS_FULL_macos-x64.tar.gz`
+            - **macOS Apple Silicon**: `MAA_YYS_FULL_macos-arm64.tar.gz`
+            - **Linux x64**: `MAA_YYS_FULL_linux-x64.tar.gz`
             
-            **macOS:**
-            1. 下载并解压 TAR.GZ 文件：`tar -xzf MFWPH_macos-*.tar.gz`
-            2. 首次运行请右键点击程序，然后选择“打开”
+            ### 仅资源包（仅包含 MaaYYs 资源，适用于已有 MFWPH 的用户）
+            - **通用**: `MAA_YYS_RESOURCES_ONLY.zip`
             
-            **Linux:**
-            1. 下载并解压 TAR.GZ 文件：`tar -xzf MFWPH_linux-x64.tar.gz`
-            2. 添加执行权限：`chmod +x MFWPH`
-            3. 运行：`./MFWPH`
-
+            [已有 Mirror酱 CDK？点击前往高速下载](https://mirrorchyan.com/zh/projects?rid=MaaYYs)
           draft: false
           prerelease: false
           artifacts: ./release_files/*
           artifactContentType: application/octet-stream
           artifactErrorsFailBuild: true
+
+      - name: Trigger MirrorChyanUploading
+        shell: bash
+        run: |
+          gh workflow run --repo $GITHUB_REPOSITORY mirrorchyan
+          gh workflow run --repo $GITHUB_REPOSITORY mirrorchyan_release_note
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
