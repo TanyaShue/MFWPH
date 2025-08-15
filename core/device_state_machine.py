@@ -23,7 +23,7 @@ class DeviceState(Enum):
     PREPARING = "preparing"  # 准备运行任务
 
     # 任务执行状态
-    QUEUED = "queued"  # 任务已入队
+    WAITING = "waiting"  # 新增: 等待执行
     RUNNING = "running"  # 正在运行任务
     PAUSED = "paused"  # 任务暂停
 
@@ -187,24 +187,6 @@ class SimpleStateManager(QObject):
             DeviceState.PREPARING,
             DeviceState.RUNNING,
             DeviceState.PAUSED
-        ]
-
-    def is_final_state(self) -> bool:
-        """检查是否处于最终状态"""
-        return self._current_state in [
-            DeviceState.COMPLETED,
-            DeviceState.FAILED,
-            DeviceState.CANCELED
-        ]
-
-    def can_accept_task(self) -> bool:
-        """检查是否可以接受新任务"""
-        return self._current_state in [
-            DeviceState.CONNECTED,
-            DeviceState.QUEUED,
-            DeviceState.COMPLETED,
-            DeviceState.FAILED,
-            DeviceState.CANCELED
         ]
 
     # === 私有方法 ===

@@ -71,11 +71,11 @@ class DeviceStatusManager(QObject):
                 "tooltip": "设备就绪"
             },
             DeviceState.UPDATING: {
-                "text": "更新中",
+                "text": "初始化",
                 "color": "#FF9800",
-                "button": "更新中...",
+                "button": "初始化...",
                 "enabled": False,
-                "tooltip": "正在更新资源"
+                "tooltip": "正在初始化agent"
             },
             DeviceState.PREPARING: {
                 "text": "准备中",
@@ -84,12 +84,12 @@ class DeviceStatusManager(QObject):
                 "enabled": False,
                 "tooltip": "准备运行任务"
             },
-            DeviceState.QUEUED: {
-                "text": "排队中",
+            DeviceState.WAITING: {
+                "text": "等待执行",
                 "color": "#9C27B0",
                 "button": "取消",
                 "enabled": True,
-                "tooltip": "任务排队中"
+                "tooltip": "任务等待执行"
             },
             DeviceState.RUNNING: {
                 "text": "运行中",
@@ -170,7 +170,8 @@ class DeviceStatusManager(QObject):
                 self.logger.warning(f"任务状态管理器已存在: {task_id}")
                 return self._task_managers[task_id]
 
-            manager = SimpleStateManager(f"task_{task_id}", DeviceState.QUEUED)
+            # 修改: 任务的初始状态从 QUEUED 改为 WAITING
+            manager = SimpleStateManager(f"task_{task_id}", DeviceState.WAITING)
             manager.update_context(device_name=device_name, task_id=task_id)
             manager.state_changed.connect(self._on_task_state_changed)
             self._task_managers[task_id] = manager
@@ -198,7 +199,8 @@ class DeviceStatusManager(QObject):
             for manager in self._task_managers.values():
                 context = manager.get_context()
                 if context.get('device_name') == device_name:
-                    if manager.get_state() in [DeviceState.QUEUED, DeviceState.PREPARING,
+                    # 修改: 将 QUEUED 替换为 WAITING
+                    if manager.get_state() in [DeviceState.WAITING, DeviceState.PREPARING,
                                                DeviceState.RUNNING, DeviceState.PAUSED]:
                         count += 1
             return count
@@ -343,9 +345,10 @@ class DeviceStatusManager(QObject):
     # === 任务操作方法 ===
 
     def queue_task(self, task_id: str, device_name: str, task_name: Optional[str] = None) -> SimpleStateManager:
-        """将任务加入队列"""
+        """将任务加入等待队列"""
         manager = self.create_task_manager(task_id, device_name)
-        manager.set_state(DeviceState.QUEUED, task_name=task_name)
+        # 修改: 设置状态为 WAITING
+        manager.set_state(DeviceState.WAITING, task_name=task_name)
         return manager
 
     def start_task(self, task_id: str):

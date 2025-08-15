@@ -3,9 +3,10 @@ import hashlib
 import json
 import os
 import time
+import uuid
 from dataclasses import dataclass, field
 from enum import Enum
-from typing import Any, Dict, List, Union, Optional
+from typing import Any, Dict, List, Union, Optional, Type
 
 from cryptography.fernet import Fernet
 
@@ -13,27 +14,27 @@ from app.utils.notification_manager import notification_manager
 
 
 class DeviceType(Enum):
-    """Enum for device controller types."""
+    """设备控制器类型的枚举。"""
     ADB = "adb"
     WIN32 = "win32"
 
 
 @dataclass
 class AdbDevice:
-    """ADB device configuration dataclass."""
+    """ADB设备配置的数据类。"""
     name: str
     adb_path: str  # 路径使用 str 类型，匹配 JSON 中的字符串路径
     address: str
     screencap_methods: int
     input_methods: int
-    agent_path: Optional[str] = None  # New field
-    notification_handler: Optional[Any] = None  # New field
+    agent_path: Optional[str] = None  # 新字段
+    notification_handler: Optional[Any] = None  # 新字段
     config: Dict[str, Any] = field(default_factory=dict)
 
 
 @dataclass
 class Win32Device:
-    """Win32 device configuration dataclass."""
+    """Win32设备配置的数据类。"""
     hWnd: int
     screencap_method: int
     input_method: int
@@ -42,14 +43,14 @@ class Win32Device:
 
 @dataclass
 class OptionConfig:
-    """Option configuration for a task or resource."""
+    """任务或资源的选项配置。"""
     option_name: str
     value: Any
 
 
 @dataclass
 class ResourceSettings:
-    """Settings configuration for a resource."""
+    """资源的设置配置。"""
     name: str  # 设置的唯一名称
     resource_name: str  # 表示这个设置属于哪种资源
     selected_tasks: List[str] = field(default_factory=list)
@@ -57,21 +58,18 @@ class ResourceSettings:
 
 
 # app_config.py - 定时任务相关的数据类
-
-from dataclasses import dataclass, field
-from typing import List, Optional, Any, Dict
-
-
 @dataclass
-class ResourceSchedule:
-    """资源的定时任务配置。"""
+class ScheduleTask:
+    """定时任务配置。"""
+    device_name: str  # 此任务所属的设备
+    resource_name: str  # 此任务所属的资源
     enabled: bool = False
     schedule_time: str = ""  # 格式: "HH:mm:ss"
     schedule_type: str = "daily"  # "once", "daily", "weekly"
     week_days: List[str] = field(default_factory=list)  # 周执行时的星期列表 ["周一", "周二", ...]
     settings_name: str = ""  # 使用的配置方案
     notify: bool = False  # 是否发送通知
-    task_id: Optional[str] = None  # 任务ID，用于关联管理器中的任务
+    schedule_id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
 
     def to_ui_format(self) -> dict:
         """转换为UI所需的格式"""
@@ -84,8 +82,8 @@ class ResourceSchedule:
         }
         if self.schedule_type == 'weekly' and self.week_days:
             result['week_days'] = self.week_days
-        if self.task_id:
-            result['id'] = self.task_id
+        if self.schedule_id:
+            result['id'] = self.schedule_id
         return result
 
     def get_schedule_type_display(self) -> str:
@@ -98,33 +96,37 @@ class ResourceSchedule:
         return type_map.get(self.schedule_type, '每日执行')
 
     @staticmethod
-    def from_ui_format(ui_data: dict) -> 'ResourceSchedule':
-        """从UI格式创建ResourceSchedule对象"""
+    def from_ui_format(ui_data: dict, device_name: str, resource_name: str) -> 'ScheduleTask':
+        """从UI格式创建ScheduleTask对象"""
         schedule_type_map = {
             '单次执行': 'once',
             '每日执行': 'daily',
             '每周执行': 'weekly'
         }
 
-        return ResourceSchedule(
-            enabled=ui_data.get('status', '活动') == '活动',
-            schedule_time=ui_data.get('time', ''),
-            schedule_type=schedule_type_map.get(ui_data.get('schedule_type', '每日执行'), 'daily'),
-            week_days=ui_data.get('week_days', []),
-            settings_name=ui_data.get('config_scheme', '默认配置'),
-            notify=ui_data.get('notify', False),
-            task_id=ui_data.get('id')
-        )
+        init_args = {
+            'device_name': device_name,
+            'resource_name': resource_name,
+            'enabled': ui_data.get('status', '活动') == '活动',
+            'schedule_time': ui_data.get('time', ''),
+            'schedule_type': schedule_type_map.get(ui_data.get('schedule_type', '每日执行'), 'daily'),
+            'week_days': ui_data.get('week_days', []),
+            'settings_name': ui_data.get('config_scheme', '默认配置'),
+            'notify': ui_data.get('notify', False),
+        }
+
+        if ui_data.get('id'):
+            init_args['schedule_id'] = ui_data['id']
+
+        return ScheduleTask(**init_args)
 
 
 @dataclass
 class Resource:
-    """Resource configuration within a device."""
+    """设备内的资源配置。"""
     resource_name: str
     settings_name: str  # 引用 ResourceSettings 的名称
     enable: bool = False
-    schedules_enable: bool = False  # 是否启用资源的定时任务
-    schedules: List[ResourceSchedule] = field(default_factory=list)  # 资源的定时任务列表
     # 内部引用，不会被序列化
     _app_config: Optional['AppConfig'] = field(default=None, repr=False, compare=False)
 
@@ -153,9 +155,11 @@ class Resource:
         self._app_config = app_config
 
 
-def resource_schedule_to_dict(schedule: ResourceSchedule) -> Dict[str, Any]:
-    """辅助函数，将 ResourceSchedule 对象转换为字典。"""
+def schedule_task_to_dict(schedule: ScheduleTask) -> Dict[str, Any]:
+    """辅助函数，将 ScheduleTask 对象转换为字典。"""
     result = {
+        'device_name': schedule.device_name,
+        'resource_name': schedule.resource_name,
         'enabled': schedule.enabled,
         'schedule_time': schedule.schedule_time,
         'schedule_type': schedule.schedule_type,
@@ -164,60 +168,27 @@ def resource_schedule_to_dict(schedule: ResourceSchedule) -> Dict[str, Any]:
     }
     if schedule.week_days:
         result['week_days'] = schedule.week_days
-    if schedule.task_id:
-        result['task_id'] = schedule.task_id
+    if schedule.schedule_id:
+        result['schedule_id'] = schedule.schedule_id
     return result
-# 修改 Resource 类，添加schedules字段
-@dataclass
-class Resource:
-    """Resource configuration within a device."""
-    resource_name: str
-    settings_name: str  # 引用 ResourceSettings 的名称
-    enable: bool = False
-    schedules_enable: bool = False  # New attribute to enable/disable resource schedules
-    schedules: List[ResourceSchedule] = field(default_factory=list)  # 资源的定时任务列表
-    # 内部引用，不会被序列化
-    _app_config: Optional['AppConfig'] = field(default=None, repr=False, compare=False)
 
-    @property
-    def selected_tasks(self) -> List[str]:
-        """从引用的设置中获取 selected_tasks。"""
-        if not self._app_config:
-            return []
-        for settings in self._app_config.resource_settings:
-            if settings.name == self.settings_name and settings.resource_name == self.resource_name:
-                return settings.selected_tasks
-        return []
-
-    @property
-    def options(self) -> List[OptionConfig]:
-        """从引用的设置中获取 options。"""
-        if not self._app_config:
-            return []
-        for settings in self._app_config.resource_settings:
-            if settings.name == self.settings_name and settings.resource_name == self.resource_name:
-                return settings.options
-        return []
-
-    def set_app_config(self, app_config: 'AppConfig'):
-        """设置对 AppConfig 的引用。"""
-        self._app_config = app_config
 
 @dataclass
 class DeviceConfig:
-    """Device configuration dataclass."""
+    """设备配置的数据类。"""
     device_name: str
-    device_type: DeviceType  # New field to indicate controller type
-    controller_config: Union[AdbDevice, Win32Device]  # Changed from adb_config
+    device_type: DeviceType  # 新字段，用于指示控制器类型
+    controller_config: Union[AdbDevice, Win32Device]  # 从 adb_config 更改而来
     resources: List[Resource] = field(default_factory=list)
     start_command: str = ""
 
 
 @dataclass
 class AppConfig:
-    """主设备配置数据类，包含顶层版本信息和设备列表。"""
+    """主应用配置数据类，包含顶层设备列表和全局设置。"""
     devices: List[DeviceConfig] = field(default_factory=list)
-    resource_settings: List[ResourceSettings] = field(default_factory=list)  # 新字段
+    resource_settings: List[ResourceSettings] = field(default_factory=list)
+    schedule_tasks: List[ScheduleTask] = field(default_factory=list)  # 新字段，用于应用级别的定时任务
     source_file: str = ""  # 用于记录加载的文件路径，但不保存到输出 JSON 中
     CDK: str = ""
     update_method: str = field(default="github")
@@ -297,66 +268,81 @@ class AppConfig:
         with open(file_path, 'w', encoding='utf-8') as f:
             json.dump(self.to_dict(), f, indent=indent, ensure_ascii=False)
 
+    @staticmethod
+    def _filter_kwargs_for_class(target_class: Type, data: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        过滤字典，仅保留目标 dataclass 中定义的字段。
+        这可以防止在用旧配置文件启动新版程序时，因字段不匹配而报错。
+        """
+        if not hasattr(target_class, '__dataclass_fields__'):
+            return data  # 如果不是 dataclass，则返回原始数据
+
+        valid_keys = target_class.__dataclass_fields__.keys()
+        return {key: value for key, value in data.items() if key in valid_keys}
+
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'AppConfig':
-        """从字典创建 AppConfig 对象。"""
+        """从字典创建 AppConfig 对象，会自动跳过无法识别的属性。"""
         # 首先加载资源设置
         resource_settings_data = data.get('resource_settings', [])
         resource_settings = []
         for settings_data in resource_settings_data:
             options_data = settings_data.get('options', [])
-            options = [OptionConfig(**option_data) for option_data in options_data]
-            settings_kwargs = {k: v for k, v in settings_data.items() if k != 'options'}
-            resource_settings.append(ResourceSettings(**settings_kwargs, options=options))
+            options = [OptionConfig(**cls._filter_kwargs_for_class(OptionConfig, option_data)) for option_data in
+                       options_data]
 
-        # 加载设备
+            settings_kwargs = {k: v for k, v in settings_data.items() if k != 'options'}
+            filtered_settings_kwargs = cls._filter_kwargs_for_class(ResourceSettings, settings_kwargs)
+            resource_settings.append(ResourceSettings(**filtered_settings_kwargs, options=options))
+
+        # 加载设备并迁移旧的定时任务
         devices_data = data.get('devices', [])
         device_configs = []
+        migrated_schedules = []
 
         for device_data in devices_data:
-            # 确定设备类型
-            device_type_str = device_data.get('device_type', 'adb')  # 默认为adb类型以兼容旧配置
+            device_type_str = device_data.get('device_type', 'adb')
             try:
-                device_type = DeviceType(device_type_str)  # 尝试将字符串转换为枚举
+                device_type = DeviceType(device_type_str)
             except ValueError:
-                # 如果转换失败(无效的设备类型字符串)，默认为ADB
                 device_type = DeviceType.ADB
 
-            # 根据设备类型创建对应的配置
             if device_type == DeviceType.ADB:
                 controller_config_data = device_data.get('controller_config', device_data.get('adb_config', {}))
-                controller_config = AdbDevice(**controller_config_data)
+                controller_config = AdbDevice(**cls._filter_kwargs_for_class(AdbDevice, controller_config_data))
             else:  # WIN32
                 controller_config_data = device_data.get('controller_config', {})
-                controller_config = Win32Device(**controller_config_data)
+                controller_config = Win32Device(**cls._filter_kwargs_for_class(Win32Device, controller_config_data))
 
             resources_data = device_data.get('resources', [])
             resources = []
             for resource_data in resources_data:
-                # 处理资源的定时任务
-                schedules = []
                 resource_data_copy = resource_data.copy()
+
+                # 向后兼容：将定时任务从资源迁移到应用级别
                 if 'schedules' in resource_data_copy:
                     for schedule_data in resource_data_copy['schedules']:
-                        schedules.append(ResourceSchedule(**schedule_data))
-
-                    # 从resource_data中移除schedules，避免传递给Resource构造函数
+                        # 使用旧的ResourceSchedule的字段来创建新的ScheduleTask
+                        schedule_kwargs = cls._filter_kwargs_for_class(ScheduleTask, schedule_data)
+                        # 添加设备和资源上下文
+                        schedule_kwargs['device_name'] = device_data.get('device_name')
+                        schedule_kwargs['resource_name'] = resource_data_copy.get('resource_name')
+                        migrated_schedules.append(ScheduleTask(**schedule_kwargs))
                     del resource_data_copy['schedules']
+                # 移除其他旧的与定时任务相关的字段
+                resource_data_copy.pop('schedules_enable', None)
 
-                # 检查是否为旧式资源（直接包含selected_tasks和options）
                 is_old_style = 'selected_tasks' in resource_data_copy or 'options' in resource_data_copy
 
                 if is_old_style:
-                    # 为向后兼容，创建新的设置
                     settings_name = f"{resource_data_copy['resource_name']}_settings"
                     options_data = resource_data_copy.get('options', [])
                     selected_tasks = resource_data_copy.get('selected_tasks', [])
 
-                    # 检查设置是否已存在
                     existing_settings = next((s for s in resource_settings if s.name == settings_name), None)
                     if not existing_settings:
-                        # 创建新设置
-                        options = [OptionConfig(**option_data) for option_data in options_data]
+                        options = [OptionConfig(**cls._filter_kwargs_for_class(OptionConfig, option_data)) for
+                                   option_data in options_data]
                         resource_settings.append(ResourceSettings(
                             name=settings_name,
                             resource_name=resource_data_copy['resource_name'],
@@ -364,37 +350,44 @@ class AppConfig:
                             options=options
                         ))
 
-                    # 创建引用设置的资源
-                    resource_kwargs = {k: v for k, v in resource_data_copy.items()
-                                       if k not in ('options', 'selected_tasks')}
-                    resources.append(Resource(**resource_kwargs, settings_name=settings_name, schedules=schedules))
+                    resource_kwargs = {k: v for k, v in resource_data_copy.items() if
+                                       k not in ('options', 'selected_tasks')}
+                    filtered_resource_kwargs = cls._filter_kwargs_for_class(Resource, resource_kwargs)
+                    resources.append(
+                        Resource(**filtered_resource_kwargs, settings_name=settings_name))
                 else:
-                    # 新式资源与settings_name引用
-                    resources.append(Resource(**resource_data_copy, schedules=schedules))
+                    filtered_resource_kwargs = cls._filter_kwargs_for_class(Resource, resource_data_copy)
+                    resources.append(Resource(**filtered_resource_kwargs))
 
-            # 排除 controller_config/adb_config 与 resources 字段后创建 DeviceConfig 对象
             device_kwargs = {k: v for k, v in device_data.items()
                              if k not in ('controller_config', 'adb_config', 'resources', 'device_type')}
+            filtered_device_kwargs = cls._filter_kwargs_for_class(DeviceConfig, device_kwargs)
             device_configs.append(DeviceConfig(
-                **device_kwargs,
+                **filtered_device_kwargs,
                 device_type=device_type,
                 controller_config=controller_config,
                 resources=resources
             ))
 
+        # 加载新的应用级别定时任务
+        schedule_tasks_data = data.get('schedule_tasks', [])
+        schedule_tasks = [ScheduleTask(**cls._filter_kwargs_for_class(ScheduleTask, task_data)) for task_data in
+                          schedule_tasks_data]
+
+        # 将新的定时任务与迁移的合并
+        schedule_tasks.extend(migrated_schedules)
+
         # 创建 AppConfig
         config = AppConfig(
             devices=device_configs,
-            resource_settings=resource_settings
+            resource_settings=resource_settings,
+            schedule_tasks=schedule_tasks
         )
 
-
-        # 处理加密的CDK
         encrypted_cdk = data.get('encrypted_cdk', '')
         if encrypted_cdk:
             config.CDK = cls._decrypt_cdk(encrypted_cdk)
         else:
-            # 向后兼容：如果存在明文CDK，则使用它
             config.CDK = data.get('CDK', '')
 
         config.update_method = data.get('update_method', 'github')
@@ -402,9 +395,8 @@ class AppConfig:
         config.auto_check_update = data.get('auto_check_update', False)
         config.window_size = data.get('window_size', "800x600")
         config.window_position = data.get('window_position', "center")
-        config.debug_model=data.get('debug_model', False)
+        config.debug_model = data.get('debug_model', False)
 
-        # 将资源链接到AppConfig
         config.link_resources_to_config()
 
         return config
@@ -421,11 +413,11 @@ class AppConfig:
         result["auto_check_update"] = getattr(self, "auto_check_update", False)
         result["devices"] = [device_config_to_dict(device) for device in self.devices]
         result["resource_settings"] = [resource_settings_to_dict(settings) for settings in self.resource_settings]
-        result["window_size"]= self.window_size
-        result["window_position"]= self.window_position
-        result["debug_model"]=self.debug_model
+        result["schedule_tasks"] = [schedule_task_to_dict(task) for task in self.schedule_tasks]  # 序列化 schedule_tasks
+        result["window_size"] = self.window_size
+        result["window_position"] = self.window_position
+        result["debug_model"] = self.debug_model
         return result
-
 
 
 def device_config_to_dict(device: DeviceConfig) -> Dict[str, Any]:
@@ -455,26 +447,17 @@ def win32_device_to_dict(win32_device: Win32Device) -> Dict[str, Any]:
     return win32_device.__dict__
 
 
-# 修改 resource_to_dict 函数，处理资源级定时任务
 def resource_to_dict(resource: Resource) -> Dict[str, Any]:
     """辅助函数，将 Resource 对象转换为字典。"""
     # 从序列化中排除 _app_config
+    # 与定时任务相关的字段已被移除
     result = {
         'resource_name': resource.resource_name,
         'settings_name': resource.settings_name,
         'enable': resource.enable,
-        'schedules_enable': resource.schedules_enable  # Add the new field
     }
-
-    # 如果有定时任务，则添加到结果中
-    if resource.schedules:
-        result['schedules'] = [resource_schedule_to_dict(schedule) for schedule in resource.schedules]
-
     return result
-# # 添加新的辅助函数，将 ResourceSchedule 对象转换为字典
-# def resource_schedule_to_dict(schedule: ResourceSchedule) -> Dict[str, Any]:
-#     """辅助函数，将 ResourceSchedule 对象转换为字典。"""
-#     return schedule.__dict__
+
 
 def resource_settings_to_dict(settings: ResourceSettings) -> Dict[str, Any]:
     """辅助函数，将 ResourceSettings 对象转换为字典。"""

@@ -306,7 +306,7 @@ class TaskExecutor(QObject):
 
             while self._task_queue:
                 task = self._task_queue.pop(0)
-                if task.state_manager.get_state() == DeviceState.QUEUED:
+                if task.state_manager.get_state() == DeviceState.CONNECTED or task.state_manager.get_state() == DeviceState.WAITING:
                     self._current_task = task
                     return task
                 else:
