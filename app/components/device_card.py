@@ -323,10 +323,9 @@ class DeviceCard(QFrame):
                 self.logger.error(f"停止任务时出错: {str(e)}")
 
     def open_device_page(self):
-        # ... (此方法保持不变) ...
         main_window = self.window()
-        if main_window and hasattr(main_window, 'show_device_page'):
-            main_window.show_device_page(self.device_name)
+        if main_window and hasattr(main_window, 'show_device_page_by_name'):
+            main_window.show_device_page_by_name(self.device_name)
 
     def showEvent(self, event):
         super().showEvent(event)
