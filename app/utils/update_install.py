@@ -20,6 +20,13 @@ from app.models.logging.log_manager import log_manager
 logger = log_manager.get_app_logger()
 
 
+def get_executable_name(base_name):
+    """根据当前平台获取可执行文件名"""
+    if sys.platform == "win32":
+        return f"{base_name}.exe"
+    return base_name
+
+
 class UpdateInstaller(QObject):
     """更新安装器"""
     # 信号定义
@@ -31,7 +38,10 @@ class UpdateInstaller(QObject):
     def __init__(self):
         """初始化安装器"""
         super().__init__()
-        self.updater_path = Path("updater.exe")  # 独立更新程序路径
+        # 根据平台动态确定可执行文件名
+        self.app_name = get_executable_name("MFWPH")
+        self.updater_name = get_executable_name("updater")
+        self.updater_path = Path(self.updater_name)  # 独立更新程序路径
 
     def _check_if_restart_required(self, file_path):
         """检查是否需要重启来应用更新"""
@@ -55,7 +65,8 @@ class UpdateInstaller(QObject):
                 all_files.extend(changes.get("modified", []))
 
                 for file in all_files:
-                    if file == "MFWPH.exe" or self._is_file_locked(Path(file)):
+                    # 使用动态获取的应用名称
+                    if file == self.app_name or self._is_file_locked(Path(file)):
                         return True, "incremental"
 
             # 检查完整更新（总是需要重启）
@@ -66,6 +77,8 @@ class UpdateInstaller(QObject):
 
     def _is_file_locked(self, file_path):
         """检查文件是否被锁定"""
+        if not file_path.exists():
+            return False
         try:
             # 尝试以写模式打开文件
             with open(file_path, 'a'):
@@ -153,18 +166,18 @@ class UpdateInstaller(QObject):
         if not self.updater_path.exists():
             raise FileNotFoundError(f"独立更新程序不存在: {self.updater_path}")
 
-        # 检查更新包中是否包含新的updater.exe并进行覆盖
+        # 检查更新包中是否包含新的updater并进行覆盖
         self._update_updater_if_needed(file_path)
 
         # 获取当前进程PID
         current_pid = os.getpid()
 
-        # 构建命令行参数
+        # 构建命令行参数，使用动态获取的应用名称
         args = [
             str(self.updater_path),
             str(file_path),
             "--type", update_type,
-            "--restart", "MFWPH.exe",
+            "--restart", self.app_name,
             "--wait-pid", str(current_pid)
         ]
 
@@ -178,7 +191,7 @@ class UpdateInstaller(QObject):
             subprocess.Popen(args)
 
     def _update_updater_if_needed(self, file_path):
-        """检查并更新updater.exe（如果更新包中包含的话）"""
+        """检查并更新updater（如果更新包中包含的话）"""
         try:
             with tempfile.TemporaryDirectory() as temp_dir:
                 temp_path = Path(temp_dir)
@@ -187,60 +200,60 @@ class UpdateInstaller(QObject):
                 with zipfile.ZipFile(file_path, 'r') as zip_ref:
                     zip_ref.extractall(temp_path)
 
-                # 查找updater.exe
+                # 查找updater
                 updater_in_package = None
 
                 # 在根目录查找
-                root_updater = temp_path / "updater.exe"
+                root_updater = temp_path / self.updater_name
                 if root_updater.exists():
                     updater_in_package = root_updater
                 else:
-                    # 递归查找updater.exe
+                    # 递归查找updater
                     for root, dirs, files in os.walk(temp_path):
-                        if "updater.exe" in files:
-                            updater_in_package = Path(root) / "updater.exe"
+                        if self.updater_name in files:
+                            updater_in_package = Path(root) / self.updater_name
                             break
 
-                # 如果找到updater.exe，则进行覆盖
+                # 如果找到updater，则进行覆盖
                 if updater_in_package and updater_in_package.exists():
-                    logger.info(f"发现新的updater.exe，准备覆盖现有版本")
+                    logger.info(f"发现新的 {self.updater_name}，准备覆盖现有版本")
 
-                    # 创建当前updater.exe的备份
-                    backup_path = self.updater_path.with_suffix('.exe.backup')
+                    # 创建当前updater的备份
+                    backup_path = self.updater_path.with_suffix(self.updater_path.suffix + '.backup')
                     if self.updater_path.exists():
                         shutil.copy2(self.updater_path, backup_path)
-                        logger.info(f"已备份当前updater.exe到: {backup_path}")
+                        logger.info(f"已备份当前 {self.updater_name} 到: {backup_path}")
 
                     try:
-                        # 覆盖updater.exe
+                        # 覆盖updater
                         if self.updater_path.exists():
                             # 在Windows上可能需要先删除再复制
                             self.updater_path.unlink()
 
                         shutil.copy2(updater_in_package, self.updater_path)
-                        logger.info(f"已更新updater.exe")
+                        logger.info(f"已更新 {self.updater_name}")
 
                         # 删除备份文件（如果更新成功）
                         if backup_path.exists():
                             backup_path.unlink()
 
                     except Exception as e:
-                        logger.error(f"更新updater.exe失败: {str(e)}")
+                        logger.error(f"更新 {self.updater_name} 失败: {str(e)}")
                         # 如果更新失败，尝试恢复备份
                         if backup_path.exists() and not self.updater_path.exists():
                             try:
                                 shutil.copy2(backup_path, self.updater_path)
-                                logger.info("已从备份恢复updater.exe")
+                                logger.info(f"已从备份恢复 {self.updater_name}")
                             except Exception as restore_error:
-                                logger.error(f"恢复updater.exe备份失败: {str(restore_error)}")
+                                logger.error(f"恢复 {self.updater_name} 备份失败: {str(restore_error)}")
                         raise
                 else:
-                    logger.debug("更新包中未发现updater.exe，跳过更新")
+                    logger.debug(f"更新包中未发现 {self.updater_name}，跳过更新")
 
         except Exception as e:
-            logger.warning(f"检查/更新updater.exe时出错: {str(e)}")
-            # 这里不抛出异常，因为updater.exe更新失败不应该阻止主要的更新流程
-            # 除非是严重错误，可以继续使用现有的updater.exe
+            logger.warning(f"检查/更新 {self.updater_name} 时出错: {str(e)}")
+            # 这里不抛出异常，因为updater更新失败不应该阻止主要的更新流程
+            # 除非是严重错误，可以继续使用现有的updater
 
     def _apply_update_directly(self, resource, file_path, new_version, update_type):
         """直接应用更新（不需要重启的情况）"""
@@ -418,7 +431,7 @@ def initialize_update_system():
             logger.warning(f"清理临时目录失败: {str(e)}")
 
         # 检查独立更新程序是否存在
-        updater_path = Path("updater.exe")
+        updater_path = Path(get_executable_name("updater"))
         if not updater_path.exists():
             logger.warning("独立更新程序不存在，某些更新功能可能无法使用")
 
