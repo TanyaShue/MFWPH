@@ -139,10 +139,10 @@ class TaskSettingsWidget(QFrame):
         self.content_stack = QStackedWidget()
         self.content_stack.setMinimumHeight(200)
         self.basic_settings_page = BasicSettingsPage(self.device_config)
-        self.advanced_settings_page = AdvancedSettingsPage(self.device_config)
+        # self.advanced_settings_page = AdvancedSettingsPage(self.device_config)
 
         self.content_stack.addWidget(self.basic_settings_page)
-        self.content_stack.addWidget(self.advanced_settings_page)
+        # self.content_stack.addWidget(self.advanced_settings_page)
         self.layout.addWidget(self.content_stack)
 
         # 标签页按钮
@@ -156,13 +156,13 @@ class TaskSettingsWidget(QFrame):
         self.basic_tab_btn.setChecked(True)
         self.basic_tab_btn.clicked.connect(lambda: self.switch_tab("basic"))
 
-        self.advanced_tab_btn = QPushButton("高级设置")
-        self.advanced_tab_btn.setObjectName("secondaryButton")
-        self.advanced_tab_btn.setCheckable(True)
-        self.advanced_tab_btn.clicked.connect(lambda: self.switch_tab("advanced"))
+        # self.advanced_tab_btn = QPushButton("高级设置")
+        # self.advanced_tab_btn.setObjectName("secondaryButton")
+        # self.advanced_tab_btn.setCheckable(True)
+        # self.advanced_tab_btn.clicked.connect(lambda: self.switch_tab("advanced"))
 
         tab_buttons_layout.addWidget(self.basic_tab_btn)
-        tab_buttons_layout.addWidget(self.advanced_tab_btn)
+        # tab_buttons_layout.addWidget(self.advanced_tab_btn)
 
         self.layout.addWidget(self.tab_buttons_widget)
 
@@ -404,13 +404,13 @@ class TaskSettingsWidget(QFrame):
         """刷新设置内容显示"""
         if not self.selected_resource_name or not self.selected_settings_name:
             self.basic_settings_page.clear_settings()
-            self.advanced_settings_page.clear_settings()
+            # self.advanced_settings_page.clear_settings()
             return
 
         if self.current_tab == "basic":
             self.basic_settings_page.show_resource_settings(self.selected_resource_name)
-        else:
-            self.advanced_settings_page.setup_for_resource(self.selected_resource_name)
+        # else:
+        #     self.advanced_settings_page.setup_for_resource(self.selected_resource_name)
 
     def switch_tab(self, tab_name):
         """切换标签页"""
@@ -420,11 +420,11 @@ class TaskSettingsWidget(QFrame):
             self.basic_tab_btn.setChecked(True)
             self.advanced_tab_btn.setChecked(False)
             self.basic_settings_page.show_resource_settings(self.selected_resource_name)
-        elif tab_name == "advanced":
-            self.content_stack.setCurrentWidget(self.advanced_settings_page)
-            self.basic_tab_btn.setChecked(False)
-            self.advanced_tab_btn.setChecked(True)
-            self.advanced_settings_page.setup_for_resource(self.selected_resource_name)
+        # elif tab_name == "advanced":
+        #     self.content_stack.setCurrentWidget(self.advanced_settings_page)
+        #     self.basic_tab_btn.setChecked(False)
+        #     self.advanced_tab_btn.setChecked(True)
+        #     self.advanced_settings_page.setup_for_resource(self.selected_resource_name)
 
     def show_resource_settings(self, resource_name: str):
         """Show settings for the selected resource, ensuring all necessary configurations are linked."""
