@@ -301,36 +301,50 @@ class GlobalPythonRuntimeManager:
         runtime = self.get_runtime(version)
         if runtime.is_python_installed():
             self.logger.info(f"✅ Python {version} 已安装")
+            # 即使Python已安装，仍需确保pip可用
             return await self._ensure_pip_installed(runtime)
         lock = await self._get_install_lock(version)
         async with lock:
             if runtime.is_python_installed():
-                return True
+                return await self._ensure_pip_installed(runtime)
             self.logger.info(f"Python {version} 未安装，开始下载...")
-            return await self._download_and_install_python(runtime)
+            # 下载和安装Python的核心逻辑
+            python_installed = await self._download_and_install_python_core(runtime)
+            if not python_installed:
+                self.logger.error(f"Python {runtime.version} 核心安装失败。")
+                notification_manager.show_error(f"Python {runtime.version} 安装失败", "错误")
+                # 确保清理不完整的安装
+                shutil.rmtree(runtime.python_dir, ignore_errors=True)
+                return False
 
-    # --- MODIFICATION START: 极大简化安装流程 ---
-    async def _download_and_install_python(self, runtime: PythonRuntime) -> bool:
+            # 独立处理pip的安装，不再因为pip失败而删除整个Python
+            if await self._ensure_pip_installed(runtime):
+                self.logger.info(f"✅ Python {runtime.version} 及 pip 安装完成")
+                notification_manager.show_success(f"Python {runtime.version} 安装成功", "完成")
+                return True
+            else:
+                self.logger.error(f"Python {runtime.version} 安装成功，但 pip 安装失败。请检查网络或手动安装 pip。")
+                notification_manager.show_error(f"Python {runtime.version} 已安装，但 pip 安装失败", "错误")
+                return False
+
+    async def _download_and_install_python_core(self, runtime: PythonRuntime) -> bool:
         """
-        下载并安装Python。现在全平台统一为下载预编译包并解压，不再需要编译或特殊安装逻辑。
+        仅下载并解压Python。全平台统一为下载预编译包并解压。
+        返回True表示Python核心文件已就位，否则返回False。
         """
         system = platform.system().lower()
         patch_version = self._get_patch_version(runtime.version)
-
-        # 动态检测CPU架构
         arch = platform.machine()
         if system == "darwin" and arch == "arm64":
-            arch = "aarch64"  # Apple Silicon
+            arch = "aarch64"
 
         sources = self.config.get("python_download_sources", {}).get(system, [])
         if not sources:
             self.logger.error(f"不支持的系统: {system}")
             return False
 
-        # 格式化URL，填入版本、构建标签和架构
         build_tag = self.config.get("build_tag", "20240415")
         urls = [url.format(version=patch_version, build_tag=build_tag, arch=arch) for url in sources]
-
         temp_dir = self.runtime_base_dir / f"temp_{runtime.version}"
 
         try:
@@ -339,36 +353,21 @@ class GlobalPythonRuntimeManager:
                     filename = url.split("/")[-1]
                     temp_dir.mkdir(exist_ok=True)
                     temp_file = temp_dir / filename
-
                     await self._download_file_async(url, temp_file)
-
-                    # 所有平台都统一使用解压逻辑
                     await self._extract_archive(temp_file, runtime.python_dir)
-
                     if system == "windows":
                         await self._setup_windows_embedded(runtime.version, runtime.python_dir)
-
-                    if await self._ensure_pip_installed(runtime):
-                        self.logger.info(f"✅ Python {runtime.version} 安装完成")
-                        notification_manager.show_success(f"Python {runtime.version} 安装成功", "完成")
-                        return True
-                    else:
-                        raise Exception("pip installation failed")
-
+                    # Python核心文件已解压，返回成功
+                    return True
                 except Exception as e:
-                    self.logger.error(f"从 {url} 安装失败: {e}", exc_info=True)
+                    self.logger.error(f"从 {url} 下载或解压失败: {e}", exc_info=True)
                     shutil.rmtree(runtime.python_dir, ignore_errors=True)
                     continue
         finally:
             if temp_dir.exists():
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
-        notification_manager.show_error(f"Python {runtime.version} 安装失败", "错误")
         return False
-
-    # --- MODIFICATION END ---
-
-    # --- REMOVED: _install_macos_pkg 和 _compile_python 函数已被移除 ---
 
     async def _download_file_async(self, url: str, filepath: Path):
         """异步下载文件"""
@@ -408,15 +407,13 @@ class GlobalPythonRuntimeManager:
                 with tarfile.open(archive_path, 'r:*') as tf:
                     tf.extractall(path=temp_extract_dir)
 
-            # python-build-standalone解压后通常有一个名为'python'的根目录
-            # 我们需要将这个目录的内容移动到目标位置，而不是保留这个多余的层级
             inner_dirs = list(temp_extract_dir.iterdir())
             if len(inner_dirs) == 1 and inner_dirs[0].is_dir():
                 source_dir = inner_dirs[0]
                 for item in source_dir.iterdir():
                     shutil.move(str(item), str(extract_to / item.name))
-                source_dir.rmdir()  # 删除空的源目录
-            else:  # 如果没有单层目录，直接移动所有内容
+                source_dir.rmdir()
+            else:
                 for item in temp_extract_dir.iterdir():
                     shutil.move(str(item), str(extract_to / item.name))
 
@@ -437,23 +434,67 @@ class GlobalPythonRuntimeManager:
                 pth_file.write_text(content)
 
     async def _ensure_pip_installed(self, runtime: PythonRuntime) -> bool:
-        """确保pip已安装"""
+        """
+        确保pip已安装。优先使用ensurepip，如果失败，则尝试下载get-pip.py进行安装。
+        """
         python_exe = runtime.get_python_executable()
         kwargs = self._get_subprocess_kwargs()
 
+        # 1. 检查pip是否已存在
         process = await asyncio.create_subprocess_exec(str(python_exe), "-m", "pip", "--version", **kwargs)
         await process.communicate()
+        if process.returncode == 0:
+            self.logger.info("pip已存在，开始升级核心包...")
+            return await self._upgrade_core_packages(runtime)
 
-        if process.returncode != 0:
-            self.logger.info("pip未找到，开始安装...")
-            # 预编译版本通常自带ensurepip，这是最可靠的方式
-            process_ensure = await asyncio.create_subprocess_exec(str(python_exe), "-m", "ensurepip", "--upgrade",
-                                                                  **kwargs)
-            _, stderr_ensure = await process_ensure.communicate()
+        # 2. 如果pip不存在，尝试使用ensurepip
+        self.logger.info("pip未找到，尝试使用 ensurepip 进行安装...")
+        process_ensure = await asyncio.create_subprocess_exec(
+            str(python_exe), "-m", "ensurepip", "--upgrade", **kwargs
+        )
+        _, stderr_ensure = await process_ensure.communicate()
 
-            if process_ensure.returncode != 0:
-                self.logger.error(f"ensurepip 失败: {stderr_ensure.decode(errors='ignore')}")
-                return False
+        if process_ensure.returncode == 0:
+            self.logger.info("ensurepip 安装成功，开始升级核心包...")
+            return await self._upgrade_core_packages(runtime)
+
+        self.logger.warning(f"ensurepip 失败: {stderr_ensure.decode(errors='ignore')}")
+        self.logger.info("尝试备选方案：下载 get-pip.py 进行安装...")
+
+        # 3. ensurepip失败，尝试下载get-pip.py
+        get_pip_sources = self.config.get("get_pip_sources", [])
+        temp_get_pip_path = runtime.python_dir / "get-pip.py"
+
+        for url in get_pip_sources:
+            try:
+                await self._download_file_async(url, temp_get_pip_path)
+                process_get_pip = await asyncio.create_subprocess_exec(
+                    str(python_exe), str(temp_get_pip_path), **kwargs
+                )
+                _, stderr_get_pip = await process_get_pip.communicate()
+
+                if process_get_pip.returncode == 0:
+                    self.logger.info(f"通过 {url} 安装 pip 成功。")
+                    if temp_get_pip_path.exists():
+                        temp_get_pip_path.unlink()
+                    return await self._upgrade_core_packages(runtime)
+                else:
+                    self.logger.error(f"使用 {url} 的 get-pip.py 失败: {stderr_get_pip.decode(errors='ignore')}")
+            except Exception as e:
+                self.logger.error(f"下载或执行 get-pip.py 从 {url} 失败: {e}")
+            finally:
+                if temp_get_pip_path.exists():
+                    temp_get_pip_path.unlink()
+
+        self.logger.error("所有pip安装方法均失败。")
+        return False
+
+    async def _upgrade_core_packages(self, runtime: PythonRuntime) -> bool:
+        """
+        升级pip, setuptools, wheel, 和 virtualenv。
+        """
+        python_exe = runtime.get_python_executable()
+        kwargs = self._get_subprocess_kwargs()
 
         self.logger.info("升级pip, setuptools, wheel, virtualenv...")
         process_upgrade = await asyncio.create_subprocess_exec(
@@ -467,6 +508,7 @@ class GlobalPythonRuntimeManager:
             self.logger.error(f"升级pip和virtualenv失败: {stderr_upgrade.decode(errors='ignore')}")
             return False
 
+        self.logger.info("核心包升级成功。")
         return True
 
     async def create_venv(self, version: str, resource_name: str) -> Optional[RuntimeInfo]:
