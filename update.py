@@ -40,16 +40,19 @@ class StandaloneUpdater:
             restart_program (str): 更新完成后要启动的程序
             wait_pid (int): 需要等待退出的进程PID
         """
-        self.update_package = Path(update_package)
+        # ==================== 开始修改 ====================
+        # 优先使用绝对路径，增加健壮性
+        self.target_dir = Path(target_dir).resolve() if target_dir else Path.cwd().resolve()
+        self.update_package = self.target_dir.joinpath(update_package).resolve()
+
         self.update_type = update_type
-        self.target_dir = Path(target_dir) if target_dir else Path.cwd()
         self.restart_program = restart_program
         self.wait_pid = wait_pid
         self.backup_dir = self.target_dir / "update_backup"
         self.temp_dir = self.target_dir / "update_temp"
 
         # 需要跳过更新的文件列表（不区分大小写）
-        self.skip_files = ['update.exe', 'updater.exe']
+        self.skip_files = ['update', 'updater', 'update.exe', 'updater.exe'] # 适配多平台
 
     def _retry_operation(self, operation, max_retries=5, delay=1):
         """

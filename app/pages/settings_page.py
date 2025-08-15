@@ -620,7 +620,10 @@ class SettingsPage(QWidget):
         if reply == QMessageBox.Yes:
             # 使用独立更新程序安装
             try:
-                self.installer.launch_updater(file_path, "full")
+                # 将文件路径转换为绝对路径，确保更新程序能找到它
+                absolute_file_path = os.path.abspath(file_path)
+
+                self.installer.launch_updater(absolute_file_path, "full")
 
                 notification_manager.show_info(
                     "更新程序已启动，应用程序将自动重启以完成更新",
