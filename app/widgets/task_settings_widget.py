@@ -526,13 +526,13 @@ class TaskSettingsWidget(QFrame):
 
         self.resource_header.setVisible(False)
         self.basic_settings_page.clear_settings()
-        self.advanced_settings_page.clear_settings()
+        # self.advanced_settings_page.clear_settings()
         self.tab_buttons_widget.setVisible(False)
 
         self.current_tab = "basic"
         self.content_stack.setCurrentWidget(self.basic_settings_page)
         self.basic_tab_btn.setChecked(True)
-        self.advanced_tab_btn.setChecked(False)
+        # self.advanced_tab_btn.setChecked(False)
 
         self.settings_selector.blockSignals(True)
         self.settings_selector.clear()

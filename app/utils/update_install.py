@@ -105,20 +105,27 @@ class UpdateInstaller(QObject):
 
         try:
             new_version = getattr(resource, 'temp_version', None)
-            update_type = getattr(resource, 'temp_update_type', "full")
+            # 从 resource 对象获取的 update_type 作为一个备选项
+            fallback_update_type = getattr(resource, 'temp_update_type', "full")
+
+            # 检测是否需要重启，并获取【权威的】更新类型
             needs_restart, detected_type = self._check_if_restart_required(file_path)
 
+            # 决定最终使用的更新类型，优先使用检测到的类型
+            final_update_type = detected_type or fallback_update_type
+
             if needs_restart:
-                self.launch_updater(file_path, detected_type or update_type)
+                # 传递最终确定的类型给更新器
+                self.launch_updater(file_path, final_update_type)
                 self.restart_required.emit()
             else:
-                self._apply_update_directly(resource, file_path, new_version, update_type)
+                # 传递最终确定的类型给直接应用函数
+                self._apply_update_directly(resource, file_path, new_version, final_update_type)
 
         except Exception as e:
             logger.error(f"安装资源 {resource.resource_name} 更新失败: {str(e)}")
             self.install_failed.emit(resource.resource_name, str(e))
 
-    # --- 其他方法保持不变 ---
 
     def _check_if_restart_required(self, file_path):
         """检查是否需要重启来应用更新"""
@@ -136,10 +143,9 @@ class UpdateInstaller(QObject):
                 for file in all_files:
                     if file == self.app_name or self._is_file_locked(Path(file)):
                         return True, "incremental"
+                return False, "incremental"
             else:
                 return True, "full"
-        return False, None
-
     def _is_file_locked(self, file_path):
         """检查文件是否被锁定"""
         if not file_path.exists():
