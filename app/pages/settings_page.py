@@ -19,6 +19,7 @@ from app.models.logging.log_manager import log_manager
 from app.utils.theme_manager import theme_manager
 from app.utils.update_check import UpdateDownloader
 from app.utils.update_install import UpdateInstaller
+from app.widgets.dependency_sources_dialog import DependencySourcesDialog
 # 导入通知管理器
 from app.utils.notification_manager import notification_manager
 
@@ -134,7 +135,7 @@ class SettingsPage(QWidget):
 
         # Add categories
         categories = [
-            "界面设置", "更新设置", "开发者选项", "关于我们"
+            "界面设置", "启动设置", "更新设置", "开发者选项", "关于我们"
         ]
 
         for category in categories:
@@ -164,6 +165,7 @@ class SettingsPage(QWidget):
 
         # Create sections
         self.create_interface_section()
+        self.create_startup_section()
         self.create_update_section()
         self.create_developer_section()
         self.create_about_section()
@@ -259,6 +261,21 @@ class SettingsPage(QWidget):
         layout.addLayout(theme_row)
         layout.addLayout(lang_row)
         layout.addWidget(note)
+
+    def create_startup_section(self):
+        """Create the startup settings section"""
+        layout = self.create_section("启动设置")
+        
+        dep_source_button = QPushButton("依赖源")
+        dep_source_button.setObjectName("primaryButton")
+        dep_source_button.clicked.connect(self.show_dependency_sources_dialog)
+
+        layout.addWidget(dep_source_button)
+
+    def show_dependency_sources_dialog(self):
+        """Show the dependency sources dialog"""
+        dialog = DependencySourcesDialog(self)
+        dialog.exec()
 
     def create_update_section(self):
         """创建更新设置的界面区域"""
