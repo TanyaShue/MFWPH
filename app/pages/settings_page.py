@@ -107,6 +107,7 @@ class AppUpdateChecker(QThread):
 class SettingsPage(QWidget):
     """Settings page with categories on the left and content on the right"""
 
+
     def __init__(self):
         super().__init__()
         self.setObjectName("settingsPage")
@@ -258,9 +259,29 @@ class SettingsPage(QWidget):
         note = QLabel("注：语言设置更改将在应用重启后生效")
         note.setObjectName("infoText")
 
+        # Window settings
+        window_settings_row = QHBoxLayout()
+        minimize_to_tray_checkbox = QCheckBox("点击关闭按钮时最小化到系统托盘")
+
+        # Load initial state from config
+        app_config = global_config.get_app_config()
+        minimize_to_tray_checkbox.setChecked(app_config.minimize_to_tray_on_close)
+
+        # Connect signals
+        minimize_to_tray_checkbox.stateChanged.connect(self.on_minimize_to_tray_changed)
+
+        window_settings_row.addWidget(minimize_to_tray_checkbox)
+        window_settings_row.addStretch()
+
         layout.addLayout(theme_row)
         layout.addLayout(lang_row)
+        layout.addLayout(window_settings_row)
         layout.addWidget(note)
+
+    def on_minimize_to_tray_changed(self, state):
+        app_config = global_config.get_app_config()
+        app_config.minimize_to_tray_on_close = (state == Qt.CheckState.Checked.value)
+        global_config.save_all_configs()
 
     def create_startup_section(self):
         """Create the startup settings section"""

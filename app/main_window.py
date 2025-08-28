@@ -1,9 +1,10 @@
 import os
 
-from PySide6.QtCore import Qt
+from PySide6.QtCore import Qt, QCoreApplication
+from PySide6.QtGui import QIcon, QAction
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
-    QFrame, QScrollArea
+    QFrame, QScrollArea, QSystemTrayIcon, QMenu, QPushButton, QSizePolicy, QLabel, QSizeGrip
 )
 
 from app.components.navigation_button import NavigationButton
@@ -25,6 +26,7 @@ from app.widgets.add_device_dialog import AddDeviceDialog
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
+        self.setWindowFlags(Qt.FramelessWindowHint)
         self.setWindowTitle("MFWPH")
         self.setMinimumSize(800, 600)
 
@@ -56,12 +58,69 @@ class MainWindow(QMainWindow):
         self.theme_manager = theme_manager
         self.theme_manager.apply_theme("light")
 
+        # Main container widget and layout
         central_widget = QWidget()
-        main_layout = QHBoxLayout(central_widget)
-        main_layout.setSpacing(0)
-        main_layout.setContentsMargins(0, 0, 0, 0)
         self.setCentralWidget(central_widget)
+        main_layout = QVBoxLayout(central_widget)
+        main_layout.setSpacing(0)
+        main_layout.setContentsMargins(0, 0, 0, 0) # Use 0 margins for the main layout
 
+        # --- Custom Title Bar ---
+        self.title_bar = QWidget()
+        self.title_bar.setObjectName("titleBar")
+        self.title_bar.setFixedHeight(40)
+        title_bar_layout = QHBoxLayout(self.title_bar)
+        title_bar_layout.setContentsMargins(10, 0, 0, 0)
+        title_bar_layout.setSpacing(0)
+
+        icon_label = QLabel()
+        icon_label.setPixmap(QIcon("assets/icons/app/logo.png").pixmap(20, 20))
+        icon_label.setFixedSize(20, 20)
+        icon_label.setScaledContents(True)
+
+        self.title_label = QLabel(self.windowTitle())
+        self.title_label.setAlignment(Qt.AlignCenter)
+
+        self.pin_btn = QPushButton("📎")
+        self.pin_btn.setObjectName("pinButton")
+        self.pin_btn.setCheckable(True)
+        self.pin_btn.setChecked(False)
+        self.pin_btn.setFixedSize(30, 30)
+        self.pin_btn.setToolTip("窗口置顶")
+        self.pin_btn.toggled.connect(self.set_always_on_top)
+
+        minimize_btn = QPushButton("—")
+        minimize_btn.setObjectName("minimizeButton")
+        minimize_btn.setFixedSize(30, 30)
+        minimize_btn.clicked.connect(self.showMinimized)
+
+        self.maximize_btn = QPushButton("☐")
+        self.maximize_btn.setObjectName("maximizeButton")
+        self.maximize_btn.setFixedSize(30, 30)
+        self.maximize_btn.clicked.connect(self.toggle_maximize)
+
+        close_btn = QPushButton("✕")
+        close_btn.setObjectName("closeButton")
+        close_btn.setFixedSize(30, 30)
+        close_btn.clicked.connect(self.close)
+
+        title_bar_layout.addWidget(icon_label)
+        title_bar_layout.addWidget(self.title_label)
+        title_bar_layout.addStretch()
+        title_bar_layout.addWidget(self.pin_btn)
+        title_bar_layout.addWidget(minimize_btn)
+        title_bar_layout.addWidget(self.maximize_btn)
+        title_bar_layout.addWidget(close_btn)
+        main_layout.addWidget(self.title_bar)
+
+        # --- Main Content Area (Sidebar + Pages) ---
+        main_content_widget = QWidget()
+        main_content_layout = QHBoxLayout(main_content_widget)
+        main_content_layout.setSpacing(0)
+        main_content_layout.setContentsMargins(0, 0, 0, 0)
+        main_layout.addWidget(main_content_widget)
+
+        # --- Sidebar ---
         sidebar = QWidget()
         sidebar.setFixedWidth(60)
         sidebar.setObjectName("sidebar")
@@ -69,15 +128,16 @@ class MainWindow(QMainWindow):
         sidebar_layout.setSpacing(0)
         sidebar_layout.setContentsMargins(0, 0, 0, 0)
         sidebar_layout.setAlignment(Qt.AlignTop)
+        main_content_layout.addWidget(sidebar)
 
-        # --- 导航按钮初始化 ---
+        # --- Navigation Buttons ---
         self.static_buttons = []
-
         self.home_btn = NavigationButton("首页", "assets/icons/home.svg")
         self.home_btn.setObjectName("home")
         sidebar_layout.addWidget(self.home_btn)
         self.static_buttons.append(self.home_btn)
 
+        # ... (rest of the sidebar buttons) ...
         separator_top = QFrame()
         separator_top.setFrameShape(QFrame.HLine)
         separator_top.setFrameShadow(QFrame.Sunken)
@@ -132,13 +192,22 @@ class MainWindow(QMainWindow):
         sidebar_layout.addWidget(self.settings_btn)
         self.static_buttons.append(self.settings_btn)
 
-        main_layout.addWidget(sidebar)
+        # --- Page Container ---
+        self.page_container = QWidget()
+        self.page_layout = QVBoxLayout(self.page_container)
+        self.page_layout.setContentsMargins(0, 0, 0, 0)
+        main_content_layout.addWidget(self.page_container)
 
-        self.content_widget = QWidget()
-        self.content_layout = QVBoxLayout(self.content_widget)
-        self.content_layout.setContentsMargins(0, 0, 0, 0)
-        self.content_layout.setSpacing(0)
-        main_layout.addWidget(self.content_widget)
+        # --- Status Bar for Size Grip ---
+        status_bar = QFrame()
+        status_bar.setObjectName("statusBar")
+        status_bar.setFixedHeight(15)
+        status_bar_layout = QHBoxLayout(status_bar)
+        status_bar_layout.setContentsMargins(0, 0, 0, 0)
+        status_bar_layout.addStretch()
+        size_grip = QSizeGrip(status_bar)
+        status_bar_layout.addWidget(size_grip)
+        main_layout.addWidget(status_bar)
 
         self.pages = {
             "home": HomePage(),
@@ -157,9 +226,73 @@ class MainWindow(QMainWindow):
 
         self.load_devices()
         self.update_scroll_area_visibility()
+        self.init_tray_icon()
         self.show_page("home")
 
-    def closeEvent(self, event):
+    def toggle_maximize(self):
+        if self.isMaximized():
+            self.showNormal()
+            self.maximize_btn.setText("☐")
+        else:
+            self.showMaximized()
+            self.maximize_btn.setText("❐")
+
+    def mousePressEvent(self, event):
+        if event.button() == Qt.LeftButton and self.title_bar.underMouse():
+            self.start_pos = event.globalPosition().toPoint()
+        else:
+            self.start_pos = None
+        super().mousePressEvent(event)
+
+    def mouseMoveEvent(self, event):
+        if self.start_pos:
+            delta = event.globalPosition().toPoint() - self.start_pos
+            self.move(self.pos() + delta)
+            self.start_pos = event.globalPosition().toPoint()
+        super().mouseMoveEvent(event)
+
+    def mouseReleaseEvent(self, event):
+        self.start_pos = None
+        super().mouseReleaseEvent(event)
+
+    def set_always_on_top(self, pinned):
+        self.hide()
+        if pinned:
+            self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
+            self.pin_btn.setText("📌")
+        else:
+            self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
+            self.pin_btn.setText("📎")
+        self.show()
+
+    def init_tray_icon(self):
+        self.tray_icon = QSystemTrayIcon(self)
+        self.tray_icon.setIcon(QIcon("assets/icons/app/logo.png"))
+        self.tray_icon.setToolTip("MFWPH")
+
+        show_action = QAction("显示", self)
+        quit_action = QAction("退出", self)
+        show_action.triggered.connect(self.show_normal)
+        quit_action.triggered.connect(self.force_quit)
+
+        tray_menu = QMenu()
+        tray_menu.addAction(show_action)
+        tray_menu.addAction(quit_action)
+        self.tray_icon.setContextMenu(tray_menu)
+
+        self.tray_icon.activated.connect(self.on_tray_icon_activated)
+        self.tray_icon.show()
+
+    def on_tray_icon_activated(self, reason):
+        if reason == QSystemTrayIcon.ActivationReason.Trigger:  # Left click
+            self.show_normal()
+
+    def show_normal(self):
+        self.show()
+        self.activateWindow()
+
+    def force_quit(self):
+        self.tray_icon.hide()
         size = self.size()
         window_size = f"{size.width()}x{size.height()}"
         pos = self.pos()
@@ -168,7 +301,29 @@ class MainWindow(QMainWindow):
         app_config.window_size = window_size
         app_config.window_position = window_position
         global_config.save_all_configs()
-        super().closeEvent(event)
+        QCoreApplication.instance().quit()
+
+    def closeEvent(self, event):
+        app_config = global_config.get_app_config()
+        if app_config.minimize_to_tray_on_close:
+            event.ignore()
+            self.hide()
+            self.tray_icon.showMessage(
+                "程序已最小化到托盘",
+                "点击托盘图标可恢复窗口",
+                QSystemTrayIcon.Information,
+                2000
+            )
+        else:
+            size = self.size()
+            window_size = f"{size.width()}x{size.height()}"
+            pos = self.pos()
+            window_position = f"{pos.x()},{pos.y()}"
+            app_config = global_config.get_app_config()
+            app_config.window_size = window_size
+            app_config.window_position = window_position
+            global_config.save_all_configs()
+            event.accept()
 
     def load_devices(self):
         while self.device_buttons_layout.count():
@@ -232,7 +387,7 @@ class MainWindow(QMainWindow):
         self.update_button_states()
         self.clear_content()
         if page_name in self.pages:
-            self.content_layout.addWidget(self.pages[page_name])
+            self.page_layout.addWidget(self.pages[page_name])
             self.pages[page_name].show()
 
     def show_device_page(self, device_name, button_id):
@@ -244,7 +399,7 @@ class MainWindow(QMainWindow):
         if device_name not in self.device_pages:
             self.device_pages[device_name] = DeviceInfoPage(device_name)
 
-        self.content_layout.addWidget(self.device_pages[device_name])
+        self.page_layout.addWidget(self.device_pages[device_name])
         self.device_pages[device_name].show()
 
     def open_add_device_dialog(self):
@@ -297,12 +452,12 @@ class MainWindow(QMainWindow):
         self.load_devices()
 
     def clear_content(self):
-        while self.content_layout.count():
-            item = self.content_layout.takeAt(0)
+        while self.page_layout.count():
+            item = self.page_layout.takeAt(0)
             widget = item.widget()
             if widget:
                 widget.hide()
-                self.content_layout.removeWidget(widget)
+                self.page_layout.removeWidget(widget)
 
     @staticmethod
     def load_config():

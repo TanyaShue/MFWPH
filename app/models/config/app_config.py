@@ -197,6 +197,7 @@ class AppConfig:
     window_size:"str"=field(default="800x600")
     window_position: str = field(default="center")  # 新增字段，记录窗口位置（x,y）
     debug_model:bool = False
+    minimize_to_tray_on_close: Optional[bool] = False
 
     def link_resources_to_config(self):
         """将所有资源链接到此 AppConfig 实例。"""
@@ -397,6 +398,8 @@ class AppConfig:
         config.window_position = data.get('window_position', "center")
         config.debug_model = data.get('debug_model', False)
 
+        config.minimize_to_tray_on_close = data.get('minimize_to_tray_on_close', False)
+
         config.link_resources_to_config()
 
         return config
@@ -417,6 +420,7 @@ class AppConfig:
         result["window_size"] = self.window_size
         result["window_position"] = self.window_position
         result["debug_model"] = self.debug_model
+        result["minimize_to_tray_on_close"] = self.minimize_to_tray_on_close
         return result
 
 
