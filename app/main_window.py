@@ -28,7 +28,7 @@ from app.widgets.add_device_dialog import AddDeviceDialog
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()
-        self.setWindowFlags(Qt.FramelessWindowHint)
+        # self.setWindowFlags(Qt.FramelessWindowHint) # Removed for native frame features
         self.setWindowTitle("MFWPH")
         self.setMinimumSize(800, 600)
 
@@ -490,6 +490,11 @@ class MainWindow(QMainWindow):
     def nativeEvent(self, eventType, message):
         if eventType == b'windows_generic_MSG':
             msg = ctypes.wintypes.MSG.from_address(message.__int__())
+
+            if msg.message == 0x0083:  # WM_NCCALCSIZE
+                if msg.wParam == 1:  # TRUE
+                    return True, 0
+
             if msg.message == 0x0084:  # WM_NCHITTEST
                 local_pos = self.mapFromGlobal(QCursor.pos())
 
