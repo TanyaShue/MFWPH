@@ -1,7 +1,10 @@
 import os
 
+import ctypes
+from ctypes.wintypes import HWND, INT, UINT
+
 from PySide6.QtCore import Qt, QCoreApplication
-from PySide6.QtGui import QIcon, QAction
+from PySide6.QtGui import QIcon, QAction, QCursor
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QFrame, QScrollArea, QSystemTrayIcon, QMenu, QPushButton, QSizePolicy, QLabel, QSizeGrip
@@ -18,7 +21,6 @@ from app.utils.theme_manager import theme_manager
 from app.widgets.add_device_dialog import AddDeviceDialog
 
 
-# 假设这些模块存在
 # from core.scheduled_task_manager import scheduled_task_manager
 # from core.tasker_manager import task_manager
 
@@ -81,7 +83,8 @@ class MainWindow(QMainWindow):
         self.title_label = QLabel(self.windowTitle())
         self.title_label.setAlignment(Qt.AlignCenter)
 
-        self.pin_btn = QPushButton("📎")
+        self.pin_btn = QPushButton()
+        self.pin_btn.setIcon(QIcon('assets/icons/pin_off.svg'))
         self.pin_btn.setObjectName("pinButton")
         self.pin_btn.setCheckable(True)
         self.pin_btn.setChecked(False)
@@ -89,28 +92,28 @@ class MainWindow(QMainWindow):
         self.pin_btn.setToolTip("窗口置顶")
         self.pin_btn.toggled.connect(self.set_always_on_top)
 
-        minimize_btn = QPushButton("—")
-        minimize_btn.setObjectName("minimizeButton")
-        minimize_btn.setFixedSize(30, 30)
-        minimize_btn.clicked.connect(self.showMinimized)
+        self.minimize_btn = QPushButton("—")
+        self.minimize_btn.setObjectName("minimizeButton")
+        self.minimize_btn.setFixedSize(30, 30)
+        self.minimize_btn.clicked.connect(self.showMinimized)
 
         self.maximize_btn = QPushButton("☐")
         self.maximize_btn.setObjectName("maximizeButton")
         self.maximize_btn.setFixedSize(30, 30)
         self.maximize_btn.clicked.connect(self.toggle_maximize)
 
-        close_btn = QPushButton("✕")
-        close_btn.setObjectName("closeButton")
-        close_btn.setFixedSize(30, 30)
-        close_btn.clicked.connect(self.close)
+        self.close_btn = QPushButton("✕")
+        self.close_btn.setObjectName("closeButton")
+        self.close_btn.setFixedSize(30, 30)
+        self.close_btn.clicked.connect(self.close)
 
         title_bar_layout.addWidget(icon_label)
         title_bar_layout.addWidget(self.title_label)
         title_bar_layout.addStretch()
         title_bar_layout.addWidget(self.pin_btn)
-        title_bar_layout.addWidget(minimize_btn)
+        title_bar_layout.addWidget(self.minimize_btn)
         title_bar_layout.addWidget(self.maximize_btn)
-        title_bar_layout.addWidget(close_btn)
+        title_bar_layout.addWidget(self.close_btn)
         main_layout.addWidget(self.title_bar)
 
         # --- Main Content Area (Sidebar + Pages) ---
@@ -198,16 +201,7 @@ class MainWindow(QMainWindow):
         self.page_layout.setContentsMargins(0, 0, 0, 0)
         main_content_layout.addWidget(self.page_container)
 
-        # --- Status Bar for Size Grip ---
-        status_bar = QFrame()
-        status_bar.setObjectName("statusBar")
-        status_bar.setFixedHeight(15)
-        status_bar_layout = QHBoxLayout(status_bar)
-        status_bar_layout.setContentsMargins(0, 0, 0, 0)
-        status_bar_layout.addStretch()
-        size_grip = QSizeGrip(status_bar)
-        status_bar_layout.addWidget(size_grip)
-        main_layout.addWidget(status_bar)
+        
 
         self.pages = {
             "home": HomePage(),
@@ -237,33 +231,28 @@ class MainWindow(QMainWindow):
             self.showMaximized()
             self.maximize_btn.setText("❐")
 
-    def mousePressEvent(self, event):
-        if event.button() == Qt.LeftButton and self.title_bar.underMouse():
-            self.start_pos = event.globalPosition().toPoint()
-        else:
-            self.start_pos = None
-        super().mousePressEvent(event)
-
-    def mouseMoveEvent(self, event):
-        if self.start_pos:
-            delta = event.globalPosition().toPoint() - self.start_pos
-            self.move(self.pos() + delta)
-            self.start_pos = event.globalPosition().toPoint()
-        super().mouseMoveEvent(event)
-
-    def mouseReleaseEvent(self, event):
-        self.start_pos = None
-        super().mouseReleaseEvent(event)
+    
 
     def set_always_on_top(self, pinned):
-        self.hide()
+        # Windows-specific implementation to avoid flickering
+        HWND_TOPMOST = -1
+        HWND_NOTOPMOST = -2
+        SWP_NOMOVE = 0x0002
+        SWP_NOSIZE = 0x0001
+
+        user32 = ctypes.windll.user32
+        SetWindowPos = user32.SetWindowPos
+        SetWindowPos.argtypes = [HWND, HWND, INT, INT, INT, INT, UINT]
+        SetWindowPos.restype = INT
+
+        hwnd = self.winId()
+
         if pinned:
-            self.setWindowFlags(self.windowFlags() | Qt.WindowStaysOnTopHint)
-            self.pin_btn.setText("📌")
+            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
+            self.pin_btn.setIcon(QIcon('assets/icons/pin_on.svg'))
         else:
-            self.setWindowFlags(self.windowFlags() & ~Qt.WindowStaysOnTopHint)
-            self.pin_btn.setText("📎")
-        self.show()
+            SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
+            self.pin_btn.setIcon(QIcon('assets/icons/pin_off.svg'))
 
     def init_tray_icon(self):
         self.tray_icon = QSystemTrayIcon(self)
@@ -497,3 +486,54 @@ class MainWindow(QMainWindow):
         except Exception as e:
             print(f"Error navigating after device deletion: {e}")
             self.show_page("home")
+
+    def nativeEvent(self, eventType, message):
+        if eventType == b'windows_generic_MSG':
+            msg = ctypes.wintypes.MSG.from_address(message.__int__())
+            if msg.message == 0x0084:  # WM_NCHITTEST
+                local_pos = self.mapFromGlobal(QCursor.pos())
+
+                # Hit test result constants
+                HTTOPLEFT = 13
+                HTTOPRIGHT = 14
+                HTBOTTOMLEFT = 16
+                HTBOTTOMRIGHT = 17
+                HTLEFT = 10
+                HTRIGHT = 11
+                HTTOP = 12
+                HTBOTTOM = 15
+                HTCAPTION = 2
+                HTCLIENT = 1
+
+                border_width = 8
+                on_top = local_pos.y() < border_width
+                on_bottom = local_pos.y() > self.height() - border_width
+                on_left = local_pos.x() < border_width
+                on_right = local_pos.x() > self.width() - border_width
+
+                # Corners
+                if on_top and on_left: return True, HTTOPLEFT
+                if on_top and on_right: return True, HTTOPRIGHT
+                if on_bottom and on_left: return True, HTBOTTOMLEFT
+                if on_bottom and on_right: return True, HTBOTTOMRIGHT
+
+                # Edges
+                if on_top: return True, HTTOP
+                if on_bottom: return True, HTBOTTOM
+                if on_left: return True, HTLEFT
+                if on_right: return True, HTRIGHT
+
+                # Buttons
+                if self.pin_btn.geometry().contains(local_pos) or \
+                   self.minimize_btn.geometry().contains(local_pos) or \
+                   self.maximize_btn.geometry().contains(local_pos) or \
+                   self.close_btn.geometry().contains(local_pos):
+                    return True, HTCLIENT
+
+                # Title bar
+                if self.title_bar.geometry().contains(local_pos):
+                    return True, HTCAPTION
+
+                return True, HTCLIENT
+
+        return super().nativeEvent(eventType, message)
