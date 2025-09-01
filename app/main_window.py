@@ -1,7 +1,9 @@
 import os
+import sys
 
-import ctypes
-from ctypes.wintypes import HWND, INT, UINT
+if sys.platform == "win32":
+    import ctypes
+    from ctypes.wintypes import HWND, INT, UINT
 
 from PySide6.QtCore import Qt, QCoreApplication
 from PySide6.QtGui import QIcon, QAction, QCursor
@@ -68,53 +70,62 @@ class MainWindow(QMainWindow):
         main_layout.setContentsMargins(0, 0, 0, 0) # Use 0 margins for the main layout
 
         # --- Custom Title Bar ---
-        self.title_bar = QWidget()
-        self.title_bar.setObjectName("titleBar")
-        self.title_bar.setFixedHeight(40)
-        title_bar_layout = QHBoxLayout(self.title_bar)
-        title_bar_layout.setContentsMargins(10, 0, 0, 0)
-        title_bar_layout.setSpacing(0)
+        if sys.platform == "win32":
+            self.title_bar = QWidget()
+            self.title_bar.setObjectName("titleBar")
+            self.title_bar.setFixedHeight(40)
+            title_bar_layout = QHBoxLayout(self.title_bar)
+            title_bar_layout.setContentsMargins(10, 0, 0, 0)
+            title_bar_layout.setSpacing(0)
 
-        icon_label = QLabel()
-        icon_label.setPixmap(QIcon("assets/icons/app/logo.png").pixmap(20, 20))
-        icon_label.setFixedSize(20, 20)
-        icon_label.setScaledContents(True)
+            icon_label = QLabel()
+            icon_label.setPixmap(QIcon("assets/icons/app/logo.png").pixmap(20, 20))
+            icon_label.setFixedSize(20, 20)
+            icon_label.setScaledContents(True)
 
-        self.title_label = QLabel(self.windowTitle())
-        self.title_label.setAlignment(Qt.AlignCenter)
+            self.title_label = QLabel(self.windowTitle())
+            self.title_label.setAlignment(Qt.AlignCenter)
 
-        self.pin_btn = QPushButton()
-        self.pin_btn.setIcon(QIcon('assets/icons/pin_off.svg'))
-        self.pin_btn.setObjectName("pinButton")
-        self.pin_btn.setCheckable(True)
-        self.pin_btn.setChecked(False)
-        self.pin_btn.setFixedSize(30, 30)
-        self.pin_btn.setToolTip("窗口置顶")
-        self.pin_btn.toggled.connect(self.set_always_on_top)
+            self.pin_btn = QPushButton()
+            self.pin_btn.setIcon(QIcon('assets/icons/pin_off.svg'))
+            self.pin_btn.setObjectName("pinButton")
+            self.pin_btn.setCheckable(True)
+            self.pin_btn.setChecked(False)
+            self.pin_btn.setFixedSize(30, 30)
+            self.pin_btn.setToolTip("窗口置顶")
+            self.pin_btn.toggled.connect(self.set_always_on_top)
 
-        self.minimize_btn = QPushButton("—")
-        self.minimize_btn.setObjectName("minimizeButton")
-        self.minimize_btn.setFixedSize(30, 30)
-        self.minimize_btn.clicked.connect(self.showMinimized)
+            self.minimize_btn = QPushButton("—")
+            self.minimize_btn.setObjectName("minimizeButton")
+            self.minimize_btn.setFixedSize(30, 30)
+            self.minimize_btn.clicked.connect(self.showMinimized)
 
-        self.maximize_btn = QPushButton("☐")
-        self.maximize_btn.setObjectName("maximizeButton")
-        self.maximize_btn.setFixedSize(30, 30)
-        self.maximize_btn.clicked.connect(self.toggle_maximize)
+            self.maximize_btn = QPushButton("☐")
+            self.maximize_btn.setObjectName("maximizeButton")
+            self.maximize_btn.setFixedSize(30, 30)
+            self.maximize_btn.clicked.connect(self.toggle_maximize)
 
-        self.close_btn = QPushButton("✕")
-        self.close_btn.setObjectName("closeButton")
-        self.close_btn.setFixedSize(30, 30)
-        self.close_btn.clicked.connect(self.close)
+            self.close_btn = QPushButton("✕")
+            self.close_btn.setObjectName("closeButton")
+            self.close_btn.setFixedSize(30, 30)
+            self.close_btn.clicked.connect(self.close)
 
-        title_bar_layout.addWidget(icon_label)
-        title_bar_layout.addWidget(self.title_label)
-        title_bar_layout.addStretch()
-        title_bar_layout.addWidget(self.pin_btn)
-        title_bar_layout.addWidget(self.minimize_btn)
-        title_bar_layout.addWidget(self.maximize_btn)
-        title_bar_layout.addWidget(self.close_btn)
-        main_layout.addWidget(self.title_bar)
+            title_bar_layout.addWidget(icon_label)
+            title_bar_layout.addWidget(self.title_label)
+            title_bar_layout.addStretch()
+            title_bar_layout.addWidget(self.pin_btn)
+            title_bar_layout.addWidget(self.minimize_btn)
+            title_bar_layout.addWidget(self.maximize_btn)
+            title_bar_layout.addWidget(self.close_btn)
+            main_layout.addWidget(self.title_bar)
+        else:
+            # On non-Windows platforms, use the native title bar.
+            self.title_bar = None
+            self.title_label = None
+            self.pin_btn = None
+            self.minimize_btn = None
+            self.maximize_btn = None
+            self.close_btn = None
 
         # --- Main Content Area (Sidebar + Pages) ---
         main_content_widget = QWidget()
@@ -234,25 +245,29 @@ class MainWindow(QMainWindow):
     
 
     def set_always_on_top(self, pinned):
-        # Windows-specific implementation to avoid flickering
-        HWND_TOPMOST = -1
-        HWND_NOTOPMOST = -2
-        SWP_NOMOVE = 0x0002
-        SWP_NOSIZE = 0x0001
+        if sys.platform == "win32":
+            # Windows-specific implementation to avoid flickering
+            HWND_TOPMOST = -1
+            HWND_NOTOPMOST = -2
+            SWP_NOMOVE = 0x0002
+            SWP_NOSIZE = 0x0001
 
-        user32 = ctypes.windll.user32
-        SetWindowPos = user32.SetWindowPos
-        SetWindowPos.argtypes = [HWND, HWND, INT, INT, INT, INT, UINT]
-        SetWindowPos.restype = INT
+            user32 = ctypes.windll.user32
+            SetWindowPos = user32.SetWindowPos
+            SetWindowPos.argtypes = [HWND, HWND, INT, INT, INT, INT, UINT]
+            SetWindowPos.restype = INT
 
-        hwnd = self.winId()
+            hwnd = self.winId()
 
-        if pinned:
-            SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
-            self.pin_btn.setIcon(QIcon('assets/icons/pin_on.svg'))
+            if pinned:
+                SetWindowPos(hwnd, HWND_TOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
+                self.pin_btn.setIcon(QIcon('assets/icons/pin_on.svg'))
+            else:
+                SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
+                self.pin_btn.setIcon(QIcon('assets/icons/pin_off.svg'))
         else:
-            SetWindowPos(hwnd, HWND_NOTOPMOST, 0, 0, 0, 0, SWP_NOMOVE | SWP_NOSIZE)
-            self.pin_btn.setIcon(QIcon('assets/icons/pin_off.svg'))
+            # This feature is disabled on non-Windows platforms to favor native look and feel.
+            pass
 
     def init_tray_icon(self):
         self.tray_icon = QSystemTrayIcon(self)
@@ -488,7 +503,7 @@ class MainWindow(QMainWindow):
             self.show_page("home")
 
     def nativeEvent(self, eventType, message):
-        if eventType == b'windows_generic_MSG':
+        if sys.platform == "win32" and eventType == b'windows_generic_MSG':
             msg = ctypes.wintypes.MSG.from_address(message.__int__())
 
             if msg.message == 0x0083:  # WM_NCCALCSIZE
