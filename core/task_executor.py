@@ -76,7 +76,7 @@ class TaskExecutor(QObject):
         self._lock = asyncio.Lock()
 
         # 线程池
-        self._executor = ThreadPoolExecutor(max_workers=3, thread_name_prefix=f"TaskExec_{self.device_name}")
+        self._executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix=f"TaskExec_{self.device_name}")
 
         # 通知处理器
         self._notification_handler = self._create_notification_handler()
@@ -95,9 +95,26 @@ class TaskExecutor(QObject):
                     self.executor.logger.debug(
                         f"识别: {detail.name} - {'成功' if noti_type == NotificationType.Succeeded else '失败'}"
                     )
-                if detail and hasattr(detail, "focus"):
-                    if detail.focus is not None:
-                        self.executor.logger.info(f"{detail.focus}")
+
+            def on_node_action(self, noti_type: NotificationType, detail: NotificationHandler.NodeActionDetail):
+                if detail and hasattr(detail, "focus") and detail.focus:
+                    focus = detail.focus
+
+                    def log_focus_value(value):
+                        if isinstance(value, list):
+                            for v in value:
+                                self.executor.logger.info(str(v))
+                        else:
+                            self.executor.logger.info(str(value))
+
+                    if noti_type == NotificationType.Succeeded and "succeeded" in focus:
+                        log_focus_value(focus["succeeded"])
+                    elif noti_type == NotificationType.Failed and "failed" in focus:
+                        log_focus_value(focus["failed"])
+                    elif noti_type == NotificationType.Starting and "start" in focus:
+                        log_focus_value(focus["start"])
+                    elif noti_type == NotificationType.Unknown:
+                        pass
 
         return Handler(self)
 
@@ -274,7 +291,6 @@ class TaskExecutor(QObject):
             raise RuntimeError("任务执行器初始化失败")
 
         self.logger.info("任务执行器创建成功")
-
 
     async def _process_tasks(self):
         """任务处理主循环"""
