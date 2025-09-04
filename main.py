@@ -17,6 +17,17 @@ from app.utils.notification_manager import notification_manager
 from app.models.config.global_config import global_config
 from app.pages.settings_page import AppUpdateChecker
 from app.utils.update_check import UpdateChecker
+if sys.platform == "win32":
+    import ctypes
+
+    # 设置系统状态，防止进入休眠
+    ES_CONTINUOUS = 0x80000000
+    ES_SYSTEM_REQUIRED = 0x00000001
+    ES_AWAYMODE_REQUIRED = 0x00000040  # Windows Vista+ 支持 Away Mode
+
+    ctypes.windll.kernel32.SetThreadExecutionState(
+        ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
+    )
 
 # 获取应用程序日志记录器
 logger = log_manager.get_app_logger()

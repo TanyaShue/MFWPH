@@ -1,3 +1,5 @@
+# --- START OF FILE app/widgets/task_settings_widget.py ---
+
 from PySide6.QtCore import Signal
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
@@ -8,12 +10,15 @@ from PySide6.QtWidgets import (
 from app.models.config.app_config import ResourceSettings, Resource
 from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager
-from app.widgets.advanced_settings_page import AdvancedSettingsPage
+from app.widgets.add_task_dialog import AddTaskDialog
 from app.widgets.basic_settings_page import BasicSettingsPage
 
 
 class TaskSettingsWidget(QFrame):
-    """Task settings widget for configuring resource tasks"""
+    """任务设置小部件，用于配置资源任务"""
+    # 当移除模式状态改变时发出此信号
+    remove_mode_changed = Signal(bool)
+
     def __init__(self, device_config, parent=None):
         super().__init__(parent)
         self.device_config = device_config
@@ -22,7 +27,6 @@ class TaskSettingsWidget(QFrame):
         self.status_indicator = None
         self.status_dot = None
         self.status_text = None
-        self.current_tab = "basic"
         self.resource_header = None
         self.settings_selector = None
         self.edit_button = None
@@ -31,6 +35,8 @@ class TaskSettingsWidget(QFrame):
         self.settings_name_editor = None
         self.is_editing_name = False
         self.logger = None
+        # 新增: 用于跟踪移除模式的状态
+        self.is_remove_mode = False
 
         self.setObjectName("taskSettingsFrame")
         self.setFrameShape(QFrame.StyledPanel)
@@ -55,30 +61,25 @@ class TaskSettingsWidget(QFrame):
         top_header_layout.setContentsMargins(0, 0, 0, 0)
         top_header_layout.setSpacing(12)
 
-        # 资源名称标签
         self.resource_name_label = QLabel()
         self.resource_name_label.setFont(QFont("Segoe UI", 12, QFont.Bold))
         self.resource_name_label.setObjectName("sectionTitle")
 
-        # 设置选择器区域
         settings_widget = QWidget()
         settings_layout = QHBoxLayout(settings_widget)
         settings_layout.setContentsMargins(0, 0, 0, 0)
         settings_layout.setSpacing(6)
 
-        # 设置下拉框
         self.settings_selector = QComboBox()
         self.settings_selector.setObjectName("settingsSelector")
         self.settings_selector.setMinimumWidth(0)
         self.settings_selector.currentIndexChanged.connect(self.on_settings_changed)
 
-        # 设置名称编辑器（编辑模式时显示）
         self.settings_name_editor = QLineEdit()
         self.settings_name_editor.setObjectName("settingsNameEditor")
         self.settings_name_editor.setMinimumWidth(10)
         self.settings_name_editor.setVisible(False)
 
-        # 添加按钮（小图标按钮）
         self.add_button = QPushButton()
         self.add_button.setIcon(QIcon("assets/icons/add.svg"))
         self.add_button.setToolTip("添加新设置")
@@ -86,7 +87,6 @@ class TaskSettingsWidget(QFrame):
         self.add_button.setFixedSize(24, 24)
         self.add_button.clicked.connect(self.add_new_settings)
 
-        # 编辑按钮（小图标按钮）
         self.edit_button = QPushButton()
         self.edit_button.setIcon(QIcon("assets/icons/edit.svg"))
         self.edit_button.setToolTip("编辑设置名称")
@@ -94,7 +94,6 @@ class TaskSettingsWidget(QFrame):
         self.edit_button.setFixedSize(24, 24)
         self.edit_button.clicked.connect(self.toggle_edit_mode)
 
-        # 删除按钮（小图标按钮，编辑模式时显示）
         self.delete_button = QPushButton()
         self.delete_button.setIcon(QIcon("assets/icons/delete.svg"))
         self.delete_button.setToolTip("删除当前设置")
@@ -103,71 +102,115 @@ class TaskSettingsWidget(QFrame):
         self.delete_button.setVisible(False)
         self.delete_button.clicked.connect(self.delete_settings)
 
-        # 将控件添加到设置区域
         settings_layout.addWidget(self.settings_selector)
         settings_layout.addWidget(self.settings_name_editor)
         settings_layout.addWidget(self.add_button)
         settings_layout.addWidget(self.edit_button)
         settings_layout.addWidget(self.delete_button)
 
-        # 状态指示器
         self.status_indicator = QWidget()
         status_layout = QHBoxLayout(self.status_indicator)
         status_layout.setContentsMargins(0, 0, 0, 0)
         status_layout.setSpacing(5)
-
         self.status_dot = QLabel()
-        self.status_dot.setFixedSize(4, 4)
-
+        self.status_dot.setFixedSize(8, 8)
         self.status_text = QLabel()
         self.status_text.setObjectName("statusText")
-
         status_layout.addWidget(self.status_dot)
         status_layout.addWidget(self.status_text)
 
-        # 组装顶部布局
         top_header_layout.addWidget(self.resource_name_label)
-        top_header_layout.addStretch()  # 弹性空间，将设置区域推到中间
+        top_header_layout.addStretch()
         top_header_layout.addWidget(settings_widget)
-        top_header_layout.addStretch()  # 弹性空间，将状态指示器推到右侧
+        top_header_layout.addStretch()
         top_header_layout.addWidget(self.status_indicator)
 
         resource_header_layout.addWidget(top_header_widget)
         self.layout.addWidget(self.resource_header)
 
-        # 内容堆栈
+        # 内容区域
         self.content_stack = QStackedWidget()
         self.content_stack.setMinimumHeight(200)
         self.basic_settings_page = BasicSettingsPage(self.device_config)
-        # self.advanced_settings_page = AdvancedSettingsPage(self.device_config)
-
         self.content_stack.addWidget(self.basic_settings_page)
-        # self.content_stack.addWidget(self.advanced_settings_page)
         self.layout.addWidget(self.content_stack)
 
-        # 标签页按钮
-        self.tab_buttons_widget = QWidget()
-        tab_buttons_layout = QHBoxLayout(self.tab_buttons_widget)
-        tab_buttons_layout.setContentsMargins(0, 0, 0, 0)
+        # 任务管理按钮区域
+        self.task_buttons_widget = QWidget()
+        task_buttons_layout = QHBoxLayout(self.task_buttons_widget)
+        task_buttons_layout.setContentsMargins(0, 0, 0, 0)
 
-        self.basic_tab_btn = QPushButton("基本设置")
-        self.basic_tab_btn.setObjectName("primaryButton")
-        self.basic_tab_btn.setCheckable(True)
-        self.basic_tab_btn.setChecked(True)
-        self.basic_tab_btn.clicked.connect(lambda: self.switch_tab("basic"))
+        self.add_task_btn = QPushButton("添加任务")
+        self.add_task_btn.setObjectName("primaryButton")
+        self.add_task_btn.clicked.connect(self._on_add_task_clicked)
 
-        # self.advanced_tab_btn = QPushButton("高级设置")
-        # self.advanced_tab_btn.setObjectName("secondaryButton")
-        # self.advanced_tab_btn.setCheckable(True)
-        # self.advanced_tab_btn.clicked.connect(lambda: self.switch_tab("advanced"))
+        self.remove_task_btn = QPushButton("移除任务")
+        self.remove_task_btn.setObjectName("secondaryButton")
+        self.remove_task_btn.clicked.connect(self.toggle_remove_mode)
 
-        tab_buttons_layout.addWidget(self.basic_tab_btn)
-        # tab_buttons_layout.addWidget(self.advanced_tab_btn)
+        task_buttons_layout.addWidget(self.add_task_btn)
+        task_buttons_layout.addWidget(self.remove_task_btn)
 
-        self.layout.addWidget(self.tab_buttons_widget)
+        self.layout.addWidget(self.task_buttons_widget)
 
+        # 默认显示基础设置页面, 并隐藏按钮
         self.content_stack.setCurrentWidget(self.basic_settings_page)
-        self.tab_buttons_widget.setVisible(False)
+        self.task_buttons_widget.setVisible(False)
+
+        # 连接信号到 basic_settings_page 的槽函数
+        self.remove_mode_changed.connect(self.basic_settings_page.set_remove_mode)
+
+    def toggle_remove_mode(self):
+        """切换任务移除模式"""
+        self.is_remove_mode = not self.is_remove_mode
+        self.remove_mode_changed.emit(self.is_remove_mode)
+
+        if self.is_remove_mode:
+            self.remove_task_btn.setText("保存移除")
+            self.remove_task_btn.setObjectName("dangerButton")
+            self.add_task_btn.setEnabled(False)
+        else:
+            self.remove_task_btn.setText("移除任务")
+            self.remove_task_btn.setObjectName("secondaryButton")
+            self.add_task_btn.setEnabled(True)
+            # 退出移除模式时, 保存所有更改
+            global_config.save_all_configs()
+            if self.logger:
+                self.logger.info(f"已保存对资源 {self.selected_resource_name} 的任务移除操作")
+
+        # 刷新按钮样式
+        self.remove_task_btn.style().polish(self.remove_task_btn)
+
+    def _on_add_task_clicked(self):
+        """处理添加任务按钮点击, 打开对话框"""
+        if not self.selected_resource_name or not self.device_config:
+            return
+
+        dialog = AddTaskDialog(self.selected_resource_name, self.device_config, self)
+        if dialog.exec():
+            new_tasks = dialog.get_selected_tasks()
+            if not new_tasks:
+                return
+
+            app_config = global_config.get_app_config()
+            settings = next((s for s in app_config.resource_settings
+                             if
+                             s.name == self.selected_settings_name and s.resource_name == self.selected_resource_name),
+                            None)
+
+            if settings:
+                if settings.selected_tasks is None:
+                    settings.selected_tasks = []
+                # 使用 extend 将新任务列表（可能包含重复项）追加到现有列表
+                settings.selected_tasks.extend(new_tasks)
+
+                global_config.save_all_configs()
+                if self.logger:
+                    self.logger.info(
+                        f"为资源 {self.selected_resource_name} 添加了 {len(new_tasks)} 个新任务: {', '.join(new_tasks)}")
+
+                # 刷新UI以显示新添加的任务
+                self.refresh_settings_content()
 
     def toggle_edit_mode(self):
         """切换设置名称编辑模式"""
@@ -404,52 +447,31 @@ class TaskSettingsWidget(QFrame):
         """刷新设置内容显示"""
         if not self.selected_resource_name or not self.selected_settings_name:
             self.basic_settings_page.clear_settings()
-            # self.advanced_settings_page.clear_settings()
             return
 
-        if self.current_tab == "basic":
-            self.basic_settings_page.show_resource_settings(self.selected_resource_name)
-        # else:
-        #     self.advanced_settings_page.setup_for_resource(self.selected_resource_name)
-
-    def switch_tab(self, tab_name):
-        """切换标签页"""
-        self.current_tab = tab_name
-        if tab_name == "basic":
-            self.content_stack.setCurrentWidget(self.basic_settings_page)
-            self.basic_tab_btn.setChecked(True)
-            self.advanced_tab_btn.setChecked(False)
-            self.basic_settings_page.show_resource_settings(self.selected_resource_name)
-        # elif tab_name == "advanced":
-        #     self.content_stack.setCurrentWidget(self.advanced_settings_page)
-        #     self.basic_tab_btn.setChecked(False)
-        #     self.advanced_tab_btn.setChecked(True)
-        #     self.advanced_settings_page.setup_for_resource(self.selected_resource_name)
+        self.basic_settings_page.show_resource_settings(self.selected_resource_name)
 
     def show_resource_settings(self, resource_name: str):
-        """Show settings for the selected resource, ensuring all necessary configurations are linked."""
+        """显示所选资源的设置, 确保所有必要的配置都已链接"""
         self.selected_resource_name = resource_name
         if self.device_config:
             self.logger = log_manager.get_device_logger(self.device_config.device_name)
         else:
-            self.logger = log_manager.get_logger("TaskSettingsWidget_NoDevice")  # Fallback logger
+            self.logger = log_manager.get_logger("TaskSettingsWidget_NoDevice")
 
         app_config = global_config.get_app_config()
         if not app_config:
-            if self.logger: self.logger.error("AppConfig not loaded.")
+            if self.logger: self.logger.error("AppConfig 未加载.")
             self.clear_settings()
             return
 
-        # Ensure all Resource instances in the current app_config are linked (defensive)
         app_config.link_resources_to_config()
 
-        # --- Stage 1: Ensure ResourceSettings exists globally for this resource_name ---
         global_resource_settings_list = [s for s in app_config.resource_settings
                                          if s.resource_name == resource_name]
         effective_settings_name = ""
 
         if not global_resource_settings_list:
-            # No global ResourceSettings for this resource_name. Create a default one.
             default_settings_name = f"{resource_name}_default_settings"
             new_global_settings = ResourceSettings(
                 name=default_settings_name,
@@ -462,77 +484,64 @@ class TaskSettingsWidget(QFrame):
             effective_settings_name = default_settings_name
             if self.logger:
                 self.logger.info(
-                    f"Created global default ResourceSettings '{default_settings_name}' for resource '{resource_name}'.")
+                    f"为资源 '{resource_name}' 创建了全局默认 ResourceSettings '{default_settings_name}'.")
 
-        # --- Stage 2: Ensure a Resource entry in device_config.resources for this resource_name ---
-        # And that it's properly linked and points to a valid ResourceSettings.
         device_resource_entry = next((r for r in self.device_config.resources
                                       if r.resource_name == resource_name), None)
 
         if not device_resource_entry:
-            # This device doesn't have this resource listed yet. Add it.
-            # It should point to the first available (or newly created default) ResourceSettings.
-            if not effective_settings_name:  # Default wasn't just created, pick first from list
+            if not effective_settings_name:
                 effective_settings_name = global_resource_settings_list[0].name
 
             device_resource_entry = Resource(
                 resource_name=resource_name,
                 settings_name=effective_settings_name,
-                enable=False  # New resources on a device are initially disabled
+                enable=False
             )
             device_resource_entry.set_app_config(app_config)
             self.device_config.resources.append(device_resource_entry)
             if self.logger:
                 self.logger.info(
-                    f"Added Resource entry for '{resource_name}' to device '{self.device_config.device_name}', using settings '{effective_settings_name}'.")
+                    f"已将资源条目 '{resource_name}' 添加到设备 '{self.device_config.device_name}', 使用设置 '{effective_settings_name}'.")
         else:
-            # Device resource entry exists. Ensure its _app_config is set.
             if device_resource_entry._app_config is None:
                 device_resource_entry.set_app_config(app_config)
 
-            # Ensure its settings_name points to a valid global ResourceSettings.
-            # It might be pointing to an old/deleted setting or be empty.
             current_pointed_settings_valid = any(s.name == device_resource_entry.settings_name and
                                                  s.resource_name == resource_name
                                                  for s in global_resource_settings_list)
             if not device_resource_entry.settings_name or not current_pointed_settings_valid:
-                # Invalid or missing settings_name, link to the first available.
                 device_resource_entry.settings_name = global_resource_settings_list[0].name
                 if self.logger:
                     self.logger.warn(
-                        f"Resource '{resource_name}' on device '{self.device_config.device_name}' had invalid/missing settings_name. Reset to '{device_resource_entry.settings_name}'.")
+                        f"设备 '{self.device_config.device_name}' 上的资源 '{resource_name}' 指向了无效的 settings_name, 已重置为 '{device_resource_entry.settings_name}'.")
             effective_settings_name = device_resource_entry.settings_name
 
-        # --- Stage 3: UI Update & Save ---
         self.selected_settings_name = effective_settings_name
-
         self.resource_header.setVisible(True)
         self.resource_name_label.setText(resource_name)
-        # Update status indicator using the current enable status from the device_resource_entry
         self.update_resource_status(resource_name, device_resource_entry.enable)
-
         self.update_settings_selector()
-        # Refresh content based on the current tab and selected resource/settings
         self.refresh_settings_content()
-        self.tab_buttons_widget.setVisible(True)
 
-        # Save all accumulated changes to app_config
+        # 显示任务管理按钮
+        self.task_buttons_widget.setVisible(True)
+
         global_config.save_all_configs()
 
     def clear_settings(self):
-        """Clear the settings content"""
+        """清除设置内容"""
         self.selected_resource_name = None
         self.selected_settings_name = None
 
         self.resource_header.setVisible(False)
         self.basic_settings_page.clear_settings()
-        # self.advanced_settings_page.clear_settings()
-        self.tab_buttons_widget.setVisible(False)
 
-        self.current_tab = "basic"
-        self.content_stack.setCurrentWidget(self.basic_settings_page)
-        self.basic_tab_btn.setChecked(True)
-        # self.advanced_tab_btn.setChecked(False)
+        # 隐藏任务管理按钮
+        self.task_buttons_widget.setVisible(False)
+        # 如果当前在移除模式, 则退出
+        if self.is_remove_mode:
+            self.toggle_remove_mode()
 
         self.settings_selector.blockSignals(True)
         self.settings_selector.clear()
@@ -559,7 +568,7 @@ class TaskSettingsWidget(QFrame):
             self.status_text.setStyleSheet(f"color: {'#34a853' if enabled else '#ea4335'}; font-size: 12px;")
 
     def _clear_layout(self, layout):
-        """Clear all widgets from a layout"""
+        """清除布局中的所有小部件"""
         if layout is None:
             return
         while layout.count():
@@ -569,3 +578,5 @@ class TaskSettingsWidget(QFrame):
                 widget.deleteLater()
             elif item.layout() is not None:
                 self._clear_layout(item.layout())
+
+# --- END OF FILE app/widgets/task_settings_widget.py ---
