@@ -19,9 +19,9 @@ class Option:
     name: str
     type: str
     default: Any
+    doc: str=""
     pipeline_override: Dict[str, Dict[str, Any]] = field(
         default_factory=dict)  # PipelineOverride 直接使用 Dict[str, Dict[str, Any]]
-
 
 @dataclass
 class SelectOption(Option):

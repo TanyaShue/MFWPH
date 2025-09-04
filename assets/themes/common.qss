@@ -639,3 +639,60 @@ QTextEdit#log_text {
     background-color: #ea4335;
     color: white;
 }
+
+/* 任务选项设置面板的整体背景 */
+#taskSettingsFrame {
+    background-color: #f5f5f5; /* 浅灰色背景 */
+}
+
+/* 每个选项行的容器样式 */
+#optionContainer {
+    background-color: #ffffff;      /* 白色背景 */
+    border: 1px solid #e0e0e0;      /* 浅灰色边框 */
+    border-radius: 6px;             /* 圆角 */
+    margin-right: 5px;              /* 为滚动条留出空间 */
+}
+
+/* 鼠标悬浮在选项行上时的效果 */
+#optionContainer:hover {
+    border-color: #007bff;          /* 蓝色高亮边框 */
+}
+
+/* 选项标签的样式 */
+.QLabel#optionLabel {
+    font-weight: bold;
+    font-size: 14px;
+    color: #333;
+}
+
+/* 文档区域标题 */
+#docTitle {
+    font-size: 15px;
+    font-weight: bold;
+    color: #2c3e50;
+    margin-bottom: 5px;
+}
+
+/* 文档显示文本框样式 */
+#docDisplay {
+    background-color: #fafafa;
+    border: 1px solid #dcdcdc;
+    border-radius: 4px;
+    font-family: "Microsoft YaHei", sans-serif; /* 使用更适合阅读的字体 */
+    font-size: 13px;
+    color: #34495e;
+}
+
+/* 分割条的样式 */
+QSplitter::handle {
+    background-color: #dcdcdc;
+    height: 1px;
+}
+
+QSplitter::handle:hover {
+    background-color: #007bff;
+}
+
+QSplitter::handle:pressed {
+    background-color: #0056b3;
+}
