@@ -97,24 +97,27 @@ class TaskExecutor(QObject):
                     )
 
             def on_node_action(self, noti_type: NotificationType, detail: NotificationHandler.NodeActionDetail):
-                if detail and hasattr(detail, "focus") and detail.focus:
-                    focus = detail.focus
+                if not detail or not hasattr(detail, "focus") or not detail.focus:
+                    return
 
-                    def log_focus_value(value):
-                        if isinstance(value, list):
-                            for v in value:
-                                self.executor.logger.info(str(v))
+                focus = detail.focus
+
+                # 映射每种通知类型到 focus key 和日志函数
+                type_to_log = {
+                    NotificationType.Succeeded: ("succeeded", self.executor.logger.info),
+                    NotificationType.Failed: ("failed", self.executor.logger.error),
+                    NotificationType.Starting: ("start", self.executor.logger.info),
+                }
+
+                if noti_type in type_to_log:
+                    key, log_func = type_to_log[noti_type]
+                    if key in focus:
+                        values = focus[key]
+                        if isinstance(values, list):
+                            for v in values:
+                                log_func(str(v))
                         else:
-                            self.executor.logger.info(str(value))
-
-                    if noti_type == NotificationType.Succeeded and "succeeded" in focus:
-                        log_focus_value(focus["succeeded"])
-                    elif noti_type == NotificationType.Failed and "failed" in focus:
-                        log_focus_value(focus["failed"])
-                    elif noti_type == NotificationType.Starting and "start" in focus:
-                        log_focus_value(focus["start"])
-                    elif noti_type == NotificationType.Unknown:
-                        pass
+                            log_func(str(values))
 
         return Handler(self)
 
