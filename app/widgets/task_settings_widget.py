@@ -7,7 +7,8 @@ from PySide6.QtWidgets import (
     QPushButton, QStackedWidget, QComboBox, QLineEdit, QMessageBox
 )
 
-from app.models.config.app_config import ResourceSettings, Resource
+# 导入 TaskInstance
+from app.models.config.app_config import ResourceSettings, Resource, TaskInstance
 from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager
 from app.widgets.add_task_dialog import AddTaskDialog
@@ -34,7 +35,7 @@ class TaskSettingsWidget(QFrame):
         self.add_button = None
         self.settings_name_editor = None
         self.is_editing_name = False
-        self.logger = None
+        self.logger = log_manager.get_device_logger(device_config.device_name)
         # 新增: 用于跟踪移除模式的状态
         self.is_remove_mode = False
 
@@ -182,14 +183,14 @@ class TaskSettingsWidget(QFrame):
         self.remove_task_btn.style().polish(self.remove_task_btn)
 
     def _on_add_task_clicked(self):
-        """处理添加任务按钮点击, 打开对话框"""
+        """处理添加任务按钮点击, 创建 TaskInstance 并更新模型"""
         if not self.selected_resource_name or not self.device_config:
             return
 
         dialog = AddTaskDialog(self.selected_resource_name, self.device_config, self)
         if dialog.exec():
-            new_tasks = dialog.get_selected_tasks()
-            if not new_tasks:
+            new_task_names = dialog.get_selected_tasks()
+            if not new_task_names:
                 return
 
             app_config = global_config.get_app_config()
@@ -199,15 +200,17 @@ class TaskSettingsWidget(QFrame):
                             None)
 
             if settings:
-                if settings.selected_tasks is None:
-                    settings.selected_tasks = []
-                # 使用 extend 将新任务列表（可能包含重复项）追加到现有列表
-                settings.selected_tasks.extend(new_tasks)
+                # 核心逻辑变更：为每个新任务名创建 TaskInstance
+                for task_name in new_task_names:
+                    # 将来可以从 ResourceConfig 预加载默认选项
+                    new_instance = TaskInstance(task_name=task_name, options=[])
+                    settings.task_instances[new_instance.instance_id] = new_instance
+                    settings.task_order.append(new_instance.instance_id)
 
                 global_config.save_all_configs()
                 if self.logger:
                     self.logger.info(
-                        f"为资源 {self.selected_resource_name} 添加了 {len(new_tasks)} 个新任务: {', '.join(new_tasks)}")
+                        f"为资源 {self.selected_resource_name} 添加了 {len(new_task_names)} 个新任务: {', '.join(new_task_names)}")
 
                 # 刷新UI以显示新添加的任务
                 self.refresh_settings_content()
@@ -406,7 +409,7 @@ class TaskSettingsWidget(QFrame):
                     f"设备 {self.device_config.device_name} 的资源 {self.selected_resource_name} 现在使用设置 {self.selected_settings_name}")
 
     def add_new_settings(self):
-        """为当前资源添加新的空设置"""
+        """为当前资源添加新的空设置，适配新数据结构"""
         if not self.selected_resource_name or not self.device_config:
             return
 
@@ -425,8 +428,8 @@ class TaskSettingsWidget(QFrame):
         new_settings = ResourceSettings(
             name=new_name,
             resource_name=self.selected_resource_name,
-            selected_tasks=[],
-            options=[]
+            task_instances={},
+            task_order=[]
         )
         app_config.resource_settings.append(new_settings)
 
@@ -444,12 +447,13 @@ class TaskSettingsWidget(QFrame):
             self.logger.info(f"为资源 {self.selected_resource_name} 创建了新设置 {new_name}")
 
     def refresh_settings_content(self):
-        """刷新设置内容显示"""
+        """刷新设置内容显示，传递 settings_name"""
         if not self.selected_resource_name or not self.selected_settings_name:
             self.basic_settings_page.clear_settings()
             return
 
-        self.basic_settings_page.show_resource_settings(self.selected_resource_name)
+        # 将当前选择的 settings_name 传递给子页面
+        self.basic_settings_page.show_resource_settings(self.selected_resource_name, self.selected_settings_name)
 
     def show_resource_settings(self, resource_name: str):
         """显示所选资源的设置, 确保所有必要的配置都已链接"""
@@ -476,8 +480,8 @@ class TaskSettingsWidget(QFrame):
             new_global_settings = ResourceSettings(
                 name=default_settings_name,
                 resource_name=resource_name,
-                selected_tasks=[],
-                options=[]
+                task_instances={},
+                task_order=[]
             )
             app_config.resource_settings.append(new_global_settings)
             global_resource_settings_list.append(new_global_settings)
