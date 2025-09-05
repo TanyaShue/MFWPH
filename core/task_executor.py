@@ -575,7 +575,7 @@ class TaskExecutor(QObject):
         """启动Agent进程"""
         agent_full_path = Path(task.data.resource_path) / agent_config.agent_path
 
-        cmd = [python_exe, "-u",str(agent_full_path)]
+        cmd = [python_exe, "-u", str(agent_full_path)]
         if agent_config.agent_params:
             cmd.extend(agent_config.agent_params.split())
         cmd.extend(["-id", self._agent.identifier])
@@ -583,23 +583,27 @@ class TaskExecutor(QObject):
         self.logger.debug(f"Agent启动命令: {' '.join(cmd)}")
 
         def start_process():
+            common_kwargs = dict(
+                cwd=os.getcwd(),
+                stdout=subprocess.PIPE,
+                stderr=subprocess.PIPE,
+                env=os.environ.copy(),
+                text=True,  # 使用文本模式
+                encoding="utf-8",  # 强制 UTF-8
+                errors="replace"  # 遇到非法字节替换
+            )
+
             if os.name == 'nt':
                 return subprocess.Popen(
                     cmd,
-                    cwd=os.getcwd(),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    env=os.environ.copy(),
-                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW
+                    creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW,
+                    **common_kwargs
                 )
             else:
                 return subprocess.Popen(
                     cmd,
-                    cwd=os.getcwd(),
-                    stdout=subprocess.PIPE,
-                    stderr=subprocess.PIPE,
-                    env=os.environ.copy(),
-                    preexec_fn=os.setsid
+                    preexec_fn=os.setsid,
+                    **common_kwargs
                 )
 
         self._agent_process = await self._run_in_executor(start_process)
@@ -615,7 +619,7 @@ class TaskExecutor(QObject):
 
         # 检查进程状态
         if self._agent_process.poll() is not None:
-            stderr = self._agent_process.stderr.read().decode('utf-8', errors='ignore')
+            stderr = self._agent_process.stderr.read()
             raise Exception(f"Agent启动失败: {stderr}")
 
     def _start_log_threads(self):
@@ -623,10 +627,9 @@ class TaskExecutor(QObject):
 
         def log_output(pipe, prefix):
             try:
-                for line in iter(pipe.readline, b''):
+                for line in iter(pipe.readline, ''):  # 已是字符串
                     if line:
-                        decoded = line.decode('utf-8', errors='replace').rstrip()
-                        self.logger.debug(f"[Agent {prefix}] {decoded}")
+                        self.logger.debug(f"[Agent {prefix}] {line.rstrip()}")
             except Exception:
                 pass
             finally:
