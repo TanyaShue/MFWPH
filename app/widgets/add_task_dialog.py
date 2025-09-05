@@ -1,26 +1,77 @@
-# --- START OF FILE app/dialogs/add_task_dialog.py ---
-
-from PySide6.QtCore import Qt
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import Qt, Signal
+from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
     QDialog, QVBoxLayout, QHBoxLayout, QDialogButtonBox, QScrollArea,
-    QWidget, QPushButton, QLabel
+    QWidget, QPushButton, QLabel, QFrame
 )
 
 from app.models.config.global_config import global_config
 
 
+class SelectableTaskWidget(QFrame):
+    """
+    一个可点击、可选择的任务行控件。
+    点击整个控件会切换其选中状态。
+    """
+    # 信号：当选中状态改变时发出，参数为 (task_name, is_selected)
+    selection_changed = Signal(str, bool)
+
+    def __init__(self, task_name, parent=None):
+        super().__init__(parent)
+        self.task_name = task_name
+        self.is_selected = False
+
+        self.setObjectName("selectableTaskWidget")
+        self.setFrameShape(QFrame.StyledPanel)
+        self.setMinimumHeight(40)
+        self.setCursor(Qt.PointingHandCursor)
+
+        self.init_ui()
+        self._update_style()
+
+    def init_ui(self):
+        layout = QHBoxLayout(self)
+        layout.setContentsMargins(10, 5, 10, 5)
+
+        # 任务名称标签
+        self.name_label = QLabel(self.task_name)
+        layout.addWidget(self.name_label)
+        layout.addStretch()
+
+        # 选中状态的图标指示器
+        self.check_icon = QLabel()
+        self.check_icon.setPixmap(QIcon("assets/icons/check.svg").pixmap(16, 16))
+        self.check_icon.setVisible(self.is_selected)
+        layout.addWidget(self.check_icon)
+
+    def mousePressEvent(self, event):
+        """覆盖鼠标点击事件以切换选中状态"""
+        if event.button() == Qt.LeftButton:
+            self.is_selected = not self.is_selected
+            self._update_style()
+            self.selection_changed.emit(self.task_name, self.is_selected)
+        super().mousePressEvent(event)
+
+    def _update_style(self):
+        """根据选中状态更新控件的样式和图标可见性"""
+        self.check_icon.setVisible(self.is_selected)
+        # 使用动态属性来帮助QSS样式表进行选择
+        self.setProperty("selected", self.is_selected)
+        self.style().polish(self)
+
+
 class AddTaskDialog(QDialog):
-    """一个用于向资源重复添加任务的对话框。"""
+    """一个用于向资源重复添加任务的对话框（优化版）。"""
 
     def __init__(self, resource_name, device_config, parent=None):
         super().__init__(parent)
         self.setWindowTitle(f"为 {resource_name} 添加任务")
-        self.setMinimumWidth(350)
+        self.setMinimumWidth(400)
+        self.setMinimumHeight(500)
         self.resource_name = resource_name
         self.device_config = device_config
-        # 这个列表现在可以包含重复的任务名称
-        self.newly_selected_tasks = []
+        # 使用集合来高效地跟踪选中的任务名称
+        self.selected_tasks = set()
 
         self.init_ui()
         self.populate_tasks()
@@ -29,7 +80,7 @@ class AddTaskDialog(QDialog):
         self.layout = QVBoxLayout(self)
         self.layout.setSpacing(10)
 
-        info_label = QLabel(f"为资源 '{self.resource_name}' 选择要添加的任务:\n(可以重复添加同一个任务)")
+        info_label = QLabel(f"点击任务行进行选择 (可多选):")
         self.layout.addWidget(info_label)
 
         self.scroll_area = QScrollArea()
@@ -40,13 +91,13 @@ class AddTaskDialog(QDialog):
         self.task_layout = QVBoxLayout(self.scroll_content)
         self.task_layout.setAlignment(Qt.AlignTop)
         self.task_layout.setContentsMargins(10, 10, 10, 10)
-        self.task_layout.setSpacing(8)
+        self.task_layout.setSpacing(5)  # 减小行间距
 
         self.scroll_area.setWidget(self.scroll_content)
         self.layout.addWidget(self.scroll_area)
 
-        # 添加一个标签来反馈用户的添加操作
-        self.feedback_label = QLabel("尚未添加任何任务")
+        # 反馈标签，显示选中数量
+        self.feedback_label = QLabel("已选择 0 个任务")
         self.feedback_label.setObjectName("feedbackText")
         self.feedback_label.setAlignment(Qt.AlignCenter)
         self.layout.addWidget(self.feedback_label)
@@ -58,7 +109,7 @@ class AddTaskDialog(QDialog):
 
     def populate_tasks(self):
         """
-        填充所有可用的任务, 每个任务后面都有一个添加按钮.
+        使用自定义的 SelectableTaskWidget 填充所有可用的任务。
         """
         full_resource_config = global_config.get_resource_config(self.resource_name)
         if not full_resource_config or not full_resource_config.resource_tasks:
@@ -66,42 +117,27 @@ class AddTaskDialog(QDialog):
             return
 
         for task in full_resource_config.resource_tasks:
-            task_name = task.task_name
+            task_widget = SelectableTaskWidget(task.task_name)
+            # 连接子控件的信号到对话框的槽函数
+            task_widget.selection_changed.connect(self._on_task_selection_changed)
+            self.task_layout.addWidget(task_widget)
 
-            # 为每一行创建一个容器
-            row_widget = QWidget()
-            row_layout = QHBoxLayout(row_widget)
-            row_layout.setContentsMargins(0, 0, 0, 0)
-
-            # 任务名称
-            name_label = QLabel(task_name)
-
-            # 添加按钮
-            add_button = QPushButton("添加")
-            add_button.setIcon(QIcon("assets/icons/add.svg"))
-            add_button.setObjectName("primaryButton")
-            add_button.setFixedWidth(80)
-
-            # 连接按钮点击事件, 使用 lambda 传递任务名称
-            add_button.clicked.connect(lambda checked=False, t=task_name: self._on_add_task_clicked(t))
-
-            row_layout.addWidget(name_label)
-            row_layout.addStretch()
-            row_layout.addWidget(add_button)
-
-            self.task_layout.addWidget(row_widget)
-
-    def _on_add_task_clicked(self, task_name):
+    def _on_task_selection_changed(self, task_name: str, is_selected: bool):
         """
-        当用户点击某个任务的'添加'按钮时调用.
+        当一个任务行的选中状态改变时，更新我们的跟踪集合和UI反馈。
         """
-        self.newly_selected_tasks.append(task_name)
-        self.feedback_label.setText(f"已添加任务: {task_name}\n总共待添加 {len(self.newly_selected_tasks)} 个任务。")
+        if is_selected:
+            self.selected_tasks.add(task_name)
+        else:
+            self.selected_tasks.discard(task_name)  # discard 不会在元素不存在时报错
 
-    def get_selected_tasks(self):
-        """
-        返回用户在此对话框中选择要添加的任务列表.
-        """
-        return self.newly_selected_tasks
+        self.feedback_label.setText(f"已选择 {len(self.selected_tasks)} 个任务")
 
-# --- END OF FILE app/dialogs/add_task_dialog.py ---
+
+    def get_selected_tasks(self) -> list[str]:
+        """
+        返回用户在此对话框中最终选择的任务列表。
+        """
+        # 将集合转换为列表返回
+        return list(self.selected_tasks)
+

@@ -465,6 +465,11 @@ class MainWindow(QMainWindow):
 
     @staticmethod
     def load_config():
+        resource_dir = "assets/resource/"
+        if not os.path.exists(resource_dir):
+            os.makedirs(resource_dir)
+
+        global_config.load_all_resources_from_directory(resource_dir)
         devices_config_path = "assets/config/app_config.json"
         if not os.path.exists(devices_config_path):
             os.makedirs(os.path.dirname(devices_config_path), exist_ok=True)
@@ -477,11 +482,7 @@ class MainWindow(QMainWindow):
         if not hasattr(app_config, 'window_size') or not app_config.window_size:
             app_config.window_size = "800x600"
 
-        resource_dir = "assets/resource/"
-        if not os.path.exists(resource_dir):
-            os.makedirs(resource_dir)
 
-        global_config.load_all_resources_from_directory(resource_dir)
 
     def show_previous_device_or_home(self, deleted_device_name):
         try:

@@ -696,3 +696,27 @@ QSplitter::handle:hover {
 QSplitter::handle:pressed {
     background-color: #0056b3;
 }
+/*
+ * SelectableTaskWidget 是我们在代码中设置的 objectName
+ * [selected="true"] 是我们通过 setProperty 设置的动态属性
+ */
+#selectableTaskWidget {
+    background-color: #fcfcfc; /* 默认背景色 */
+    border: 1px solid #e0e0e0;
+    border-radius: 4px;
+    transition: background-color 0.2s ease-in-out; /* (需要Qt6.5+支持) */
+}
+
+#selectableTaskWidget:hover {
+    background-color: #f0f0f0; /* 悬停颜色 */
+}
+
+/* 关键样式：当控件有 selected=true 属性时的样式 */
+#selectableTaskWidget[selected="true"] {
+    background-color: #e8f0fe; /* 浅蓝色背景表示选中 */
+    border-color: #4285f4;     /* 蓝色边框 */
+}
+
+#selectableTaskWidget[selected="true"] QLabel {
+    color: #1a73e8; /* 选中时文字颜色也可以改变 */
+}
