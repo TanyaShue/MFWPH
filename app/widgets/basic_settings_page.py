@@ -7,24 +7,25 @@ from PySide6.QtWidgets import (
     QScrollArea, QCheckBox, QPushButton, QSizePolicy, QApplication
 )
 
-from app.models.config.app_config import Resource, ResourceSettings
+# 导入新的 TaskInstance
+from app.models.config.app_config import Resource, ResourceSettings, TaskInstance
 from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager
 
 
 class TaskItemWidget(QFrame):
-    """单个任务项的widget"""
-    settings_requested = Signal(str, object, object)
-    # 新增: 请求移除自身的信号, 发送自己的实例
-    remove_requested = Signal(object)
+    """单个任务实例的widget"""
+    # 信号现在发送 instance_id 来唯一标识任务
+    settings_requested = Signal(str)  # instance_id
+    remove_requested = Signal(str)  # instance_id
+    enabled_changed = Signal(str, bool)  # instance_id, is_enabled
 
-    def __init__(self, task_name, task_config, is_selected=False, parent=None):
+    def __init__(self, task_instance: TaskInstance, task_config, parent=None):
         super().__init__(parent)
-        self.task_name = task_name
+        self.task_instance = task_instance
         self.task_config = task_config
-        self.is_selected = is_selected
-        # 新增: 跟踪移除模式
         self.is_remove_mode = False
+
         self.setObjectName("taskItemWidget")
         self.setFrameShape(QFrame.StyledPanel)
         self.setMinimumHeight(40)
@@ -47,10 +48,12 @@ class TaskItemWidget(QFrame):
         layout.addWidget(self.drag_handle)
 
         self.checkbox = QCheckBox()
-        self.checkbox.setChecked(self.is_selected)
+        self.checkbox.setChecked(self.task_instance.enabled)
+        # 连接 stateChanged 信号
+        self.checkbox.stateChanged.connect(self.on_enabled_changed)
         layout.addWidget(self.checkbox)
 
-        self.name_label = QLabel(self.task_name)
+        self.name_label = QLabel(self.task_instance.task_name)
         self.name_label.setMinimumWidth(40)
         layout.addWidget(self.name_label)
 
@@ -66,13 +69,16 @@ class TaskItemWidget(QFrame):
         layout.addWidget(self.settings_btn)
 
     def on_button_clicked(self):
-        """根据当前模式发送不同的信号"""
+        """根据当前模式发送不同的信号，携带 instance_id"""
         if self.is_remove_mode:
-            # 在移除模式下, 发送移除请求, 把自己传出去
-            self.remove_requested.emit(self)
+            self.remove_requested.emit(self.task_instance.instance_id)
         else:
-            # 正常模式下, 发送设置请求
-            self.settings_requested.emit(self.task_name, self.task_config, None)
+            self.settings_requested.emit(self.task_instance.instance_id)
+
+    def on_enabled_changed(self, state):
+        """当复选框状态改变时，发出信号"""
+        is_enabled = state == Qt.Checked
+        self.enabled_changed.emit(self.task_instance.instance_id, is_enabled)
 
     def set_remove_mode(self, enabled: bool):
         """设置或取消移除模式, 改变按钮图标和行为"""
@@ -85,8 +91,6 @@ class TaskItemWidget(QFrame):
             self.settings_btn.setIcon(QIcon("assets/icons/settings.svg"))
             self.settings_btn.setToolTip("配置任务")
             self.settings_btn.setObjectName("taskSettingsButton")
-
-        # 刷新样式
         self.settings_btn.style().polish(self.settings_btn)
 
     def mousePressEvent(self, event):
@@ -97,15 +101,13 @@ class TaskItemWidget(QFrame):
         super().mousePressEvent(event)
 
     def mouseMoveEvent(self, event):
-        if not (event.buttons() & Qt.LeftButton):
-            return
-        if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance():
-            return
+        if not (event.buttons() & Qt.LeftButton): return
+        if (event.pos() - self.drag_start_position).manhattanLength() < QApplication.startDragDistance(): return
 
         drag = QDrag(self)
         mime_data = QMimeData()
-        # 拖拽时仍然使用任务名称作为标识
-        mime_data.setText(self.task_name)
+        # 拖拽时使用 instance_id 作为唯一标识
+        mime_data.setText(self.task_instance.instance_id)
         drag.setMimeData(mime_data)
 
         pixmap = QPixmap(self.size())
@@ -118,6 +120,7 @@ class TaskItemWidget(QFrame):
 
 class DraggableTaskContainer(QWidget):
     """可拖拽的任务容器"""
+    # 信号现在发送 instance_id 的列表
     order_changed = Signal(list)
 
     def __init__(self, parent=None):
@@ -126,65 +129,56 @@ class DraggableTaskContainer(QWidget):
         self.layout = QVBoxLayout(self)
         self.layout.setContentsMargins(0, 0, 0, 0)
         self.layout.setSpacing(5)
-        self.task_widgets = []  # 这是一个有序列表, 对应UI顺序
+        self.task_widgets = []
 
     def add_task_widget(self, task_widget):
         self.task_widgets.append(task_widget)
         self.layout.addWidget(task_widget)
 
     def dragEnterEvent(self, event):
-        if event.mimeData().hasText():
-            event.acceptProposedAction()
+        if event.mimeData().hasText(): event.acceptProposedAction()
 
     def dragMoveEvent(self, event):
-        if event.mimeData().hasText():
-            event.acceptProposedAction()
+        if event.mimeData().hasText(): event.acceptProposedAction()
 
     def dropEvent(self, event):
-        if not event.mimeData().hasText():
-            return
+        if not event.mimeData().hasText(): return
 
-        dragged_task_name = event.mimeData().text()
-        # 通过事件源找到被拖拽的 widget
         dragged_widget = event.source()
-
-        if not dragged_widget or dragged_widget not in self.task_widgets:
-            return
+        if not dragged_widget or dragged_widget not in self.task_widgets: return
 
         drop_y = event.pos().y()
         insert_index = len(self.task_widgets)
-
         for i, widget in enumerate(self.task_widgets):
             if drop_y < widget.geometry().center().y():
                 insert_index = i
                 break
 
-        # 核心拖拽逻辑: 从列表中移除, 再插入到新位置
         self.task_widgets.remove(dragged_widget)
         self.task_widgets.insert(insert_index, dragged_widget)
 
-        # 根据新的列表顺序更新布局
-        for widget in self.task_widgets:
-            self.layout.removeWidget(widget)
-        for widget in self.task_widgets:
-            self.layout.addWidget(widget)
+        for widget in self.task_widgets: self.layout.removeWidget(widget)
+        for widget in self.task_widgets: self.layout.addWidget(widget)
 
-        # 发送新的顺序信号
-        new_order = [w.task_name for w in self.task_widgets]
+        # 发送新的 instance_id 顺序
+        new_order = [w.task_instance.instance_id for w in self.task_widgets]
         self.order_changed.emit(new_order)
         event.acceptProposedAction()
 
 
 class BasicSettingsPage(QFrame):
     """基本设置页面，用于配置资源任务"""
-    task_settings_requested = Signal(str, str, object, object)
+    # 信号现在包含 instance_id
+    task_settings_requested = Signal(str, str, str, object,
+                                     object)  # resource_name, instance_id, task_name, task_config, device_resource
 
     def __init__(self, device_config, parent=None):
         super().__init__(parent)
         self.device_config = device_config
         self.logger = log_manager.get_device_logger(device_config.device_name)
         self.selected_resource_name = None
-        self.task_container = None  # 初始化任务容器
+        self.selected_settings_name = None  # 新增：跟踪当前选择的设置方案名称
+        self.task_container = None
 
         self.setObjectName("contentCard")
         self.setFrameShape(QFrame.StyledPanel)
@@ -227,18 +221,23 @@ class BasicSettingsPage(QFrame):
 
         self.settings_content_layout.addWidget(placeholder_widget)
 
-    def show_resource_settings(self, resource_name):
-        """显示所选资源的设置"""
+    def show_resource_settings(self, resource_name: str, settings_name: str):
+        """显示所选资源的设置，现在需要传入 settings_name"""
         self.selected_resource_name = resource_name
+        self.selected_settings_name = settings_name
         self._clear_layout(self.settings_content_layout)
 
+        app_config = global_config.get_app_config()
         full_resource_config = global_config.get_resource_config(resource_name)
-        if not full_resource_config:
+        if not full_resource_config or not app_config:
             self.show_error_message(f"未找到资源 {resource_name} 的配置信息")
             return
 
-        device_resource = self.get_or_create_device_resource(resource_name)
-        if not device_resource:
+        settings = next(
+            (s for s in app_config.resource_settings if s.name == settings_name and s.resource_name == resource_name),
+            None)
+        if not settings:
+            self.show_error_message(f"未找到名为 '{settings_name}' 的设置方案")
             return
 
         if hasattr(full_resource_config, 'description') and full_resource_config.description:
@@ -257,27 +256,29 @@ class BasicSettingsPage(QFrame):
         self.task_container.setObjectName('draggableTaskContainer')
         self.task_container.order_changed.connect(self.on_task_order_changed)
 
-        selected_tasks = device_resource.selected_tasks or []
-        if not selected_tasks:
+        if not settings.task_order:
             no_tasks_label = QLabel("当前没有已添加的任务, 请点击下方的'添加任务'按钮。")
             no_tasks_label.setAlignment(Qt.AlignCenter)
             self.settings_content_layout.addWidget(no_tasks_label)
-            return
+        else:
+            # 核心逻辑变更：遍历 task_order 来构建UI
+            for instance_id in settings.task_order:
+                task_instance = settings.task_instances.get(instance_id)
+                if not task_instance:
+                    self.logger.warning(f"数据不一致: task_order 中的 ID '{instance_id}' 在 task_instances 中找不到。")
+                    continue
 
-        # 遍历已选择的任务列表（可能包含重复项），为每一项创建widget
-        for task_name in selected_tasks:
-            task_config = next((t for t in full_resource_config.resource_tasks if t.task_name == task_name), None)
-            if task_config:
-                task_widget = TaskItemWidget(task_name, task_config, is_selected=True)
-                task_widget.settings_requested.connect(
-                    lambda t_name, t_config, _: self.on_task_settings_requested(t_name, t_config, device_resource)
-                )
-                # 连接移除请求信号
-                task_widget.remove_requested.connect(self.on_task_remove_requested)
-                self.task_container.add_task_widget(task_widget)
+                task_config = next(
+                    (t for t in full_resource_config.resource_tasks if t.task_name == task_instance.task_name), None)
+                if task_config:
+                    task_widget = TaskItemWidget(task_instance, task_config)
+                    task_widget.settings_requested.connect(self.on_task_settings_requested)
+                    task_widget.remove_requested.connect(self.on_task_remove_requested)
+                    task_widget.enabled_changed.connect(self.on_task_enabled_changed)
+                    self.task_container.add_task_widget(task_widget)
 
-        scroll_area.setWidget(self.task_container)
-        self.settings_content_layout.addWidget(scroll_area)
+            scroll_area.setWidget(self.task_container)
+            self.settings_content_layout.addWidget(scroll_area)
 
     def set_remove_mode(self, enabled: bool):
         """槽函数: 接收来自父组件的信号, 更新所有任务项的模式"""
@@ -285,53 +286,71 @@ class BasicSettingsPage(QFrame):
             for task_widget in self.task_container.task_widgets:
                 task_widget.set_remove_mode(enabled)
 
-    def on_task_remove_requested(self, widget_to_remove: TaskItemWidget):
-        """槽函数: 处理来自 TaskItemWidget 的移除请求"""
-        if self.task_container and widget_to_remove in self.task_container.task_widgets:
-            # 1. 从UI和内部列表中移除
+    def on_task_remove_requested(self, instance_id: str):
+        """根据 instance_id 移除任务"""
+        app_config = global_config.get_app_config()
+        settings = next((s for s in app_config.resource_settings if s.name == self.selected_settings_name), None)
+
+        if not settings or instance_id not in settings.task_instances:
+            return
+
+        # 从数据模型中移除
+        removed_task = settings.task_instances.pop(instance_id)
+        settings.task_order.remove(instance_id)
+
+        # 从UI中移除
+        widget_to_remove = next(
+            (w for w in self.task_container.task_widgets if w.task_instance.instance_id == instance_id), None)
+        if widget_to_remove:
             self.task_container.layout.removeWidget(widget_to_remove)
             self.task_container.task_widgets.remove(widget_to_remove)
             widget_to_remove.deleteLater()
 
-            # 2. 根据UI当前状态生成新的任务列表
-            new_task_order = [w.task_name for w in self.task_container.task_widgets]
+        self.logger.info(f"任务 '{removed_task.task_name}' (ID: {instance_id}) 已被标记为移除。")
 
-            # 3. 更新数据模型 (此时不保存, 等待父组件统一保存)
-            self._update_config_task_list(new_task_order)
-            self.logger.info(f"任务 '{widget_to_remove.task_name}' 已被标记为移除。")
-
-    def on_task_order_changed(self, new_order: list):
-        """处理任务顺序改变, 无论是通过拖拽还是删除"""
-        self._update_config_task_list(new_order)
-        global_config.save_all_configs()
-        self.logger.info(f"资源 {self.selected_resource_name} 的任务顺序已更新")
-
-    def _update_config_task_list(self, new_task_list: list):
-        """一个辅助方法, 用给定的列表更新配置中的selected_tasks"""
-        if not self.selected_resource_name or not self.device_config:
-            return
-
+    def on_task_order_changed(self, new_order_ids: list):
+        """处理任务顺序改变，直接更新 task_order"""
         app_config = global_config.get_app_config()
-        if not app_config: return
+        settings = next((s for s in app_config.resource_settings if s.name == self.selected_settings_name), None)
 
+        if settings:
+            settings.task_order = new_order_ids
+            global_config.save_all_configs()
+            self.logger.info(f"资源 {self.selected_resource_name} 的任务顺序已更新")
+
+    def on_task_enabled_changed(self, instance_id: str, is_enabled: bool):
+        """处理任务启用/禁用状态改变"""
+        app_config = global_config.get_app_config()
+        settings = next((s for s in app_config.resource_settings if s.name == self.selected_settings_name), None)
+
+        if settings and instance_id in settings.task_instances:
+            settings.task_instances[instance_id].enabled = is_enabled
+            global_config.save_all_configs()
+            status = "启用" if is_enabled else "禁用"
+            task_name = settings.task_instances[instance_id].task_name
+            self.logger.info(f"任务 '{task_name}' (ID: {instance_id}) 已被{status}。")
+
+    def on_task_settings_requested(self, instance_id: str):
+        """处理任务设置请求"""
+        app_config = global_config.get_app_config()
+        settings = next((s for s in app_config.resource_settings if s.name == self.selected_settings_name), None)
         device_resource = next(
             (r for r in self.device_config.resources if r.resource_name == self.selected_resource_name), None)
-        if not device_resource: return
 
-        settings = next((s for s in app_config.resource_settings
-                         if s.name == device_resource.settings_name and s.resource_name == self.selected_resource_name),
-                        None)
-        if settings:
-            settings.selected_tasks = new_task_list
+        if settings and device_resource and instance_id in settings.task_instances:
+            task_instance = settings.task_instances[instance_id]
+            full_resource_config = global_config.get_resource_config(self.selected_resource_name)
+            task_config = next(
+                (t for t in full_resource_config.resource_tasks if t.task_name == task_instance.task_name), None)
 
-    def on_task_settings_requested(self, task_name, task_config, device_resource):
-        """处理任务设置请求"""
-        self.task_settings_requested.emit(
-            self.selected_resource_name,
-            task_name,
-            task_config,
-            device_resource
-        )
+            if task_config:
+                self.task_settings_requested.emit(
+                    self.selected_resource_name,
+                    instance_id,
+                    task_instance.task_name,
+                    task_config,
+                    device_resource
+                )
 
     def get_or_create_device_resource(self, resource_name):
         """获取或创建设备资源配置"""
@@ -343,8 +362,9 @@ class BasicSettingsPage(QFrame):
                 existing_settings = next((s for s in app_config.resource_settings if s.resource_name == resource_name),
                                          None)
                 if not existing_settings:
-                    new_settings = ResourceSettings(name=settings_name, resource_name=resource_name, selected_tasks=[],
-                                                    options=[])
+                    # 使用新的数据结构创建
+                    new_settings = ResourceSettings(name=settings_name, resource_name=resource_name, task_instances={},
+                                                    task_order=[])
                     app_config.resource_settings.append(new_settings)
                 else:
                     settings_name = existing_settings.name
@@ -396,21 +416,23 @@ class BasicSettingsPage(QFrame):
 
     def update_task_selection(self, resource_config, task_name, is_selected):
         """更新任务选择状态 (此函数现在主要用于复选框，可以保留或调整其逻辑)"""
-        # 注意：这里的逻辑可能需要根据复选框的实际用途进行调整
-        # 目前，复选框可以视为一个独立的“启用/禁用”标志，不影响任务的存在
         status_text = "启用" if is_selected else "禁用"
         self.logger.info(f"资源 [{resource_config.resource_name}] 的任务 [{task_name}] UI状态变更为: {status_text}")
 
     def _create_resource_configuration(self, resource_name):
         """从按钮点击创建新的资源配置的辅助方法"""
         if self.get_or_create_device_resource(resource_name):
-            self.show_resource_settings(resource_name)
+            # 需要知道当前的 settings_name 来显示
+            device_resource = next((r for r in self.device_config.resources if r.resource_name == resource_name), None)
+            if device_resource:
+                self.show_resource_settings(resource_name, device_resource.settings_name)
 
     def clear_settings(self):
         """清除设置内容"""
         self._clear_layout(self.settings_content_layout)
         self.add_placeholder()
         self.selected_resource_name = None
+        self.selected_settings_name = None
         self.task_container = None
 
     def _clear_layout(self, layout):
