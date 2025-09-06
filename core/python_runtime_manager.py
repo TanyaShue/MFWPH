@@ -215,6 +215,7 @@ class GlobalPythonRuntimeManager:
         """
         加载配置文件，源已更新为python-build-standalone项目的预编译便携版。
         这避免了在Linux和macOS上进行本地编译，大大提高了速度和可靠性。
+        如果配置文件不存在，则会使用默认配置自动创建。
         """
         config_path = Path("assets/config/python_sources.json")
         # 使用20240415作为稳定的构建日期标签，如果未来需要更新版本可以修改此日期
@@ -222,43 +223,71 @@ class GlobalPythonRuntimeManager:
 
         default_config = {
             "fallback_versions": {
-                "3.10": "3.10.14",
+                "3.10": "3.10.5",
                 "3.11": "3.11.9",
                 "3.12": "3.12.3"
             },
             "python_download_sources": {
                 "windows": [
                     "https://mirrors.aliyun.com/python-release/windows/python-{version}-embed-amd64.zip",
+                    "https://mirrors.huaweicloud.com/python/{version}/python-{version}-embed-amd64.zip",
+                    "https://registry.npmmirror.com/-/binary/python/{version}/python-{version}-embed-amd64.zip",
+                    "https://npm.taobao.org/mirrors/python/{version}/python-{version}-embed-amd64.zip",
                     "https://www.python.org/ftp/python/{version}/python-{version}-embed-amd64.zip"
                 ],
                 "linux": [
-                    "https://mirror.ghproxy.com/https://github.com/indygreg/python-build-standalone/releases/download/{build_tag}/cpython-{version}+{build_tag}-{arch}-unknown-linux-gnu-install_only.tar.gz",
-                    "https://github.com/indygreg/python-build-standalone/releases/download/{build_tag}/cpython-{version}+{build_tag}-{arch}-unknown-linux-gnu-install_only.tar.gz"
+                    "https://mirrors.aliyun.com/python-release/source/Python-{version}.tgz",
+                    "https://mirrors.huaweicloud.com/python/{version}/Python-{version}.tgz",
+                    "https://registry.npmmirror.com/-/binary/python/{version}/Python-{version}.tgz",
+                    "https://npm.taobao.org/mirrors/python/{version}/Python-{version}.tgz",
+                    "https://www.python.org/ftp/python/{version}/Python-{version}.tgz"
                 ],
                 "darwin": [
-                    "https://mirror.ghproxy.com/https://github.com/indygreg/python-build-standalone/releases/download/{build_tag}/cpython-{version}+{build_tag}-{arch}-apple-darwin-install_only.tar.gz",
-                    "https://github.com/indygreg/python-build-standalone/releases/download/{build_tag}/cpython-{version}+{build_tag}-{arch}-apple-darwin-install_only.tar.gz"
+                    "https://mirrors.aliyun.com/python-release/source/Python-{version}.tgz",
+                    "https://mirrors.huaweicloud.com/python/{version}/Python-{version}.tgz",
+                    "https://registry.npmmirror.com/-/binary/python/{version}/Python-{version}.tgz",
+                    "https://npm.taobao.org/mirrors/python/{version}/Python-{version}.tgz",
+                    "https://www.python.org/ftp/python/{version}/Python-{version}.tgz"
                 ]
             },
             "build_tag": build_tag,  # 将构建标签也加入配置，方便统一管理
             "pip_sources": [
-                "https://mirrors.aliyun.com/pypi/simple/",
                 "https://pypi.tuna.tsinghua.edu.cn/simple/",
+                "https://mirrors.aliyun.com/pypi/simple/",
+                "https://pypi.douban.com/simple/",
+                "https://pypi.mirrors.ustc.edu.cn/simple/",
+                "https://mirrors.cloud.tencent.com/pypi/simple/",
                 "https://pypi.org/simple/"
             ],
             "get_pip_sources": [
                 "https://mirrors.aliyun.com/pypi/get-pip.py",
+                "https://pypi.tuna.tsinghua.edu.cn/mirrors/pypi/get-pip.py",
+                "https://mirrors.huaweicloud.com/repository/pypi/get-pip.py",
+                "https://registry.npmmirror.com/-/binary/pypa/get-pip.py",
                 "https://bootstrap.pypa.io/get-pip.py"
             ]
         }
 
+        # --- 新增逻辑：如果文件不存在，则创建并写入默认配置 ---
+        if not config_path.exists():
+            self.logger.info(f"配置文件 {config_path} 不存在，将创建默认配置文件。")
+            try:
+                # 确保父目录存在
+                config_path.parent.mkdir(parents=True, exist_ok=True)
+                with open(config_path, 'w', encoding='utf-8') as f:
+                    # 将 default_config 写入文件，使用 indent 参数美化格式
+                    json.dump(default_config, f, indent=4, ensure_ascii=False)
+                return default_config
+            except Exception as e:
+                self.logger.error(f"创建默认配置文件失败: {e}。将仅在内存中使用默认配置。")
+                return default_config
+
         try:
-            if config_path.exists():
-                with open(config_path, 'r', encoding='utf-8') as f:
-                    return json.load(f)
+            with open(config_path, 'r', encoding='utf-8') as f:
+                return json.load(f)
         except Exception as e:
-            self.logger.error(f"加载配置失败: {e}")
-        return default_config
+            self.logger.error(f"加载配置文件 {config_path} 失败: {e}。将使用默认配置。")
+            return default_config
 
     # --- MODIFICATION END ---
 
