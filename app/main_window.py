@@ -5,7 +5,7 @@ if sys.platform == "win32":
     import ctypes
     from ctypes.wintypes import HWND, INT, UINT
 
-from PySide6.QtCore import Qt, QCoreApplication
+from PySide6.QtCore import Qt, QCoreApplication, QTimer
 from PySide6.QtGui import QIcon, QAction, QCursor
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
@@ -28,8 +28,9 @@ from app.widgets.add_device_dialog import AddDeviceDialog
 
 
 class MainWindow(QMainWindow):
-    def __init__(self):
+    def __init__(self, cli_args=None):
         super().__init__()
+        self.cli_args = cli_args
         # self.setWindowFlags(Qt.FramelessWindowHint) # Removed for native frame features
         self.setWindowTitle("MFWPH")
         self.setMinimumSize(800, 600)
@@ -233,6 +234,71 @@ class MainWindow(QMainWindow):
         self.update_scroll_area_visibility()
         self.init_tray_icon()
         self.show_page("home")
+
+        if self.cli_args and self.cli_args.auto:
+            # Log the action
+            from app.models.logging.log_manager import log_manager
+            log_manager.get_app_logger().info(f"Command-line auto-start detected. Will start in 5 seconds for devices: {self.cli_args.s}")
+
+            # Setup exit handler if needed
+            if self.cli_args.exit_on_complete:
+                from core.tasker_manager import task_manager
+                log_manager.get_app_logger().info("Auto-exit is enabled. Application will close when tasks are done.")
+                task_manager.all_autostart_tasks_completed.connect(self.handle_safe_exit)
+
+            # Start the 5-second timer
+            QTimer.singleShot(5000, self.handle_autostart)
+
+    def handle_autostart(self):
+        from core.tasker_manager import task_manager
+        from app.models.config.global_config import global_config
+        from app.models.logging.log_manager import log_manager
+
+        logger = log_manager.get_app_logger()
+        logger.info("Executing auto-start...")
+
+        target_device_names = self.cli_args.s
+        all_device_configs = global_config.get_app_config().devices
+
+        devices_to_start = []
+        if 'all' in target_device_names:
+            devices_to_start = all_device_configs
+            logger.info("Auto-starting all configured devices.")
+        else:
+            all_device_names = {d.device_name for d in all_device_configs}
+            for name in target_device_names:
+                if name in all_device_names:
+                    # Find the full config object
+                    devices_to_start.extend([d for d in all_device_configs if d.device_name == name])
+                else:
+                    logger.warning(f"Device '{name}' specified for auto-start not found in configuration.")
+
+        if not devices_to_start:
+            logger.warning("No valid devices found to auto-start.")
+            # If we need to exit, and there's nothing to do, exit now.
+            if self.cli_args.exit_on_complete:
+                self.handle_safe_exit()
+            return
+
+        # Tell the task_manager which devices to monitor for completion
+        device_names_to_monitor = [d.device_name for d in devices_to_start]
+        if self.cli_args.exit_on_complete:
+            from core.tasker_manager import task_manager
+            task_manager.monitor_autostart_devices(device_names_to_monitor)
+
+        # Trigger the start for each device
+        for device_config in devices_to_start:
+            logger.info(f"Requesting auto-start for device: {device_config.device_name}")
+            # run_device_all_resource_task is async, but we can call it from a sync method
+            # qasync will handle it.
+            task_manager.run_device_all_resource_task(device_config)
+
+    def handle_safe_exit(self):
+        from app.models.logging.log_manager import log_manager
+        logger = log_manager.get_app_logger()
+        logger.info("All auto-started tasks are complete. Exiting application as requested.")
+        # Use force_quit to ensure configs are saved and app quits cleanly
+        self.force_quit()
 
     def toggle_maximize(self):
         if self.isMaximized():

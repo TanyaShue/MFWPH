@@ -2,6 +2,7 @@ import asyncio
 import os
 import signal
 import sys
+import argparse
 
 import psutil
 import qasync
@@ -258,6 +259,14 @@ def main():
     #    使用 base_path 来构建所有资源的绝对路径。
 
     os.chdir(base_path)
+    
+    # Create the argument parser
+    parser = argparse.ArgumentParser(description="MFWPH Application")
+    parser.add_argument('-auto', action='store_true', help='Automatically start tasks 5 seconds after launch.')
+    parser.add_argument('-s', nargs='+', default=['all'], help='Specify device names to auto-start. Default is "all".')
+    parser.add_argument('-exit_on_complete', action='store_true', help='Exit after auto-started tasks are complete.')
+    args = parser.parse_args()
+
     # ---------- 强制浅色主题设置开始 ----------
     app = QApplication(sys.argv)
     app.setStyle(QStyleFactory.create("Fusion"))
@@ -270,7 +279,7 @@ def main():
     asyncio.set_event_loop(loop)
 
     # 创建并显示主窗口
-    window = MainWindow()
+    window = MainWindow(cli_args=args)
     notification_manager.set_reference_window(window)
     window.show()
 
