@@ -77,7 +77,7 @@ class TaskItemWidget(QFrame):
 
     def on_enabled_changed(self, state):
         """当复选框状态改变时，发出信号"""
-        is_enabled = state == Qt.Checked
+        is_enabled = state == Qt.CheckState.Checked.value
         self.enabled_changed.emit(self.task_instance.instance_id, is_enabled)
 
     def set_remove_mode(self, enabled: bool):
