@@ -583,14 +583,19 @@ class TaskExecutor(QObject):
         self.logger.debug(f"Agent启动命令: {' '.join(cmd)}")
 
         def start_process():
+            # 为子进程创建一个干净的环境变量副本
+            agent_env = os.environ.copy()
+            # 强制子进程的Python解释器使用UTF-8编码
+            agent_env["PYTHONUTF8"] = "1"
+
             common_kwargs = dict(
                 cwd=os.getcwd(),
                 stdout=subprocess.PIPE,
                 stderr=subprocess.PIPE,
-                env=os.environ.copy(),
-                text=True,  # 使用文本模式
-                encoding="utf-8",  # 强制 UTF-8
-                errors="replace"  # 遇到非法字节替换
+                env=agent_env,  # 使用修改后的环境变量
+                text=True,
+                encoding="utf-8",
+                errors="replace"
             )
 
             if os.name == 'nt':
