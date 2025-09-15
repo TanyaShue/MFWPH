@@ -333,14 +333,25 @@ def create_tar_archive(dist_dir: str, tar_path: str, exclusions: List[str], incl
     logger.info(f"开始创建TAR.GZ包: {tar_path}")
 
     with tarfile.open(tar_path, 'w:gz') as tarf:
-        # 添加主程序
-        main_exe = os.path.join(dist_dir, APP_NAME)
-        if os.path.exists(main_exe):
-            info = tarf.gettarinfo(main_exe, APP_NAME)
-            info.mode = 0o755  # 设置可执行权限
-            with open(main_exe, 'rb') as f:
-                tarf.addfile(info, f)
-            logger.info(f"添加主程序到TAR: {APP_NAME}")
+        # --- 修改开始 ---
+
+        # 添加主程序 (.app 包)
+        main_app_path = os.path.join(dist_dir, f"{APP_NAME}.app")
+        if os.path.exists(main_app_path):
+            logger.info(f"添加主程序包到TAR: {APP_NAME}.app")
+            # tarf.add() 可以递归地添加整个目录
+            tarf.add(main_app_path, arcname=f"{APP_NAME}.app")
+        else:
+            # 如果 .app 包不存在，再尝试寻找单个可执行文件 (适用于 Linux)
+            main_executable = os.path.join(dist_dir, APP_NAME)
+            if os.path.exists(main_executable):
+                logger.info(f"添加主程序到TAR: {APP_NAME}")
+                info = tarf.gettarinfo(main_executable, APP_NAME)
+                info.mode = 0o755  # 设置可执行权限
+                with open(main_executable, 'rb') as f:
+                    tarf.addfile(info, f)
+
+        # --- 修改结束 ---
 
         # 添加更新程序
         if include_updater:
@@ -354,7 +365,9 @@ def create_tar_archive(dist_dir: str, tar_path: str, exclusions: List[str], incl
 
         # 添加其他文件
         for root, dirs, files in os.walk(dist_dir):
-            # 排除不需要的目录
+            # 排除不需要的目录和 .app 包（因为它已经被添加过了）
+            if f"{APP_NAME}.app" in dirs:
+                dirs.remove(f"{APP_NAME}.app")
             dirs[:] = [d for d in dirs if not any(pattern in d for pattern in exclusions)]
 
             for file in files:
