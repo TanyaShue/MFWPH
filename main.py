@@ -6,8 +6,8 @@ import sys
 import psutil
 import qasync
 from PySide6.QtCore import QTimer, QThread, Signal
-from PySide6.QtWidgets import QApplication, QStyleFactory
-from PySide6.QtGui import QPalette, QColor
+from PySide6.QtWidgets import QApplication, QStyleFactory, QSystemTrayIcon
+from PySide6.QtGui import QPalette, QColor, QIcon
 from qasync import QEventLoop
 
 from app.models.config.app_config import Resource
@@ -264,6 +264,18 @@ def main():
 
     # 2. 应用自定义浅色调 Palette
     app.setPalette(load_light_palette())
+
+    # --- 修改开始: 添加系统托盘图标 ---
+    # 构造图标文件的绝对路径
+    icon_path = os.path.join(base_path, 'assets', 'icons', 'app', 'logo.png')
+
+    if os.path.exists(icon_path):
+        # 创建 QIcon 对象
+        app_icon = QIcon(icon_path)
+
+        # 设置应用程序的窗口图标（对所有窗口生效）
+        app.setWindowIcon(app_icon)
+    # --- 修改结束 ---
 
     # 设置异步事件循环
     loop = qasync.QEventLoop(app)

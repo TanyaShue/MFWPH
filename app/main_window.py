@@ -6,7 +6,7 @@ if sys.platform == "win32":
     from ctypes.wintypes import HWND, INT, UINT
 
 from PySide6.QtCore import Qt, QCoreApplication
-from PySide6.QtGui import QIcon, QAction, QCursor
+from PySide6.QtGui import QIcon, QAction, QCursor, QPixmap
 from PySide6.QtWidgets import (
     QMainWindow, QWidget, QHBoxLayout, QVBoxLayout,
     QFrame, QScrollArea, QSystemTrayIcon, QMenu, QPushButton, QSizePolicy, QLabel, QSizeGrip
@@ -79,7 +79,8 @@ class MainWindow(QMainWindow):
             title_bar_layout.setSpacing(0)
 
             icon_label = QLabel()
-            icon_label.setPixmap(QIcon("assets/icons/app/logo.png").pixmap(20, 20))
+            pixmap = QPixmap("assets/icons/app/logo.png")
+            icon_label.setPixmap(pixmap.scaled(20, 20, Qt.KeepAspectRatio, Qt.SmoothTransformation))
             icon_label.setFixedSize(20, 20)
             icon_label.setScaledContents(True)
 

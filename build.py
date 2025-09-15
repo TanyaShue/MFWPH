@@ -199,6 +199,17 @@ def run_pyinstaller(version_file: str, win_version_file: str):
     maa_bin_path = find_site_package_path('maa/bin')
     maa_agent_path = find_site_package_path('MaaAgentBinary')
 
+    # --- 修改开始 ---
+    # 根据不同平台设置图标路径
+    icon_path = ''
+    if sys.platform == 'win32':
+        icon_path = 'assets/icons/app/logo.ico'
+    elif sys.platform == 'darwin':
+        icon_path = 'assets/icons/app/logo.icns'
+    else:  # Linux and others
+        icon_path = 'assets/icons/app/logo.png'
+    # --- 修改结束 ---
+
     args = [
         'main.py',
         '--onefile',
@@ -206,6 +217,15 @@ def run_pyinstaller(version_file: str, win_version_file: str):
         '--clean',
         '--runtime-tmpdir=.',  # 添加这行，使用当前目录作为临时目录
     ]
+
+    # --- 修改开始 ---
+    # 如果图标文件存在，则添加 --icon 参数
+    if os.path.exists(icon_path):
+        args.append(f'--icon={icon_path}')
+        logger.info(f"使用图标: {icon_path}")
+    else:
+        logger.warning(f"图标文件不存在，将不为程序设置图标: {icon_path}")
+    # --- 修改结束 ---
 
     # 平台特定参数
     if sys.platform == 'win32':
@@ -224,7 +244,7 @@ def run_pyinstaller(version_file: str, win_version_file: str):
         args.append(f'--add-data={version_file}{os.pathsep}.')
 
     logger.info("正在运行PyInstaller构建主程序...")
-    logger.info(f"PyInstaller 参数: {' '.join(args)}") # 增加这行日志，方便调试
+    logger.info(f"PyInstaller 参数: {' '.join(args)}")  # 增加这行日志，方便调试
     PyInstaller.__main__.run(args)
     logger.info("PyInstaller构建主程序成功")
 
