@@ -295,8 +295,11 @@ class LogDisplay(QFrame):
                     simplified_log = f"{time_part} {message}"
 
                     self.log_text.setTextColor(self.log_colors.get(level, QColor("#888888")))
-                    self.log_text.append(simplified_log)
-
+                    if self.log_text.document().isEmpty():
+                        self.log_text.append(simplified_log)
+                    else:
+                        # Insert a small height spacer and then the log
+                        self.log_text.append("\n" + simplified_log)
                 else:
                     # Fallback for unexpected log format
                     self.log_text.setTextColor(QColor("#888888"))
