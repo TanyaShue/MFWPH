@@ -140,6 +140,7 @@ class Resource:
     """设备内的资源配置。"""
     resource_name: str
     settings_name: str  # 引用 ResourceSettings 的名称
+    resource_pack:str=""
     enable: bool = False
     # 内部引用，不会被序列化
     _app_config: Optional['AppConfig'] = field(default=None, repr=False, compare=False)
@@ -204,7 +205,6 @@ class AppConfig:
             for resource in device.resources:
                 resource.set_app_config(self)
 
-    # ... _get_encryption_key, _encrypt_cdk, _decrypt_cdk 方法保持不变 ...
     @staticmethod
     def _get_encryption_key() -> bytes:
         env_key = os.environ.get('APP_CONFIG_ENCRYPTION_KEY')
@@ -414,8 +414,12 @@ def win32_device_to_dict(win32_device: Win32Device) -> Dict[str, Any]: return wi
 
 
 def resource_to_dict(resource: Resource) -> Dict[str, Any]:
-    result = {'resource_name': resource.resource_name, 'settings_name': resource.settings_name,
-              'enable': resource.enable}
+    result = {
+        'resource_name': resource.resource_name,
+        'settings_name': resource.settings_name,
+        'resource_pack': resource.resource_pack,
+        'enable': resource.enable
+    }
     return result
 
 

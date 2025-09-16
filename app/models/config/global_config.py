@@ -1,5 +1,3 @@
-# --- START OF FILE global_config.py ---
-
 import os
 import json  # 导入 json 以便在加载前检查版本
 from dataclasses import dataclass, field
@@ -22,7 +20,10 @@ class RunTimeConfig:
 
 @dataclass
 class RunTimeConfigs:
+    # --- CHANGE 1 OF 2: The RunTimeConfigs dataclass is updated as requested ---
     task_list: List[RunTimeConfig] = field(default_factory=list)
+    # The type is now a single dictionary, with an empty dict as the default.
+    resource_pack: Dict[str, Any] = field(default_factory=dict)
     resource_path: str = field(default_factory=Path)
     resource_name: str = field(default_factory=str)
 
@@ -135,39 +136,57 @@ class GlobalConfig:
         else:
             raise ValueError("AppConfig 尚未加载，无法保存。")
 
-    # get_runtime_configs_for_resource 和 _process_task_options 等其他方法保持不变
-    # 因为它们的设计已经足够健壮，可以处理包含多余选项的情况。
-    # 我们这里的修改主要是为了让存储的数据更干净。
-
+    # --- CHANGE 2 OF 2: The get_runtime_configs_for_resource method is updated ---
     def get_runtime_configs_for_resource(self, resource_name: str, device_id: str = None) -> RunTimeConfigs | None:
         """
         获取指定资源中已启用的任务实例的RunTimeConfigs，
         并按照配置方案中定义的顺序排列。
+        现在还会包含为该设备选择的资源包信息（单个字典）。
         """
         resource_config = self.get_resource_config(resource_name)
         if resource_config is None:
             print(f"Resource '{resource_name}' not found.")
             return None
 
-        # 查找设备对应的 ResourceSettings
         if self.app_config is None: return None
 
         target_settings = None
+        device_resource = None  # 用于存储在设备上找到的那个 Resource 对象
         device = self.get_device_config(device_id)
         if device:
             for res in device.resources:
                 if res.resource_name == resource_name and res.enable:
                     # 找到了设备上启用的资源，现在查找其引用的设置方案
+                    device_resource = res  # 保存这个Resource对象，以便后续获取resource_pack
                     for settings in self.app_config.resource_settings:
                         if settings.name == res.settings_name and settings.resource_name == resource_name:
                             target_settings = settings
                             break
                     break
 
+        # 获取选定的资源包配置
+        selected_pack_config = {}  # Initialize as an empty dictionary
+        if device_resource:
+            # Safely get the resource_pack name to be backward compatible
+            selected_pack_name = getattr(device_resource, 'resource_pack', '')
+            # Ensure resource_config actually has the resource_pack list
+            if selected_pack_name and hasattr(resource_config, 'resource_pack'):
+                # Find the pack object (dictionary) that matches the selected name
+                pack_object = next((pack for pack in resource_config.resource_pack if pack.get('name') == selected_pack_name), None)
+                if pack_object:
+                    # Assign the dictionary directly
+                    selected_pack_config = pack_object
+
+        resource_path = Path(resource_config.source_file).parent if resource_config.source_file else Path()
+
         if not target_settings:
-            # 如果没找到指定的设备或资源，或者资源未启用，返回空
-            resource_path = Path(resource_config.source_file).parent if resource_config.source_file else Path()
-            return RunTimeConfigs(task_list=[], resource_path=resource_path, resource_name=resource_name)
+            # If no settings found, return an empty task list but still include pack info
+            return RunTimeConfigs(
+                task_list=[],
+                resource_path=resource_path,
+                resource_name=resource_name,
+                resource_pack=selected_pack_config
+            )
 
         runtime_configs = []
         # 按照 task_order 中定义的顺序遍历任务实例
@@ -197,8 +216,12 @@ class GlobalConfig:
                 )
                 runtime_configs.append(runtime_config)
 
-        resource_path = Path(resource_config.source_file).parent if resource_config.source_file else Path()
-        return RunTimeConfigs(task_list=runtime_configs, resource_path=resource_path, resource_name=resource_name)
+        return RunTimeConfigs(
+            task_list=runtime_configs,
+            resource_path=resource_path,
+            resource_name=resource_name,
+            resource_pack=selected_pack_config # Pass the found dictionary
+        )
 
     def get_runtime_config_for_task(self, resource_name: str, task_name: str, device_id: str = None,
                                     instance_id: str = None) -> Optional[RunTimeConfig]:
@@ -365,4 +388,3 @@ class GlobalConfig:
 
 # 创建全局单例实例
 global_config = GlobalConfig()
-# --- END OF FILE global_config.py ---
