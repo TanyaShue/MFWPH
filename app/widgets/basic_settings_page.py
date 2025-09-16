@@ -77,7 +77,7 @@ class TaskItemWidget(QFrame):
 
     def on_enabled_changed(self, state):
         """当复选框状态改变时，发出信号"""
-        is_enabled = state == Qt.Checked
+        is_enabled = state == Qt.CheckState.Checked.value
         self.enabled_changed.emit(self.task_instance.instance_id, is_enabled)
 
     def set_remove_mode(self, enabled: bool):
@@ -279,7 +279,7 @@ class BasicSettingsPage(QFrame):
 
             scroll_area.setWidget(self.task_container)
             self.settings_content_layout.addWidget(scroll_area)
-
+        self.settings_content_layout.addStretch(1)
     def set_remove_mode(self, enabled: bool):
         """槽函数: 接收来自父组件的信号, 更新所有任务项的模式"""
         if self.task_container:

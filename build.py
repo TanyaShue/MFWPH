@@ -199,6 +199,17 @@ def run_pyinstaller(version_file: str, win_version_file: str):
     maa_bin_path = find_site_package_path('maa/bin')
     maa_agent_path = find_site_package_path('MaaAgentBinary')
 
+    # --- 修改开始 ---
+    # 根据不同平台设置图标路径
+    icon_path = ''
+    if sys.platform == 'win32':
+        icon_path = 'assets/icons/app/logo.ico'
+    elif sys.platform == 'darwin':
+        icon_path = 'assets/icons/app/logo.icns'
+    else:  # Linux and others
+        icon_path = 'assets/icons/app/logo.png'
+    # --- 修改结束 ---
+
     args = [
         'main.py',
         '--onefile',
@@ -206,6 +217,15 @@ def run_pyinstaller(version_file: str, win_version_file: str):
         '--clean',
         '--runtime-tmpdir=.',  # 添加这行，使用当前目录作为临时目录
     ]
+
+    # --- 修改开始 ---
+    # 如果图标文件存在，则添加 --icon 参数
+    if os.path.exists(icon_path):
+        args.append(f'--icon={icon_path}')
+        logger.info(f"使用图标: {icon_path}")
+    else:
+        logger.warning(f"图标文件不存在，将不为程序设置图标: {icon_path}")
+    # --- 修改结束 ---
 
     # 平台特定参数
     if sys.platform == 'win32':
@@ -224,7 +244,7 @@ def run_pyinstaller(version_file: str, win_version_file: str):
         args.append(f'--add-data={version_file}{os.pathsep}.')
 
     logger.info("正在运行PyInstaller构建主程序...")
-    logger.info(f"PyInstaller 参数: {' '.join(args)}") # 增加这行日志，方便调试
+    logger.info(f"PyInstaller 参数: {' '.join(args)}")  # 增加这行日志，方便调试
     PyInstaller.__main__.run(args)
     logger.info("PyInstaller构建主程序成功")
 
@@ -333,14 +353,25 @@ def create_tar_archive(dist_dir: str, tar_path: str, exclusions: List[str], incl
     logger.info(f"开始创建TAR.GZ包: {tar_path}")
 
     with tarfile.open(tar_path, 'w:gz') as tarf:
-        # 添加主程序
-        main_exe = os.path.join(dist_dir, APP_NAME)
-        if os.path.exists(main_exe):
-            info = tarf.gettarinfo(main_exe, APP_NAME)
-            info.mode = 0o755  # 设置可执行权限
-            with open(main_exe, 'rb') as f:
-                tarf.addfile(info, f)
-            logger.info(f"添加主程序到TAR: {APP_NAME}")
+        # --- 修改开始 ---
+
+        # 添加主程序 (.app 包)
+        main_app_path = os.path.join(dist_dir, f"{APP_NAME}.app")
+        if os.path.exists(main_app_path):
+            logger.info(f"添加主程序包到TAR: {APP_NAME}.app")
+            # tarf.add() 可以递归地添加整个目录
+            tarf.add(main_app_path, arcname=f"{APP_NAME}.app")
+        else:
+            # 如果 .app 包不存在，再尝试寻找单个可执行文件 (适用于 Linux)
+            main_executable = os.path.join(dist_dir, APP_NAME)
+            if os.path.exists(main_executable):
+                logger.info(f"添加主程序到TAR: {APP_NAME}")
+                info = tarf.gettarinfo(main_executable, APP_NAME)
+                info.mode = 0o755  # 设置可执行权限
+                with open(main_executable, 'rb') as f:
+                    tarf.addfile(info, f)
+
+        # --- 修改结束 ---
 
         # 添加更新程序
         if include_updater:
@@ -354,7 +385,9 @@ def create_tar_archive(dist_dir: str, tar_path: str, exclusions: List[str], incl
 
         # 添加其他文件
         for root, dirs, files in os.walk(dist_dir):
-            # 排除不需要的目录
+            # 排除不需要的目录和 .app 包（因为它已经被添加过了）
+            if f"{APP_NAME}.app" in dirs:
+                dirs.remove(f"{APP_NAME}.app")
             dirs[:] = [d for d in dirs if not any(pattern in d for pattern in exclusions)]
 
             for file in files:

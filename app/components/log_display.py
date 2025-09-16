@@ -14,6 +14,9 @@ class LogDisplay(QFrame):
     Component to display application and device logs with real-time updates
     Only shows logs from the current program session
     """
+    # 优化：为显示和内存中的日志数量设置上限
+    MAX_DISPLAY_LOGS = 100  # 在UI中一次显示的最大日志条数
+    MAX_SESSION_LOGS = 2000  # 在内存中为当前会话保留的最大日志条数
 
     def __init__(self, parent=None, enable_log_level_filter=False, show_device_selector=True):
         super().__init__(parent)
@@ -148,13 +151,18 @@ class LogDisplay(QFrame):
         return False
 
     def add_session_log(self, log_entry, device_name=None):
-        """Add a log entry to the current session logs"""
+        """Add a log entry to the current session logs, trimming old logs if the buffer is full."""
         # Store log with device information
         self.session_logs.append({
             'log': log_entry,
             'device': device_name,
             'timestamp': datetime.now()
         })
+
+        # 优化: 裁剪会话日志缓冲区以防止过多的内存使用
+        if len(self.session_logs) > self.MAX_SESSION_LOGS:
+            # 移除最旧的日志条目
+            self.session_logs.pop(0)
 
     def update_device_list(self, devices):
         """Update the device dropdown list"""
@@ -237,7 +245,7 @@ class LogDisplay(QFrame):
         self.display_logs(filtered_logs)
 
     def display_logs(self, logs):
-        """Display logs with optimized formatting - only time and message"""
+        """Display logs with optimized formatting - only time, message, and limited to MAX_DISPLAY_LOGS."""
         # Store current scroll position
         scrollbar = self.log_text.verticalScrollBar()
         was_at_bottom = scrollbar.value() == scrollbar.maximum()
@@ -245,12 +253,21 @@ class LogDisplay(QFrame):
         # Clear text
         self.log_text.clear()
 
-        if not logs:
+        # 优化: 限制要显示的日志数量以提高性能
+        displayable_logs = logs[-self.MAX_DISPLAY_LOGS:]
+
+        if not displayable_logs:
             self.log_text.setPlainText("暂无日志记录")
             return
 
+        # 优化: 如果日志被截断，则添加一条消息
+        if len(logs) > self.MAX_DISPLAY_LOGS:
+            self.log_text.setTextColor(QColor("#888888"))
+            self.log_text.append(f"--- 日志过多，仅显示最新的 {self.MAX_DISPLAY_LOGS} 条 ---")
+            self.log_text.append("")  # 添加一个空行以增加间距
+
         # Process and display logs with color coding and simplified format
-        for log in logs:
+        for log in displayable_logs:
             try:
                 # Determine log level for coloring
                 if " - INFO - " in log:
@@ -265,26 +282,19 @@ class LogDisplay(QFrame):
                     level = "INFO"  # Default
 
                 # Extract timestamp and message only
-                # Format is typically: "YYYY-MM-DD HH:MM:SS,SSS - LEVEL - Message"
-                parts = log.split(' - ', 2)  # Split into timestamp, level, message
+                parts = log.split(' - ', 2)
 
                 if len(parts) >= 3:
-                    # Extract only the time portion (HH:MM:SS) from timestamp
                     timestamp = parts[0].strip()
                     try:
-                        # Extract time part (assumes format like "YYYY-MM-DD HH:MM:SS")
-                        time_part = timestamp.split(' ')[1].split(',')[0]  # Gets just HH:MM:SS
+                        time_part = timestamp.split(' ')[1].split(',')[0]
                     except IndexError:
-                        time_part = timestamp  # Fallback if timestamp format is unexpected
+                        time_part = timestamp
 
                     message = parts[2].strip()
-                    # Format log with proper spacing and indentation for wrapped lines
                     simplified_log = f"{time_part} {message}"
 
-                    # Set color based on log level and display simplified log
                     self.log_text.setTextColor(self.log_colors.get(level, QColor("#888888")))
-
-                    # Add the log with extra spacing between entries
                     if self.log_text.document().isEmpty():
                         self.log_text.append(simplified_log)
                     else:
