@@ -84,6 +84,7 @@ class ResourceConfig:
     resource_rep_url: str
     resource_icon: str
     agent: Agent
+    resource_pack: List[Dict[str, Any]] = field(default_factory=list)
     resource_tasks: List[Task] = field(default_factory=list)
     options: List[Option] = field(default_factory=list)
     source_file: str = ""  # 用于记录加载的文件路径，但不保存到输出 JSON 中
@@ -172,6 +173,7 @@ class ResourceConfig:
             resource_rep_url=data.get('resource_rep_url', ''),
             resource_description=data.get('resource_description', ''),
             resource_icon=data.get('resource_icon', ''),
+            resource_pack=data.get('resource_pack', []),
             agent=agent,
             resource_tasks=tasks,
             options=options
@@ -187,6 +189,8 @@ class ResourceConfig:
             "resource_rep_url": self.resource_rep_url,
             "resource_description": self.resource_description,
             "resource_icon": self.resource_icon,
+            # 在序列化时写入 resource_pack
+            "resource_pack": self.resource_pack,
             "agent": {
                 "type": self.agent.type,
                 "version": self.agent.version,
