@@ -306,8 +306,6 @@ class TaskExecutor(QObject):
                 except Exception as e:
                     # 如果某个子路径加载失败，记录错误但继续，或者根据需要中断
                     self.logger.error(f"加载路径 {path} 时发生错误: {e}")
-                    # 如果希望任何一个路径失败就导致整个资源加载失败，可以在这里 re-raise 异常
-                    # raise
 
             self.logger.info("所有资源路径加载完成。")
 

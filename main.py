@@ -84,7 +84,7 @@ def main():
     asyncio.set_event_loop(loop)
 
     # 创建并显示主窗口
-    window = MainWindow(cli_args=args)
+    window = MainWindow()
     notification_manager.set_reference_window(window)
     window.show()
 

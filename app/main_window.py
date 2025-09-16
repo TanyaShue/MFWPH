@@ -23,10 +23,6 @@ from app.utils.theme_manager import theme_manager
 from app.widgets.add_device_dialog import AddDeviceDialog
 
 
-# from core.scheduled_task_manager import scheduled_task_manager
-# from core.tasker_manager import task_manager
-
-
 class MainWindow(QMainWindow):
     def __init__(self):
         super().__init__()

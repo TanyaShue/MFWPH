@@ -262,7 +262,7 @@ class BasicSettingsPage(QFrame):
             self.settings_content_layout.addWidget(no_tasks_label)
         else:
             # 核心逻辑变更：遍历 task_order 来构建UI
-            for instance_id in settings.task_order:
+            for i, instance_id in enumerate(settings.task_order):
                 task_instance = settings.task_instances.get(instance_id)
                 if not task_instance:
                     self.logger.warning(f"数据不一致: task_order 中的 ID '{instance_id}' 在 task_instances 中找不到。")
@@ -276,6 +276,15 @@ class BasicSettingsPage(QFrame):
                     task_widget.remove_requested.connect(self.on_task_remove_requested)
                     task_widget.enabled_changed.connect(self.on_task_enabled_changed)
                     self.task_container.add_task_widget(task_widget)
+
+                    # 在任务之间插入分割线（最后一个任务后面就不加）
+                    if i < len(settings.task_order) - 1:
+                        line = QFrame()
+                        line.setFrameShape(QFrame.HLine)
+                        line.setFrameShadow(QFrame.Sunken)
+                        line.setFixedHeight(1)  # 设置线条高度
+                        line.setStyleSheet("background-color: #cccccc; margin-left: 10px; margin-right: 10px;")
+                        self.task_container.add_task_widget(line)
 
             scroll_area.setWidget(self.task_container)
             self.settings_content_layout.addWidget(scroll_area)
