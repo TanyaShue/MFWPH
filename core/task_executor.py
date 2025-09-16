@@ -258,31 +258,72 @@ class TaskExecutor(QObject):
             self.logger.error(f"控制器初始化失败: {e}")
             return False
 
-    async def _load_resource(self, resource_path: str) -> Resource:
-        """加载资源"""
+    async def _load_resource(self, resource_pack: Dict[str, Any], resource_path: str) -> Resource:
+        """
+        加载资源。
+        会根据 resource_pack 的 path 列表，依次加载资源路径，实现覆盖效果。
+        """
+        print(f"传入的 resource_pack: {resource_pack}")
+        print(f"传入的 resource_path: {resource_path}")
+
+        # 缓存检查逻辑保持不变
         if self._current_resource_path == resource_path and self._current_resource:
             return self._current_resource
 
         try:
-            self.logger.info(f"加载资源: {resource_path}")
+            self.logger.info(f"开始加载资源，根路径: {resource_path}")
+
+            # 首先创建一个空的 Resource 实例
             resource = Resource()
+            base_path = Path(resource_path)
 
-            await self._run_in_executor(
-                lambda: resource.post_bundle(resource_path).wait()
-            )
+            # 步骤 1: 确定要加载的路径列表
+            paths_to_load = []
 
+            # 检查 resource_pack 是否有效
+            if resource_pack and resource_pack.get('path'):
+                pack_name = resource_pack.get('name', 'Unknown')
+                self.logger.info(f"检测到资源包 '{pack_name}'，将按顺序加载其路径...")
+
+                # 从资源包中获取相对路径列表
+                relative_paths = resource_pack.get('path', [])
+                paths_to_load = [str(base_path / rel_path) for rel_path in relative_paths]
+            else:
+                # 回退逻辑: 如果没有资源包，则只加载根路径
+                self.logger.info("未检测到有效资源包，仅加载资源根路径。")
+                paths_to_load = [resource_path]
+
+            # 步骤 2: 遍历路径列表，依次加载
+            for i, path in enumerate(paths_to_load):
+                self.logger.info(f"正在加载路径 ({i + 1}/{len(paths_to_load)}): {path}")
+
+                try:
+                    # 依次调用 post_bundle，每次调用都会在同一个 resource 对象上进行操作
+                    await self._run_in_executor(
+                        lambda p=path: resource.post_bundle(p).wait()
+                    )
+                    self.logger.info(f"成功加载路径: {path}")
+                except Exception as e:
+                    # 如果某个子路径加载失败，记录错误但继续，或者根据需要中断
+                    self.logger.error(f"加载路径 {path} 时发生错误: {e}")
+                    # 如果希望任何一个路径失败就导致整个资源加载失败，可以在这里 re-raise 异常
+                    # raise
+
+            self.logger.info("所有资源路径加载完成。")
+
+            # 步骤 3: 保存最终的 resource 对象
             self._current_resource = resource
-            self._current_resource_path = resource_path
+            self._current_resource_path = resource_path  # 缓存的 key 仍然是资源的根路径
 
             return resource
 
         except Exception as e:
-            self.logger.error(f"资源加载失败: {e}")
+            self.logger.error(f"资源加载过程中发生严重错误: {e}")
             raise
 
-    async def _create_tasker(self, resource_path: str):
+    async def _create_tasker(self, resource_pack,resource_path: str):
         """创建任务器"""
-        resource = await self._load_resource(resource_path)
+        resource = await self._load_resource(resource_pack,resource_path)
 
         resource.clear_custom_action()
         resource.clear_custom_recognition()
@@ -342,7 +383,7 @@ class TaskExecutor(QObject):
             task_manager.set_state(DeviceState.PREPARING)
 
             # 创建任务器
-            await self._create_tasker(task.data.resource_path)
+            await self._create_tasker(task.data.resource_pack,task.data.resource_path)
             self.logger.info("开始初始化agent")
             # 设置Agent（如果需要）
             agent_success = await self._setup_agent(task)
