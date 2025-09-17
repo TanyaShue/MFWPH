@@ -465,8 +465,8 @@ class MainWindow(QMainWindow):
         resource_dir = "assets/resource/"
         if not os.path.exists(resource_dir):
             os.makedirs(resource_dir)
-
         global_config.load_all_resources_from_directory(resource_dir)
+
         devices_config_path = "assets/config/app_config.json"
         if not os.path.exists(devices_config_path):
             os.makedirs(os.path.dirname(devices_config_path), exist_ok=True)

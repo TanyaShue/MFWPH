@@ -3,9 +3,6 @@ import re
 import time
 from pathlib import Path
 
-import time
-from pathlib import Path
-
 import requests
 import semver
 from PySide6.QtCore import QThread, Signal
