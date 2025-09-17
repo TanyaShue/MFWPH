@@ -405,7 +405,7 @@ class SettingsPage(QWidget):
 
         # 设置更新源部分
         source_row = QHBoxLayout()
-        update_source_label = QLabel("更新源:")
+        update_source_label = QLabel("软件更新源:")
         update_source_label.setSizePolicy(QSizePolicy.Fixed, QSizePolicy.Fixed)
 
         self.update_source_combo = NoWheelComboBox()

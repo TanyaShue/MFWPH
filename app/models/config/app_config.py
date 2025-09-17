@@ -15,7 +15,6 @@ class DeviceType(Enum):
     ADB = "adb"
     WIN32 = "win32"
 
-
 @dataclass
 class AdbDevice:
     """ADB设备配置的数据类。"""
@@ -153,6 +152,13 @@ class Resource:
         self._app_config = app_config
 
 
+@dataclass
+class ResourceUpdateConfig:
+    """记录资源的更新方式和更新频道。"""
+    method: str
+    channel: str = "stable"  # 默认为稳定版
+
+
 def schedule_task_to_dict(schedule: ScheduleTask) -> Dict[str, Any]:
     """辅助函数，将 ScheduleTask 对象转换为字典。"""
     result = {
@@ -193,8 +199,8 @@ class AppConfig:
     CDK: str = ""
     github_token: str = ""
 
-    # 新增：用于存储每个特定资源的更新方法
-    resource_update_methods: Dict[str, str] = field(default_factory=dict)
+    # 修改：用于存储每个特定资源的更新方法和频道
+    resource_update_methods: Dict[str, ResourceUpdateConfig] = field(default_factory=dict)
 
     update_method: str = field(default="github")
     receive_beta_update: bool = False
@@ -210,7 +216,21 @@ class AppConfig:
         如果为该资源设置了特定的更新方法，则返回它。
         否则，返回全局默认的更新方法。
         """
-        return self.resource_update_methods.get(resource_name, self.update_method)
+        specific_config = self.resource_update_methods.get(resource_name)
+        if specific_config:
+            return specific_config.method
+        return self.update_method
+
+    def get_resource_update_channel(self, resource_name: str) -> str:
+        """
+        获取指定资源的更新频道。
+        如果设置了特定频道，则返回它。
+        否则，根据全局设置（receive_beta_update）决定。
+        """
+        specific_config = self.resource_update_methods.get(resource_name)
+        if specific_config:
+            return specific_config.channel
+        return "beta" if self.receive_beta_update else "stable"
 
     def link_resources_to_config(self):
         """将所有资源链接到此 AppConfig 实例。"""
@@ -405,7 +425,21 @@ class AppConfig:
         else:
             config.github_token = data.get('github_token', '')
 
-        config.resource_update_methods = data.get('resource_update_methods', {})
+        # 修改：加载资源更新配置，并兼容旧格式
+        raw_update_methods = data.get('resource_update_methods', {})
+        migrated_update_methods = {}
+        for name, value in raw_update_methods.items():
+            if isinstance(value, str):
+                # 旧格式：value 是更新方式字符串
+                # 迁移到新结构，并使用默认频道 'stable'
+                migrated_update_methods[name] = ResourceUpdateConfig(method=value, channel="stable")
+            elif isinstance(value, dict):
+                # 新格式：value 是一个字典
+                migrated_update_methods[name] = ResourceUpdateConfig(
+                    method=value.get('method', ''),
+                    channel=value.get('channel', 'stable')
+                )
+        config.resource_update_methods = migrated_update_methods
 
         config.update_method = data.get('update_method', 'github')
         config.receive_beta_update = data.get('receive_beta_update', False)
@@ -423,8 +457,11 @@ class AppConfig:
         result = {"config_version": self.config_version}  # 写入最新的版本号
         if self.CDK: result["encrypted_cdk"] = self._encrypt_cdk()
         if self.github_token: result["encrypted_github_token"] = self._encrypt_github_token()
-        # 修改：将 resource_update_methods 字典保存到结果中
-        result["resource_update_methods"] = self.resource_update_methods
+        # 修改：将 resource_update_methods 字典（包含ResourceUpdateConfig对象）保存到结果中
+        result["resource_update_methods"] = {
+            name: resource_update_config_to_dict(config)
+            for name, config in self.resource_update_methods.items()
+        }
 
         if self.update_method: result["update_method"] = self.update_method
         result["receive_beta_update"] = getattr(self, "receive_beta_update", False)
@@ -440,7 +477,6 @@ class AppConfig:
 
 
 def device_config_to_dict(device: DeviceConfig) -> Dict[str, Any]:
-    # ... (此函数及以下辅助函数未作修改) ...
     device_dict = device.__dict__.copy()
     if device.device_type == DeviceType.ADB:
         device_dict['controller_config'] = adb_device_to_dict(device.controller_config)
@@ -475,6 +511,11 @@ def task_instance_to_dict(instance: TaskInstance) -> Dict[str, Any]:
     instance_dict = instance.__dict__.copy()
     instance_dict['options'] = [option_config_to_dict(opt) for opt in instance.options]
     return instance_dict
+
+
+def resource_update_config_to_dict(config: ResourceUpdateConfig) -> Dict[str, str]:
+    """辅助函数，将 ResourceUpdateConfig 对象转换为字典。"""
+    return config.__dict__
 
 
 def resource_settings_to_dict(settings: ResourceSettings) -> Dict[str, Any]:

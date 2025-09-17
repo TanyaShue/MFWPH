@@ -10,6 +10,7 @@ import semver
 from PySide6.QtCore import (Signal, QThread)
 
 from app.models.config.global_config import global_config
+from app.models.config.resource_config import ResourceConfig
 from app.models.logging.log_manager import log_manager
 from app.utils.notification_manager import notification_manager
 
@@ -34,7 +35,7 @@ class UpdateChecker(QThread):
     check_failed = Signal(str, str)  # resource_name, error_message
     check_completed = Signal(int, int)  # total_checked, updates_found
 
-    def __init__(self, resources, single_mode=False):
+    def __init__(self, resources:ResourceConfig, single_mode=False):
         """
         初始化更新检查线程
 
@@ -45,7 +46,7 @@ class UpdateChecker(QThread):
         super().__init__()
         self.resources = [resources] if single_mode else resources
         self.single_mode = single_mode
-        self.update_method = global_config.get_app_config().update_method
+        self.update_method = global_config.get_app_config().get_resource_update_method(resources.resource_name)
         self.mirror_base_url = "https://mirrorchyan.com/api"
         self.github_api_url = "https://api.github.com"
         self.is_cancelled = False
@@ -75,7 +76,7 @@ class UpdateChecker(QThread):
         """取消更新检查"""
         self.is_cancelled = True
 
-    def _check_mirror_update(self, resource):
+    def _check_mirror_update(self, resource:ResourceConfig):
         """检查 Mirror 酱更新"""
         # 获取资源更新服务 ID
         rid = resource.mirror_update_service_id
@@ -186,7 +187,7 @@ class UpdateChecker(QThread):
 
         return False
 
-    def _check_github_update(self, resource):
+    def _check_github_update(self, resource:ResourceConfig):
         """
         检查 GitHub 更新。
         通过解析 SemVer 标签来区分 stable 和 beta 更新。
