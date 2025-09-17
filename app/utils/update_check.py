@@ -11,7 +11,7 @@ import semver
 from PySide6.QtCore import QThread, Signal
 
 from app.models.config.global_config import global_config
-from app.models.logging.log_manager import log_manager
+from app.models.logging.log_manager import log_manager, app_logger
 
 # 获取应用程序日志记录器
 logger = log_manager.get_app_logger()
@@ -77,7 +77,6 @@ class UpdateChecker(QThread):
 
     def _check_mirror_update(self, resource):
         """检查 Mirror 酱更新"""
-        # ... (此部分代码未修改，保持原样)
         # 获取资源更新服务 ID
         rid = resource.resource_update_service_id
         if not rid:
@@ -146,7 +145,7 @@ class UpdateChecker(QThread):
 
             # 解析返回数据
             result = response.json()
-            print(result)
+            logger.info(result)
             # 处理错误码
             error_code = result.get("code")
             if error_code is not None and error_code != 0:

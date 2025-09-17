@@ -295,14 +295,14 @@ class TaskExecutor(QObject):
 
             # 步骤 2: 遍历路径列表，依次加载
             for i, path in enumerate(paths_to_load):
-                self.logger.info(f"正在加载路径 ({i + 1}/{len(paths_to_load)}): {path}")
+                self.logger.debug(f"正在加载路径 ({i + 1}/{len(paths_to_load)}): {path}")
 
                 try:
                     # 依次调用 post_bundle，每次调用都会在同一个 resource 对象上进行操作
                     await self._run_in_executor(
                         lambda p=path: resource.post_bundle(p).wait()
                     )
-                    self.logger.info(f"成功加载路径: {path}")
+                    self.logger.debug(f"成功加载路径: {path}")
                 except Exception as e:
                     # 如果某个子路径加载失败，记录错误但继续，或者根据需要中断
                     self.logger.error(f"加载路径 {path} 时发生错误: {e}")

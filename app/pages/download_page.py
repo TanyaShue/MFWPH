@@ -1,10 +1,11 @@
-"""
-美化后的资源下载页面，采用左右分栏布局
-"""
+import shutil
 from pathlib import Path
 
 import requests
-from PySide6.QtCore import QTimer, QCoreApplication, Qt, Signal, QPropertyAnimation, QEasingCurve, QRect
+import git
+
+
+from PySide6.QtCore import (QTimer, QCoreApplication, Qt, Signal, QPropertyAnimation, QEasingCurve, QRect, QThread)
 from PySide6.QtGui import QIcon, QFont, QPalette, QPainter, QColor, QBrush, QPen, QPixmap
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QFrame, QPushButton,
                                QHBoxLayout, QProgressBar, QMessageBox, QSizePolicy,
@@ -13,6 +14,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QFrame, QPushButton
                                QStyleOption, QStyle)
 
 from app.models.config.global_config import global_config
+from app.models.config.resource_config import ResourceConfig
 from app.utils.update_check import UpdateChecker, UpdateDownloader
 from app.utils.update_install import UpdateInstaller
 from app.widgets.add_resource_dialog import AddResourceDialog
@@ -523,6 +525,128 @@ class ResourceDetailView(QWidget):
         self.desc_label.setText(resource.resource_description or "该资源暂无描述信息")
 
 
+class GitInstallerThread(QThread):
+    """
+    在工作线程中通过 Git 克隆或 API 下载安装新资源的线程。
+    """
+    # 信号： 进度更新(状态文本), 安装成功(资源名称), 安装失败(错误信息)
+    progress_updated = Signal(str)
+    install_succeeded = Signal(str)
+    install_failed = Signal(str)
+
+    def __init__(self, repo_url, ref, parent=None):
+        super().__init__(parent)
+        self.repo_url = repo_url
+        self.ref = ref
+        self.repo_name = self._get_repo_name_from_url(repo_url)
+
+    def run(self):
+        """线程主执行函数"""
+        try:
+            # 准备路径
+            temp_dir = Path("assets/temp")
+            resource_dir = Path("assets/resource")
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            resource_dir.mkdir(parents=True, exist_ok=True)
+
+            final_path = resource_dir / self.repo_name
+            if final_path.exists():
+                raise FileExistsError(f"目标目录 'assets/resource/{self.repo_name}' 已存在。")
+
+            # 检查 Git 环境并选择安装方式
+            if self._is_git_installed():
+                self.progress_updated.emit("Git 克隆中...")
+                self._clone_with_git(temp_dir, resource_dir)
+            else:
+                notification_manager.show_info("未检测到 Git 环境，将使用 API 下载。")
+                self.progress_updated.emit("API 下载中...")
+                self._download_zip_from_github(temp_dir, resource_dir)
+
+            # 创建并保存资源配置
+            self._create_and_save_config()
+
+            self.install_succeeded.emit(self.repo_name)
+
+        except Exception as e:
+            self.install_failed.emit(str(e))
+        finally:
+            # 清理临时的下载目录
+            shutil.rmtree(temp_dir / self.repo_name, ignore_errors=True)
+            shutil.rmtree(temp_dir / "extracted", ignore_errors=True)
+            zip_file = temp_dir / f"{self.repo_name}.zip"
+            if zip_file.exists():
+                zip_file.unlink()
+
+    def _is_git_installed(self):
+        """检查系统中是否安装了 Git 并可在 PATH 中找到"""
+        return git is not None and shutil.which('git') is not None
+
+    def _get_repo_name_from_url(self, url):
+        """从 GitHub URL 中解析仓库名称"""
+        name = url.split('/')[-1]
+        if name.endswith('.git'):
+            name = name[:-4]
+        return name
+
+    def _clone_with_git(self, temp_dir, resource_dir):
+        """使用 GitPython 克隆仓库"""
+        temp_clone_path = temp_dir / self.repo_name
+        if temp_clone_path.exists():
+            shutil.rmtree(temp_clone_path)
+
+        # 克隆仓库
+        repo = git.Repo.clone_from(self.repo_url, temp_clone_path, branch=self.ref, depth=1)
+
+        # 移动到最终目录
+        final_path = resource_dir / self.repo_name
+        shutil.move(str(temp_clone_path), str(final_path))
+
+    def _download_zip_from_github(self, temp_dir, resource_dir):
+        """从 GitHub API 下载并解压 ZIP 压缩包"""
+        parts = self.repo_url.split('github.com/')[1].split('/')
+        owner, repo_name_git = parts[0], parts[1].replace('.git', '')
+
+        zip_url = f"https://api.github.com/repos/{owner}/{repo_name_git}/zipball/{self.ref}"
+        temp_zip_path = temp_dir / f"{self.repo_name}.zip"
+
+        # 下载
+        with requests.get(zip_url, stream=True, timeout=60) as r:
+            r.raise_for_status()
+            with open(temp_zip_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+
+        # 解压
+        temp_extract_path = temp_dir / "extracted"
+        if temp_extract_path.exists():
+            shutil.rmtree(temp_extract_path)
+        shutil.unpack_archive(temp_zip_path, temp_extract_path)
+
+        # GitHub 的压缩包解压后会有一个带 commit hash 的目录名，需要找到它
+        unzipped_folder = next(temp_extract_path.iterdir(), None)
+        if not unzipped_folder or not unzipped_folder.is_dir():
+            raise FileNotFoundError("解压失败或未找到解压后的目录。")
+
+        # 移动并重命名到最终目录
+        final_path = resource_dir / self.repo_name
+        shutil.move(str(unzipped_folder), str(final_path))
+
+    def _create_and_save_config(self):
+        """为新安装的资源创建配置文件并保存"""
+        new_resource = ResourceConfig(
+            resource_name=self.repo_name,
+            resource_version=self.ref.lstrip('v'),  # 移除版本号前的 'v'
+            resource_author=self.repo_url.split('/')[-2], # 以 GitHub 用户名作为作者
+            resource_description=f"从 {self.repo_url} 安装的资源。",
+            resource_rep_url=self.repo_url,
+            resource_update_service_id=self.repo_name, # 使用仓库名作为唯一标识
+            resource_icon="",  # 暂时留空
+            enabled=True
+        )
+        global_config.add_resource_config(new_resource)
+        global_config.save()
+
+
 class DownloadPage(QWidget):
     """下载页面主类"""
 
@@ -536,6 +660,7 @@ class DownloadPage(QWidget):
         self.selected_resource = None
         self.resource_items = {}
         self.installer = UpdateInstaller()
+        self.git_installer_thread = None # 用于安装新资源的线程
 
         # 初始化UI
         self._init_ui()
@@ -632,19 +757,12 @@ class DownloadPage(QWidget):
         layout.setSpacing(12)
 
         # 添加资源按钮
-        self.add_btn = QPushButton(" 添加资源(更新中)")
+        self.add_btn = QPushButton(" 添加资源")
         self.add_btn.setObjectName("addResourceButton")
         self.add_btn.setIcon(QIcon("assets/icons/add.png"))
         self.add_btn.setFixedHeight(42)
         self.add_btn.setCursor(Qt.PointingHandCursor)
-        # self.add_btn.clicked.connect(self.show_add_resource_dialog)        # 添加资源按钮
-
-        self.add_new_btn = QPushButton(" 新建资源(更新中,)")
-        self.add_new_btn.setObjectName("addResourceButton")
-        self.add_new_btn.setIcon(QIcon("assets/icons/add.png"))
-        self.add_new_btn.setFixedHeight(42)
-        self.add_new_btn.setCursor(Qt.PointingHandCursor)
-        # self.add_new_btn.clicked.connect(self.show_add_resource_dialog)
+        self.add_btn.clicked.connect(self.show_add_resource_dialog)
 
         # 检查全部按钮
         self.check_all_btn = QPushButton(" 检查全部")
@@ -655,7 +773,6 @@ class DownloadPage(QWidget):
         self.check_all_btn.clicked.connect(self.check_all_updates)
 
         layout.addWidget(self.add_btn)
-        layout.addWidget(self.add_new_btn)
         layout.addWidget(self.check_all_btn)
 
         return bar
@@ -733,7 +850,9 @@ class DownloadPage(QWidget):
 
         # 清空布局
         while self.resources_layout.count():
-            self.resources_layout.takeAt(0)
+            item = self.resources_layout.takeAt(0)
+            if item.widget():
+                item.widget().deleteLater()
 
         # 加载资源
         resources = global_config.get_all_resource_configs()
@@ -943,99 +1062,56 @@ class DownloadPage(QWidget):
             self.add_new_resource(dialog.get_data())
 
     def add_new_resource(self, data):
-        """添加新资源"""
+        """
+        根据用户输入的数据添加新资源。
+        数据格式: {'mode': 'url', 'url': '...', 'ref': '...'}
+        """
+        url = data.get('url')
+        ref = data.get('ref')
+
+        # 基本验证
+        if not url or not ref or "github.com" not in url:
+            self._show_add_error("请输入有效的 GitHub 仓库地址和分支/标签。")
+            return
+
+        # 防止重复点击
+        if self.git_installer_thread and self.git_installer_thread.isRunning():
+            notification_manager.show_warning("请等待当前添加任务完成。")
+            return
+
         self.add_btn.setEnabled(False)
-        self.add_btn.setText("添加中...")
+        self.add_btn.setText("准备中...")
 
-        # 创建临时目录
-        temp_dir = Path("assets/temp")
-        temp_dir.mkdir(parents=True, exist_ok=True)
+        # 创建并启动安装线程
+        self.git_installer_thread = GitInstallerThread(url, ref, self)
+        self.git_installer_thread.progress_updated.connect(self._handle_add_progress)
+        self.git_installer_thread.install_succeeded.connect(self._handle_add_succeeded)
+        self.git_installer_thread.install_failed.connect(self._handle_add_failed)
+        self.git_installer_thread.start()
 
-        # 处理 URL
-        url = data["url"]
-        if "github.com" in url and not url.endswith(".zip"):
-            self._process_github_repo(url, data)
-        else:
-            self._download_resource(url, data)
+    def _handle_add_progress(self, status_text):
+        """处理安装过程中的状态更新"""
+        self.add_btn.setText(status_text)
 
-    def _process_github_repo(self, repo_url, data):
-        """处理 GitHub 仓库 URL"""
-        try:
-            # 解析 GitHub URL
-            parts = repo_url.split('github.com/')[1].split('/')
-            if len(parts) < 2:
-                self._show_add_error("GitHub地址格式不正确")
-                return
+    def _handle_add_succeeded(self, resource_name):
+        """处理新资源安装成功"""
+        self._restore_add_button()
+        notification_manager.show_success(
+            f"资源 '{resource_name}' 已成功添加！",
+            "添加成功"
+        )
+        self.load_resources() # 重新加载列表以显示新资源
 
-            owner, repo = parts[0], parts[1]
-            if repo.endswith('.git'):
-                repo = repo[:-4]
-
-            # 获取最新发布信息
-            api_url = f"https://api.github.com/repos/{owner}/{repo}/releases/latest"
-            response = requests.get(api_url, timeout=10)
-
-            if response.status_code != 200:
-                self._show_add_error(f"API返回错误 ({response.status_code})")
-                return
-
-            release_info = response.json()
-            latest_version = release_info.get('tag_name', '').lstrip('v')
-
-            # 如果未提供名称，使用仓库名称
-            if not data["name"]:
-                data["name"] = repo
-
-            # 查找 ZIP 资源
-            download_url = None
-            for asset in release_info.get('assets', []):
-                if asset.get('name', '').endswith('.zip'):
-                    download_url = asset.get('browser_download_url')
-                    break
-
-            if not download_url:
-                self._show_add_error("找不到可下载的资源包")
-                return
-
-            # 下载 ZIP
-            self._download_resource(download_url, data, latest_version)
-
-        except Exception as e:
-            self._show_add_error(str(e))
-
-    def _download_resource(self, url, data, version=None):
-        """下载资源"""
-        resource_name = data["name"] if data["name"] else "新资源"
-
-        # 创建临时资源项
-        temp_resource = type('obj', (object,), {
-            'resource_name': resource_name,
-            'resource_version': version or '0.0.0',
-            'resource_author': data.get('author', ''),
-            'resource_description': data.get('description', ''),
-            'resource_rep_url': '',
-            'resource_update_service_id': ''
-        })
-
-        item = ResourceListItem(temp_resource)
-        item.set_downloading()
-        self.resources_layout.insertWidget(self.resources_layout.count() - 1, item)
-        self.resource_items[resource_name] = item
-
-        # 创建下载线程
-        temp_dir = Path("assets/temp")
-        thread = UpdateDownloader(resource_name, url, temp_dir, data=data, version=version)
-
-        # 连接信号
-        thread.progress_updated.connect(self._update_download_progress)
-        thread.download_completed.connect(self._handle_download_completed)
-        thread.download_failed.connect(self._handle_download_failed)
-
-        self.threads.append(thread)
-        thread.start()
+    def _handle_add_failed(self, error_message):
+        """处理新资源安装失败"""
+        self._restore_add_button()
+        notification_manager.show_error(
+            f"添加资源失败：{error_message}",
+            "操作失败"
+        )
 
     def _show_add_error(self, error):
-        """显示添加错误"""
+        """显示添加过程中的验证错误"""
         self._restore_add_button()
         notification_manager.show_error(
             f"添加资源失败：{error}",
@@ -1043,9 +1119,9 @@ class DownloadPage(QWidget):
         )
 
     def _restore_add_button(self):
-        """恢复添加按钮"""
+        """恢复添加按钮的初始状态"""
         self.add_btn.setEnabled(True)
-        self.add_btn.setText("添加资源")
+        self.add_btn.setText(" 添加资源")
 
     def _handle_install_completed(self, resource_name, version, locked_files):
         """处理安装完成"""

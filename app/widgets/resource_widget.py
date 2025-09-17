@@ -5,7 +5,6 @@ from PySide6.QtWidgets import (
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QCheckBox
 )
-from qasync import asyncSlot
 
 from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager

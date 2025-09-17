@@ -12,3 +12,4 @@ filelock
 aiohttp
 aiofiles
 certifi
+gitpython
