@@ -287,7 +287,7 @@ class UpdateInstaller(QObject):
             "resource_author": data.get("author", "未知"),
             "resource_description": data["description"] or "从外部源添加的资源",
             "resource_rep_url": data["url"] if "github.com" in data["url"] else "",
-            "resource_update_service_id": "" if "github.com" in data["url"] else data.get("service_id", "")
+            "mirror_update_service_id": "" if "github.com" in data["url"] else data.get("service_id", "")
         }
         resource_config_path = os.path.join(main_dir, "resource_config.json")
         with open(resource_config_path, 'w', encoding='utf-8') as f:

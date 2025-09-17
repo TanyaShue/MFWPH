@@ -1,14 +1,17 @@
 import platform
 import re
+import shutil
 import time
 from pathlib import Path
 
+import git
 import requests
 import semver
-from PySide6.QtCore import QThread, Signal
+from PySide6.QtCore import (Signal, QThread)
 
 from app.models.config.global_config import global_config
-from app.models.logging.log_manager import log_manager, app_logger
+from app.models.logging.log_manager import log_manager
+from app.utils.notification_manager import notification_manager
 
 # 获取应用程序日志记录器
 logger = log_manager.get_app_logger()
@@ -75,7 +78,7 @@ class UpdateChecker(QThread):
     def _check_mirror_update(self, resource):
         """检查 Mirror 酱更新"""
         # 获取资源更新服务 ID
-        rid = resource.resource_update_service_id
+        rid = resource.mirror_update_service_id
         if not rid:
             if self.single_mode:
                 self.check_failed.emit(resource.resource_name, "没有配置更新源")
@@ -382,3 +385,105 @@ class UpdateDownloader(QThread):
         self.is_cancelled = True
 
 
+class GitInstallerThread(QThread):
+    """
+    在工作线程中通过 Git 克隆或 API 下载安装新资源的线程。
+    """
+    # 信号： 进度更新(状态文本), 安装成功(资源名称), 安装失败(错误信息)
+    progress_updated = Signal(str)
+    install_succeeded = Signal(str)
+    install_failed = Signal(str)
+
+    def __init__(self, repo_url, ref, parent=None):
+        super().__init__(parent)
+        self.repo_url = repo_url
+        self.ref = ref
+        self.repo_name = self._get_repo_name_from_url(repo_url)
+
+    def run(self):
+        """线程主执行函数"""
+        try:
+            # 准备路径
+            temp_dir = Path("assets/temp")
+            resource_dir = Path("assets/resource")
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            resource_dir.mkdir(parents=True, exist_ok=True)
+
+            final_path = resource_dir / self.repo_name
+            if final_path.exists():
+                raise FileExistsError(f"目标目录 'assets/resource/{self.repo_name}' 已存在。")
+
+            # 检查 Git 环境并选择安装方式
+            if self._is_git_installed():
+                self.progress_updated.emit("Git 克隆中...")
+                self._clone_with_git(temp_dir, resource_dir)
+            else:
+                notification_manager.show_info("未检测到 Git 环境，将使用 API 下载。")
+                self.progress_updated.emit("API 下载中...")
+                self._download_zip_from_github(temp_dir, resource_dir)
+
+            self.install_succeeded.emit(self.repo_name)
+
+        except Exception as e:
+            self.install_failed.emit(str(e))
+        finally:
+            # 清理临时的下载目录
+            shutil.rmtree(temp_dir / self.repo_name, ignore_errors=True)
+            shutil.rmtree(temp_dir / "extracted", ignore_errors=True)
+            zip_file = temp_dir / f"{self.repo_name}.zip"
+            if zip_file.exists():
+                zip_file.unlink()
+
+    def _is_git_installed(self):
+        """检查系统中是否安装了 Git 并可在 PATH 中找到"""
+        return git is not None and shutil.which('git') is not None
+
+    def _get_repo_name_from_url(self, url):
+        """从 GitHub URL 中解析仓库名称"""
+        name = url.split('/')[-1]
+        if name.endswith('.git'):
+            name = name[:-4]
+        return name
+
+    def _clone_with_git(self, temp_dir, resource_dir):
+        """使用 GitPython 克隆仓库"""
+        temp_clone_path = temp_dir / self.repo_name
+        if temp_clone_path.exists():
+            shutil.rmtree(temp_clone_path)
+
+        # 克隆仓库
+        repo = git.Repo.clone_from(self.repo_url, temp_clone_path, branch=self.ref, depth=1)
+
+        # 移动到最终目录
+        final_path = resource_dir / self.repo_name
+        shutil.move(str(temp_clone_path), str(final_path))
+
+    def _download_zip_from_github(self, temp_dir, resource_dir):
+        """从 GitHub API 下载并解压 ZIP 压缩包"""
+        parts = self.repo_url.split('github.com/')[1].split('/')
+        owner, repo_name_git = parts[0], parts[1].replace('.git', '')
+
+        zip_url = f"https://api.github.com/repos/{owner}/{repo_name_git}/zipball/{self.ref}"
+        temp_zip_path = temp_dir / f"{self.repo_name}.zip"
+
+        # 下载
+        with requests.get(zip_url, stream=True, timeout=60) as r:
+            r.raise_for_status()
+            with open(temp_zip_path, 'wb') as f:
+                for chunk in r.iter_content(chunk_size=8192):
+                    f.write(chunk)
+
+        # 解压
+        temp_extract_path = temp_dir / "extracted"
+        if temp_extract_path.exists():
+            shutil.rmtree(temp_extract_path)
+        shutil.unpack_archive(temp_zip_path, temp_extract_path)
+
+        # GitHub 的压缩包解压后会有一个带 commit hash 的目录名，需要找到它
+        unzipped_folder = next(temp_extract_path.iterdir(), None)
+        if not unzipped_folder or not unzipped_folder.is_dir():
+            raise FileNotFoundError("解压失败或未找到解压后的目录。")
+
+        # 移动并重命名到最终目录
+        final_path = resource_dir / self.repo_name
+        shutil.move(str(unzipped_folder), str(final_path))

@@ -77,10 +77,11 @@ class Agent:
 class ResourceConfig:
     """Main resource configuration dataclass."""
     resource_name: str
+    resource_id: str
     resource_version: str
     resource_author: str
     resource_description: str
-    resource_update_service_id: str
+    mirror_update_service_id: str
     resource_rep_url: str
     resource_icon: str
     agent: Agent
@@ -167,9 +168,10 @@ class ResourceConfig:
 
         return ResourceConfig(
             resource_name=data.get('resource_name', ''),
+            resource_id=data.get('resource_id', ''),
             resource_version=data.get('resource_version', ''),
             resource_author=data.get('resource_author', ''),
-            resource_update_service_id=data.get('resource_update_service_id', ''),
+            mirror_update_service_id=data.get('mirror_update_service_id', ''),
             resource_rep_url=data.get('resource_rep_url', ''),
             resource_description=data.get('resource_description', ''),
             resource_icon=data.get('resource_icon', ''),
@@ -183,9 +185,10 @@ class ResourceConfig:
         """Convert ResourceConfig object to a dictionary, excluding source_file."""
         return {
             "resource_name": self.resource_name,
+            "resource_id": self.resource_id,
             "resource_version": self.resource_version,
             "resource_author": self.resource_author,
-            "resource_update_service_id": self.resource_update_service_id,
+            "mirror_update_service_id": self.mirror_update_service_id,
             "resource_rep_url": self.resource_rep_url,
             "resource_description": self.resource_description,
             "resource_icon": self.resource_icon,
