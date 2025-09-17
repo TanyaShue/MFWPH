@@ -85,7 +85,6 @@ class UpdateChecker(QThread):
             logger.debug(
                 f"MirrorChyan API response for '{resource.resource_name}': Status {response.status_code}, Body: {response.text}")
 
-            # 【修正】优先尝试解析JSON，无论HTTP状态码是什么
             try:
                 result = response.json()
             except requests.exceptions.JSONDecodeError:
@@ -102,18 +101,15 @@ class UpdateChecker(QThread):
                 8004: "INVALID_CHANNEL: 错误的更新通道参数", 1: "UNDIVIDED: 未区分的业务错误",
             }
 
-            # 现在，将JSON内的 'code' 作为主要判断依据
             error_code = result.get("code")
             if error_code is not None and error_code != 0:
                 detail = error_map.get(error_code, result.get("msg", "未知业务错误"))
                 logger.warning(
                     f"MirrorChyan API returned business error for '{resource.resource_name}': {detail} (Code: {error_code})")
                 if self.single_mode:
-                    # 现在UI会显示 "业务错误 (7003): CDK 今日下载次数已达上限"
                     self.check_failed.emit(resource.resource_name, f"业务错误 ({error_code}): {detail}")
                 return False
 
-            # 只有当 code 为 0 时，才认为是成功的响应
             data = result.get("data", {})
             latest_version = data.get("version_name", "")
             download_url = data.get("url", "")
@@ -121,12 +117,19 @@ class UpdateChecker(QThread):
             logger.debug(
                 f"Parsed MirrorChyan data: version='{latest_version}', url='{download_url}', type='{update_type}'.")
 
-            if latest_version and semver.compare(latest_version, resource.resource_version) > 0:
+            # 【修正】在比较版本前，移除版本号字符串头部的 'v'
+            latest_version_str = latest_version.lstrip('v')
+            current_version_str = resource.resource_version.lstrip('v')
+            logger.debug(f"Comparing versions - Latest: '{latest_version_str}', Current: '{current_version_str}'.")
+
+            # 【修正】使用处理过的、符合 SemVer 规范的字符串进行比较
+            if latest_version_str and semver.compare(latest_version_str, current_version_str) > 0:
                 logger.info(
                     f"New MirrorChyan version found for '{resource.resource_name}': {latest_version} (current: {resource.resource_version}).")
                 update_info = UpdateInfo(
                     resource_name=resource.resource_name, current_version=resource.resource_version,
-                    new_version=latest_version, download_url=download_url,
+                    new_version=latest_version,  # 仍然使用带 'v' 的原始版本号创建 UpdateInfo
+                    download_url=download_url,
                     update_type=update_type, source=UpdateSource.MIRROR
                 )
                 self.update_found.emit(update_info)
