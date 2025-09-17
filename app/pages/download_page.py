@@ -1,3 +1,4 @@
+import os
 import shutil
 import tempfile
 from pathlib import Path
@@ -811,7 +812,6 @@ class DownloadPage(QWidget):
         batch_checker.start()
 
     def _handle_batch_check_completed(self, total_checked, updates_found):
-        # ... (此方法逻辑不变) ...
         self.check_all_btn.setEnabled(True)
         self.check_all_btn.setText("全部检查")
         if updates_found > 0:
@@ -841,6 +841,10 @@ class DownloadPage(QWidget):
     def _handle_add_succeeded(self, resource_name):
         self._restore_add_button()
         notification_manager.show_success(f"资源 '{resource_name}' 添加成功！", "成功")
+        resource_dir = "assets/resource/"
+        if not os.path.exists(resource_dir):
+            os.makedirs(resource_dir)
+        global_config.load_all_resources_from_directory(resource_dir)
         self.load_resources()
 
     def _handle_add_failed(self, error_message):
