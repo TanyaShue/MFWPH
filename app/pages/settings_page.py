@@ -86,116 +86,8 @@ class SettingsPage(QWidget):
             lambda name, msg: notification_manager.show_error(f"安装失败: {msg}", name)
         )
 
-    def create_update_section(self):
-        """【已修改】创建更新设置的界面区域，移除了主程序更新按钮"""
-        layout = self.create_section("更新设置")
-
-        update_row = QHBoxLayout()
-        auto_check = QCheckBox("自动检查资源更新")
-        # beta_updates = QCheckBox("接收测试版更新") # 此功能暂时移除，待未来完善
-        update_row.addWidget(auto_check)
-        # update_row.addWidget(beta_updates)
-        update_row.addStretch()
-
-        layout.addLayout(update_row)
-
-        try:
-            auto_check.setChecked(global_config.get_app_config().auto_check_update)
-        except:
-            auto_check.setChecked(False)
-
-        def on_auto_check_changed(state):
-            is_checked = (state == Qt.CheckState.Checked.value)
-            global_config.get_app_config().auto_check_update = is_checked
-            global_config.save_all_configs()
-            msg = "应用将在启动时自动检查资源更新" if is_checked else "您需要手动检查资源更新"
-            title = "自动更新已启用" if is_checked else "自动更新已关闭"
-            notification_manager.show_info(msg, title)
-
-        auto_check.stateChanged.connect(on_auto_check_changed)
-
-        # ... (GitHub Token 和 Mirror酱 CDK 的设置部分保持不变) ...
-        github_token_row = QHBoxLayout()
-        github_token_label = QLabel("GitHub Token:")
-        github_token_input = QLineEdit()
-        github_token_input.setEchoMode(QLineEdit.Password)
-        save_github_token_button = QPushButton("保存密钥")
-        save_github_token_button.setObjectName("primaryButton")
-
-        try:
-            current_token = global_config.get_app_config().github_token
-            if current_token: github_token_input.setText(current_token)
-        except:
-            pass
-
-        github_token_row.addWidget(github_token_label)
-        github_token_row.addWidget(github_token_input, 1)
-        github_token_row.addWidget(save_github_token_button)
-        layout.addLayout(github_token_row)
-
-        source_row = QHBoxLayout()
-        update_source_label = QLabel("资源更新源:")
-        self.update_source_combo = NoWheelComboBox()
-        self.update_source_combo.addItems(["GitHub", "Mirror酱"])
-        current_method = global_config.get_app_config().update_method
-        self.update_source_combo.setCurrentText("Mirror酱" if current_method == "MirrorChyan" else "GitHub")
-        source_row.addWidget(update_source_label)
-        source_row.addWidget(self.update_source_combo)
-        source_row.addStretch()
-        layout.addLayout(source_row)
-
-        self.cdk_container = QWidget()
-        self.cdk_stack = QStackedLayout(self.cdk_container)
-        cdk_page = QWidget()
-        cdk_layout = QVBoxLayout(cdk_page)
-        cdk_layout.setContentsMargins(0, 0, 0, 0)
-        cdk_row = QHBoxLayout()
-        cdk_label = QLabel("mirror酱 CDK:")
-        cdk_input = QLineEdit()
-        cdk_input.setEchoMode(QLineEdit.Password)
-        save_cdk_button = QPushButton("保存密钥")
-        save_cdk_button.setObjectName("primaryButton")
-        try:
-            current_cdk = global_config.get_app_config().CDK
-            if current_cdk: cdk_input.setText(current_cdk)
-        except:
-            pass
-        cdk_row.addWidget(cdk_label)
-        cdk_row.addWidget(cdk_input, 1)
-        cdk_row.addWidget(save_cdk_button)
-        cdk_layout.addLayout(cdk_row)
-        placeholder_page = QWidget()
-        self.cdk_stack.addWidget(cdk_page)
-        self.cdk_stack.addWidget(placeholder_page)
-        self.cdk_stack.setCurrentIndex(0 if self.update_source_combo.currentText() == "Mirror酱" else 1)
-        layout.addWidget(self.cdk_container)
-
-        def save_github_token():
-            global_config.get_app_config().github_token = github_token_input.text()
-            global_config.save_all_configs()
-            notification_manager.show_success("GitHub Token 已成功保存", "保存成功")
-
-        save_github_token_button.clicked.connect(save_github_token)
-
-        def save_cdk():
-            global_config.get_app_config().CDK = cdk_input.text()
-            global_config.save_all_configs()
-            notification_manager.show_success("CDK 已成功保存", "保存成功")
-
-        save_cdk_button.clicked.connect(save_cdk)
-
-        def on_source_changed(text):
-            is_mirror = text == "Mirror酱"
-            self.cdk_stack.setCurrentIndex(0 if is_mirror else 1)
-            global_config.get_app_config().update_method = "MirrorChyan" if is_mirror else "github"
-            global_config.save_all_configs()
-            msg = "已切换到 Mirror酱 更新源" if is_mirror else "已切换到 GitHub 官方更新源"
-            notification_manager.show_info(msg, "更新源已切换")
-
-        self.update_source_combo.currentTextChanged.connect(on_source_changed)
-
     def create_about_section(self):
-        """【已修改】创建"关于我们"页面，并在此处添加主程序更新按钮"""
+        """【已修改】创建"关于我们"页面，并在此处添加主程序更新按钮和频道选择"""
         layout = self.create_section("关于我们")
 
         app_info_row = QHBoxLayout()
@@ -205,7 +97,6 @@ class SettingsPage(QWidget):
             logo_label.setPixmap(logo_pixmap.scaled(48, 48, Qt.KeepAspectRatio, Qt.SmoothTransformation))
         logo_label.setFixedSize(50, 50)
         app_info_row.addWidget(logo_label)
-
         app_info_layout = QVBoxLayout()
         app_name_main = QLabel("<b>MFWPH</b>")
         app_name_sub = QLabel("MaaFramework Project Helper")
@@ -216,22 +107,35 @@ class SettingsPage(QWidget):
         app_info_row.addLayout(app_info_layout)
         app_info_row.addStretch()
 
-        # --- [新增] 更新按钮容器 ---
-        update_buttons_layout = QVBoxLayout()
-        update_buttons_layout.setSpacing(5)
+        update_controls_layout = QVBoxLayout()
+        update_controls_layout.setSpacing(8)
+
+        # 按钮行
+        update_buttons_layout = QHBoxLayout()
         self.check_button = QPushButton("检查更新")
         self.check_button.setObjectName("primaryButton")
         self.check_button.clicked.connect(self.check_app_update)
 
         self.update_button = QPushButton("立即更新")
-        self.update_button.setObjectName("primaryButton")  # 可以考虑创建一个不同的样式，比如 "successButton"
+        self.update_button.setObjectName("primaryButton")
         self.update_button.clicked.connect(self.start_update)
         self.update_button.hide()
 
         update_buttons_layout.addWidget(self.check_button)
         update_buttons_layout.addWidget(self.update_button)
-        app_info_row.addLayout(update_buttons_layout)
-        # --- [结束] 更新按钮容器 ---
+
+        # 复选框（频道选择）
+        self.beta_checkbox = QCheckBox("接收测试版更新")
+        try:  # 从配置加载初始状态
+            self.beta_checkbox.setChecked(global_config.get_app_config().receive_beta_update)
+        except:
+            self.beta_checkbox.setChecked(False)
+        self.beta_checkbox.stateChanged.connect(self.on_beta_checkbox_changed)
+
+        update_controls_layout.addLayout(update_buttons_layout)
+        update_controls_layout.addWidget(self.beta_checkbox, 0, Qt.AlignRight)  # 右对齐
+        app_info_row.addLayout(update_controls_layout)
+        # --- [结束] 更新控件容器 ---
 
         layout.addLayout(app_info_row)
         # ... (其他 "关于我们" 的内容保持不变) ...
@@ -259,13 +163,26 @@ class SettingsPage(QWidget):
         layout.addWidget(copyright_label)
         return layout
 
+    def on_beta_checkbox_changed(self, state):
+        """【新增】处理接收测试版更新的复选框状态变化"""
+        is_checked = (state == Qt.CheckState.Checked.value)
+        try:
+            global_config.get_app_config().receive_beta_update = is_checked
+            global_config.save_all_configs()
+            if is_checked:
+                notification_manager.show_warning("测试版更新已启用，可能包含不稳定功能。", "设置已保存")
+            else:
+                notification_manager.show_info("测试版更新已关闭，您将只接收稳定版本。", "设置已保存")
+        except Exception as e:
+            logger.error(f"保存测试版更新设置失败: {e}")
+            notification_manager.show_error("保存设置失败", "错误")
+
     def check_app_update(self):
-        """【已修改】检查主程序更新，固定使用 GitHub 源"""
+        """【已修改】检查主程序更新，根据复选框状态传递频道"""
         if self.update_checker_thread and self.update_checker_thread.isRunning(): return
         if self.download_thread and self.download_thread.isRunning(): return
 
         current_version = get_version_info()
-        # 【新增】健壮性检查：如果无法获取当前版本，则不允许更新
         if current_version == "未知版本":
             notification_manager.show_error("无法获取当前应用版本，无法检查更新。", "版本检查失败")
             return
@@ -273,23 +190,26 @@ class SettingsPage(QWidget):
         self.check_button.setEnabled(False)
         self.check_button.setText("检查中...")
         self.update_button.hide()
-        notification_manager.show_info("正在从 GitHub 检查最新版本...", "检查更新")
+
+        # 根据复选框状态决定频道
+        channel = 'beta' if self.beta_checkbox.isChecked() else 'stable'
+        notification_manager.show_info(f"正在从 GitHub ({channel}频道) 检查最新版本...", "检查更新")
 
         app_resource_mock = SimpleNamespace(
             resource_name="MFWPH 主程序",
             resource_version=current_version,
             mirror_update_service_id=None,
-            # 【修改】硬编码 GitHub 仓库地址
             resource_rep_url="https://github.com/TanyaShue/MFWPH"
         )
 
-        self.update_checker_thread = UpdateChecker(app_resource_mock, single_mode=True)
+        # 将频道作为参数传递给检查器
+        self.update_checker_thread = UpdateChecker(app_resource_mock, single_mode=True, channel=channel)
         self.update_checker_thread.update_found.connect(self.handle_update_found)
         self.update_checker_thread.update_not_found.connect(self.handle_update_not_found)
         self.update_checker_thread.check_failed.connect(self.handle_check_failed)
         self.update_checker_thread.start()
 
-    # --- 其他所有方法（handle_*, start_update, create_*_section 等）保持不变或已在上面修改 ---
+    # --- 其他所有方法（create_*, handle_*, 等）保持不变 ---
     def create_section(self, title):
         section = QWidget()
         section.setObjectName(f"section_{title}")
@@ -359,6 +279,81 @@ class SettingsPage(QWidget):
         dialog = DependencySourcesDialog(self)
         dialog.exec()
 
+    def create_update_section(self):
+        """【已修改】创建更新设置的界面区域，移除了更新源切换功能"""
+        layout = self.create_section("更新设置")
+
+        update_row = QHBoxLayout()
+        auto_check = QCheckBox("自动检查资源更新")
+        update_row.addWidget(auto_check)
+        update_row.addStretch()
+        layout.addLayout(update_row)
+
+        try:
+            auto_check.setChecked(global_config.get_app_config().auto_check_update)
+        except:
+            auto_check.setChecked(False)
+
+        def on_auto_check_changed(state):
+            is_checked = (state == Qt.CheckState.Checked.value)
+            global_config.get_app_config().auto_check_update = is_checked
+            global_config.save_all_configs()
+            msg = "应用将在启动时自动检查资源更新" if is_checked else "您需要手动检查资源更新"
+            title = "自动更新已启用" if is_checked else "自动更新已关闭"
+            notification_manager.show_info(msg, title)
+
+        auto_check.stateChanged.connect(on_auto_check_changed)
+
+        # GitHub Token 设置
+        github_token_row = QHBoxLayout()
+        github_token_label = QLabel("GitHub Token:")
+        github_token_input = QLineEdit()
+        github_token_input.setEchoMode(QLineEdit.Password)
+        save_github_token_button = QPushButton("保存密钥")
+        save_github_token_button.setObjectName("primaryButton")
+
+        try:
+            current_token = global_config.get_app_config().github_token
+            if current_token: github_token_input.setText(current_token)
+        except:
+            pass
+
+        github_token_row.addWidget(github_token_label)
+        github_token_row.addWidget(github_token_input, 1)
+        github_token_row.addWidget(save_github_token_button)
+        layout.addLayout(github_token_row)
+
+        # Mirror酱 CDK 设置
+        cdk_row = QHBoxLayout()
+        cdk_label = QLabel("mirror酱 CDK:")
+        cdk_input = QLineEdit()
+        cdk_input.setEchoMode(QLineEdit.Password)
+        save_cdk_button = QPushButton("保存密钥")
+        save_cdk_button.setObjectName("primaryButton")
+        try:
+            current_cdk = global_config.get_app_config().CDK
+            if current_cdk: cdk_input.setText(current_cdk)
+        except:
+            pass
+        cdk_row.addWidget(cdk_label)
+        cdk_row.addWidget(cdk_input, 1)
+        cdk_row.addWidget(save_cdk_button)
+        layout.addLayout(cdk_row)
+
+        def save_github_token():
+            global_config.get_app_config().github_token = github_token_input.text()
+            global_config.save_all_configs()
+            notification_manager.show_success("GitHub Token 已成功保存", "保存成功")
+
+        save_github_token_button.clicked.connect(save_github_token)
+
+        def save_cdk():
+            global_config.get_app_config().CDK = cdk_input.text()
+            global_config.save_all_configs()
+            notification_manager.show_success("CDK 已成功保存", "保存成功")
+
+        save_cdk_button.clicked.connect(save_cdk)
+
     def handle_update_found(self, update_info: UpdateInfo):
         self.check_button.setEnabled(True)
         self.check_button.setText("立即检查更新")
@@ -425,7 +420,6 @@ class SettingsPage(QWidget):
 
         if reply == QMessageBox.Yes:
             try:
-                # 【修改】为 APP 更新传递 None 作为 resource 参数
                 self.installer_factory.install_update(update_info, file_path, resource=None)
                 notification_manager.show_info("更新程序已启动，应用程序将自动重启以完成更新", "正在更新")
             except Exception as e:
@@ -516,4 +510,3 @@ def get_version_info():
     except Exception as e:
         logger.error(f"读取版本信息失败: {e}")
     return "未知版本"
-
