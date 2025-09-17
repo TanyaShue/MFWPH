@@ -1,21 +1,25 @@
-# download_page.py
-
+import shutil
+import tempfile
 from pathlib import Path
 
-from PySide6.QtCore import (QTimer, QCoreApplication, Qt, Signal, Property, QPropertyAnimation, QEasingCurve)
+import git
+import requests
+from PySide6.QtCore import (QTimer, QCoreApplication, Qt, Signal, Property, QPropertyAnimation, QEasingCurve, QThread)
 from PySide6.QtGui import QIcon, QPainter, QColor, QPen, QPixmap
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QFrame, QPushButton,
                                QHBoxLayout, QMessageBox, QSizePolicy,
                                QDialog, QStackedWidget,
                                QScrollArea, QGraphicsDropShadowEffect,
                                QStyleOption, QStyle, QComboBox, QProgressBar)  # 新增导入 QProgressBar
+from git import InvalidGitRepositoryError
 
-from app.components.circular_progress_bar import CircularProgressBar
 from app.models.config.app_config import ResourceUpdateConfig
 from app.models.config.global_config import global_config
 from app.utils.notification_manager import notification_manager
-from app.utils.update_check import UpdateChecker, UpdateDownloader, GitInstallerThread
-from app.utils.update_install import UpdateInstaller
+from app.utils.update.checker import UpdateChecker
+from app.utils.update.downloader import UpdateDownloader
+from app.utils.update.installer.factory import UpdateInstallerFactory
+from app.utils.update.models import UpdateInfo, UpdateSource  # 导入 UpdateSource
 from app.widgets.add_resource_dialog import AddResourceDialog
 
 # 用于更新频道的显示文本和内部值的映射
@@ -26,7 +30,8 @@ CHANNEL_MAP = {
 }
 REVERSE_CHANNEL_MAP = {v: k for k, v in CHANNEL_MAP.items()}
 
-
+# ... (AnimatedIndicator, ResourceListItem, ResourceDetailView, GitInstallerThread 类代码不变) ...
+# ... (为节省篇幅，这里省略了这些未改变的类，请保留您原有的代码) ...
 class AnimatedIndicator(QWidget):
     """一个简单的动画指示器，用于显示更新状态"""
 
@@ -146,15 +151,13 @@ class ResourceListItem(QFrame):
 class ResourceDetailView(QWidget):
     """资源详情视图（集成操作按钮）"""
     check_update_clicked = Signal(object)
-    start_update_clicked = Signal(object, object)
-    # 新增：取消下载信号
+    start_update_clicked = Signal(object)  # 只发送 resource
     cancel_download_clicked = Signal(object)
     source_changed_recheck = Signal(object)
 
     def __init__(self):
         super().__init__()
         self.current_resource = None
-        self.update_info = None
         self._init_ui()
         self.source_combo.currentTextChanged.connect(self._on_source_changed)
         self.channel_combo.currentTextChanged.connect(self._on_channel_changed)
@@ -238,15 +241,12 @@ class ResourceDetailView(QWidget):
         self.action_stack = QStackedWidget()
         self.action_layout.addWidget(self.action_stack, 1)
 
-        # 页面0: 检查更新
         self.check_button = QPushButton("检查更新")
         self.check_button.setObjectName("checkButton")
         self.check_button.setFixedHeight(40)
-        self.check_button.setCursor(Qt.PointingHandCursor)
         self.check_button.clicked.connect(self._on_check_clicked)
         self.action_stack.addWidget(self.check_button)
 
-        # 页面1: 更新可用
         update_widget = QWidget()
         update_layout = QHBoxLayout(update_widget)
         self.update_version_label = QLabel()
@@ -254,45 +254,33 @@ class ResourceDetailView(QWidget):
         self.update_button = QPushButton("立即更新")
         self.update_button.setObjectName("updateButton")
         self.update_button.setFixedHeight(40)
-        self.update_button.setCursor(Qt.PointingHandCursor)
         self.update_button.clicked.connect(self._on_update_clicked)
         update_layout.addWidget(self.update_version_label, 1)
         update_layout.addWidget(self.update_button)
         self.action_stack.addWidget(update_widget)
 
-        # 页面2: 下载中 (已修改)
         progress_widget = QWidget()
         progress_layout = QHBoxLayout(progress_widget)
-        progress_layout.setContentsMargins(0, 0, 0, 0)
         progress_layout.setSpacing(12)
-
-        # 使用水平进度条
         self.progress_bar = QProgressBar()
         self.progress_bar.setFixedHeight(12)
         self.progress_bar.setTextVisible(False)
         self.progress_bar.setObjectName("downloadProgressBar")
-
         self.speed_label = QLabel("0 MB/s")
         self.speed_label.setObjectName("downloadSpeed")
-
-        # 新增取消按钮
         self.cancel_button = QPushButton("取消")
         self.cancel_button.setObjectName("cancelButton")
         self.cancel_button.setFixedHeight(32)
-        self.cancel_button.setCursor(Qt.PointingHandCursor)
         self.cancel_button.clicked.connect(self._on_cancel_clicked)
-
         progress_layout.addWidget(self.progress_bar, 1)
         progress_layout.addWidget(self.speed_label)
         progress_layout.addWidget(self.cancel_button)
         self.action_stack.addWidget(progress_widget)
 
-        # 页面3: 状态显示
         self.status_label = QLabel()
         self.status_label.setObjectName("statusLabel")
         self.status_label.setAlignment(Qt.AlignCenter)
         self.action_stack.addWidget(self.status_label)
-
         return bar
 
     def _create_description_card(self):
@@ -312,10 +300,8 @@ class ResourceDetailView(QWidget):
 
     def set_resource(self, resource, cached_status=None):
         self.current_resource = resource
-        self.update_info = None
         self.title_label.setText(resource.resource_name)
         self.author_label.setText(f"作者: {resource.resource_author or '未知'}")
-
         pixmap = QPixmap(f"assets/resource/{resource.resource_id}/{resource.resource_icon}")
         if pixmap.isNull():
             pixmap = QPixmap(80, 80)
@@ -326,18 +312,13 @@ class ResourceDetailView(QWidget):
             painter.drawRoundedRect(pixmap.rect().adjusted(2, 2, -2, -2), 12, 12)
             painter.end()
         self.large_icon.setPixmap(pixmap)
-
         self.desc_label.setText(resource.resource_description or "该资源暂无描述。")
-
         self.source_combo.blockSignals(True)
         self.channel_combo.blockSignals(True)
-
         update_method = global_config.app_config.get_resource_update_method(resource.resource_name).lower()
         update_channel = global_config.app_config.get_resource_update_channel(resource.resource_name)
-
         self.source_combo.setCurrentText("Mirror酱" if 'mirrorchyan' in update_method else "GitHub")
         self.channel_combo.setCurrentText(REVERSE_CHANNEL_MAP.get(update_channel, "稳定版"))
-
         self.source_combo.blockSignals(False)
         self.channel_combo.blockSignals(False)
 
@@ -345,7 +326,7 @@ class ResourceDetailView(QWidget):
             status = cached_status.get('status')
             details = cached_status.get('details', {})
             if status == 'available':
-                self.set_update_available(details['version'], details['type'], details['url'])
+                self.set_update_available(details['version'])
             elif status == 'latest':
                 self.set_latest_version()
             elif status == 'error':
@@ -369,8 +350,7 @@ class ResourceDetailView(QWidget):
             global_config.app_config.resource_update_methods[self.current_resource.resource_name] = config
             global_config.save_all_configs()
             notification_manager.show_info(
-                f"'{self.current_resource.resource_name}' 的更新源已设为 {text}。正在重新检查更新...", "设置已保存"
-            )
+                f"'{self.current_resource.resource_name}' 的更新源已设为 {text}。正在重新检查更新...", "设置已保存")
             self.set_checking()
             self.source_changed_recheck.emit(self.current_resource)
 
@@ -386,8 +366,7 @@ class ResourceDetailView(QWidget):
             global_config.app_config.resource_update_methods[self.current_resource.resource_name] = config
             global_config.save_all_configs()
             notification_manager.show_info(
-                f"'{self.current_resource.resource_name}' 的更新频道已设为 {text}。正在重新检查更新...", "设置已保存"
-            )
+                f"'{self.current_resource.resource_name}' 的更新频道已设为 {text}。正在重新检查更新...", "设置已保存")
             self.set_checking()
             self.source_changed_recheck.emit(self.current_resource)
 
@@ -400,11 +379,10 @@ class ResourceDetailView(QWidget):
             self.check_update_clicked.emit(self.current_resource)
 
     def _on_update_clicked(self):
-        if self.current_resource and self.update_info:
-            self.start_update_clicked.emit(self.current_resource, self)
+        if self.current_resource:
+            self.start_update_clicked.emit(self.current_resource)
 
     def _on_cancel_clicked(self):
-        """新增：当用户点击取消按钮时，发射取消信号"""
         if self.current_resource:
             self.cancel_download_clicked.emit(self.current_resource)
 
@@ -413,10 +391,7 @@ class ResourceDetailView(QWidget):
         self.check_button.setEnabled(False)
         self.action_stack.setCurrentIndex(0)
 
-    def set_update_available(self, new_version, update_type, download_url):
-        self.update_info = {
-            'version': new_version, 'type': update_type, 'url': download_url
-        }
+    def set_update_available(self, new_version):
         self.update_version_label.setText(f"发现新版本: <b>{new_version}</b>")
         self.update_button.setText("立即更新")
         self.action_stack.setCurrentIndex(1)
@@ -444,20 +419,80 @@ class ResourceDetailView(QWidget):
         self.action_stack.setCurrentIndex(0)
 
 
+class GitInstallerThread(QThread):
+    progress_updated = Signal(str)
+    install_succeeded = Signal(str)
+    install_failed = Signal(str)
+
+    def __init__(self, repo_url, ref, parent=None):
+        super().__init__(parent)
+        self.repo_url = repo_url
+        self.ref = ref
+        self.repo_name = repo_url.split('/')[-1].replace('.git', '')
+
+    def run(self):
+        try:
+            temp_dir = Path("assets/temp")
+            resource_dir = Path("assets/resource")
+            temp_dir.mkdir(parents=True, exist_ok=True)
+            resource_dir.mkdir(parents=True, exist_ok=True)
+            final_path = resource_dir / self.repo_name
+            if final_path.exists():
+                raise FileExistsError(f"目标目录 'assets/resource/{self.repo_name}' 已存在。")
+
+            if shutil.which('git') is not None:
+                self.progress_updated.emit("Git 克隆中...")
+                git.Repo.clone_from(self.repo_url, final_path, branch=self.ref, depth=1)
+            else:
+                notification_manager.show_info("未检测到 Git 环境，将使用 API 下载。")
+                self.progress_updated.emit("API 下载中...")
+                self._download_zip_from_github(final_path)
+
+            self.install_succeeded.emit(self.repo_name)
+
+        except Exception as e:
+            self.install_failed.emit(str(e))
+
+    def _download_zip_from_github(self, final_path):
+        parts = self.repo_url.split('github.com/')[1].split('/')
+        owner, repo = parts[0], parts[1].replace('.git', '')
+        zip_url = f"https://api.github.com/repos/{owner}/{repo}/zipball/{self.ref}"
+
+        headers = {}
+        github_token = global_config.app_config.github_token
+        if github_token: headers["Authorization"] = f"token {github_token}"
+
+        with tempfile.TemporaryDirectory() as temp_dir:
+            temp_zip_path = Path(temp_dir) / "repo.zip"
+            with requests.get(zip_url, stream=True, timeout=60, headers=headers) as r:
+                r.raise_for_status()
+                with open(temp_zip_path, 'wb') as f:
+                    for chunk in r.iter_content(chunk_size=8192): f.write(chunk)
+
+            extract_path = Path(temp_dir) / "extracted"
+            shutil.unpack_archive(temp_zip_path, extract_path)
+            unzipped_folder = next(extract_path.iterdir(), None)
+            if not unzipped_folder: raise FileNotFoundError("解压失败")
+
+            shutil.move(str(unzipped_folder), str(final_path))
+
+
 class DownloadPage(QWidget):
     """下载页面主类"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("downloadPage")
-        # self.threads 不再使用，改为更精确的管理
-        self.active_checkers = {}  # 管理检查更新线程
-        self.active_downloaders = {}  # 管理下载线程
+        self.active_checkers = {}
+        self.active_downloaders = {}
         self.resource_items = {}
         self.selected_resource = None
-        self.installer = UpdateInstaller()
-        self.git_installer_thread = None
         self.update_status_cache = {}
+        self.current_update_info = {}
+
+        self.installer = UpdateInstallerFactory()
+        self.git_installer_thread = None
+
         self._init_ui()
         self._connect_signals()
         self.load_resources()
@@ -518,13 +553,11 @@ class DownloadPage(QWidget):
         self.add_btn.setObjectName("bottomBarButton")
         self.add_btn.setIcon(QIcon("assets/icons/add.png"))
         self.add_btn.setFixedHeight(40)
-        self.add_btn.setCursor(Qt.PointingHandCursor)
         self.add_btn.clicked.connect(self.show_add_resource_dialog)
         self.check_all_btn = QPushButton(" 全部检查")
         self.check_all_btn.setObjectName("bottomBarButton")
         self.check_all_btn.setIcon(QIcon("assets/icons/refresh.png"))
         self.check_all_btn.setFixedHeight(40)
-        self.check_all_btn.setCursor(Qt.PointingHandCursor)
         self.check_all_btn.clicked.connect(self.check_all_updates)
         layout.addWidget(self.add_btn)
         layout.addWidget(self.check_all_btn)
@@ -560,18 +593,7 @@ class DownloadPage(QWidget):
         layout.addWidget(hint_label)
         return widget
 
-    def _connect_signals(self):
-        self.installer.install_completed.connect(self._handle_install_completed)
-        self.installer.install_failed.connect(self._handle_install_failed)
-        self.installer.restart_required.connect(self._handle_restart_required)
-        self.detail_view.check_update_clicked.connect(self._check_resource_update)
-        self.detail_view.start_update_clicked.connect(self._start_update)
-        # 新增：连接取消下载和源变化信号
-        self.detail_view.cancel_download_clicked.connect(self._cancel_download)
-        self.detail_view.source_changed_recheck.connect(self._check_resource_update)
-
     def _apply_stylesheet(self):
-        # 样式表部分，为新组件添加了样式
         self.setStyleSheet("""
             #downloadPage { background-color: #f8fafc; }
             #leftPanel { background-color: #ffffff; border-right: 1px solid #e2e8f0; }
@@ -609,7 +631,6 @@ class DownloadPage(QWidget):
             #detailCard { background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; }
             #cardTitle { font-size: 16px; font-weight: 600; color: #334155; }
             #cardContent { font-size: 14px; color: #475569; line-height: 1.5; }
-            /* 新增样式 */
             #downloadProgressBar { border: none; background-color: #e2e8f0; border-radius: 6px; }
             #downloadProgressBar::chunk { background-color: #3b82f6; border-radius: 6px; }
             #cancelButton { background-color: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px; font-weight: 500; padding: 0 12px; }
@@ -646,11 +667,21 @@ class DownloadPage(QWidget):
         self.detail_view.set_resource(resource, cached_status)
         self.content_stack.setCurrentIndex(1)
 
+    def _connect_signals(self):
+        # 连接工厂的信号
+        self.installer.install_completed.connect(self._handle_install_completed)
+        self.installer.install_failed.connect(self._handle_install_failed)
+        self.installer.restart_required.connect(self._handle_restart_required)
+
+        # 连接UI和业务逻辑
+        self.detail_view.check_update_clicked.connect(self._check_resource_update)
+        self.detail_view.start_update_clicked.connect(self._start_update)
+        self.detail_view.cancel_download_clicked.connect(self._cancel_download)
+        self.detail_view.source_changed_recheck.connect(self._check_resource_update)
+
     def _check_resource_update(self, resource):
         if resource.resource_name in self.active_checkers: return
-        if not resource.resource_rep_url and not resource.mirror_update_service_id:
-            self.detail_view.set_error("未配置更新源")
-            return
+
         self.update_status_cache[resource.resource_name] = {'status': 'checking'}
         thread = UpdateChecker(resource, single_mode=True)
         thread.update_found.connect(self._handle_update_found)
@@ -660,54 +691,86 @@ class DownloadPage(QWidget):
         self.active_checkers[resource.resource_name] = thread
         thread.start()
 
-    def _start_update(self, resource, detail_view_item):
-        if not detail_view_item.update_info: return
-        if resource.resource_name in self.active_downloaders: return
+    def _start_update(self, resource):
+        """
+        【已修改】这是流程的总指挥。
+        它会先判断更新策略，然后再决定是直接安装还是先下载。
+        """
+        update_info = self.current_update_info.get(resource.resource_name)
+        if not update_info:
+            notification_manager.show_error("没有找到更新信息，请先检查更新。", resource.resource_name)
+            return
 
-        detail_view_item.set_downloading(0, 0)
-        temp_dir = Path("assets/temp")
-        temp_dir.mkdir(parents=True, exist_ok=True)
+        is_git_repo = False
+        # 决策点：仅对GitHub源检查本地是否为Git仓库
+        if update_info.source == UpdateSource.GITHUB:
+            resource_path = Path(resource.source_file).parent
+            try:
+                # 尝试打开Git仓库，如果成功，说明是Git环境
+                git.Repo(resource_path)
+                is_git_repo = True
+            except InvalidGitRepositoryError:
+                is_git_repo = False
 
-        thread = UpdateDownloader(
-            resource.resource_name, detail_view_item.update_info['url'], temp_dir,
-            resource=resource, version=detail_view_item.update_info['version']
-        )
-        thread.progress_updated.connect(self._update_download_progress)
-        thread.download_completed.connect(self._handle_download_completed)
-        thread.download_failed.connect(self._handle_download_failed)
-        # 线程结束后自动清理
-        thread.finished.connect(lambda: self.active_downloaders.pop(resource.resource_name, None))
-        self.active_downloaders[resource.resource_name] = thread
-        thread.start()
+        # 情况A：是Git仓库，直接安装，跳过下载
+        if is_git_repo:
+            notification_manager.show_info("检测到Git仓库，将直接通过Git更新...", resource.resource_name)
+            self.detail_view.status_label.setText("正在通过Git更新...")  # 可选：给用户一个即时反馈
+            self.detail_view.status_label.setProperty("status", "")
+            self.detail_view.action_stack.setCurrentIndex(3)
+            # 直接调用安装器，并传递 file_path=None
+            self.installer.install_update(update_info, resource, file_path=None)
 
-    # 新增：取消下载的处理逻辑
+        # 情况B：不是Git仓库或源是Mirror酱，启动下载流程
+        else:
+            if resource.resource_name in self.active_downloaders: return
+            notification_manager.show_info("正在准备下载...", resource.resource_name)
+            self.detail_view.set_downloading(0, 0)
+            temp_dir = Path("assets/temp")
+
+            thread = UpdateDownloader(update_info, temp_dir)
+            thread.progress_updated.connect(self._update_download_progress)
+            thread.download_completed.connect(self._handle_download_completed)
+            thread.download_failed.connect(self._handle_download_failed)
+            thread.finished.connect(lambda: self.active_downloaders.pop(resource.resource_name, None))
+            self.active_downloaders[resource.resource_name] = thread
+            thread.start()
+
+    def _handle_download_completed(self, update_info: UpdateInfo, file_path: str):
+        resource = next(
+            (r for r in global_config.get_all_resource_configs() if r.resource_name == update_info.resource_name), None)
+        if resource:
+            # 下载完成后，调用安装器，并传递真实的 file_path
+            self.installer.install_update(update_info, resource, file_path)
+        else:
+            self._handle_install_failed(update_info.resource_name, "找不到本地资源配置")
+
+    # --- 其他方法保持不变 ---
     def _cancel_download(self, resource):
         thread = self.active_downloaders.get(resource.resource_name)
         if thread:
-            thread.cancel()  # 调用线程的取消方法
-            # UI需要恢复到下载前的状态
+            thread.cancel()
             cached_status = self.update_status_cache.get(resource.resource_name)
             if cached_status and cached_status['status'] == 'available':
-                details = cached_status['details']
-                self.detail_view.set_update_available(details['version'], details['type'], details['url'])
+                self.detail_view.set_update_available(cached_status['details']['version'])
             else:
                 self.detail_view.reset_action_bar()
             notification_manager.show_info(f"'{resource.resource_name}' 的下载已取消。", "操作已取消")
 
-    def _handle_update_found(self, resource_name, latest_version, current_version, download_url, update_type):
-        self.update_status_cache[resource_name] = {
+    def _handle_update_found(self, update_info: UpdateInfo):
+        self.current_update_info[update_info.resource_name] = update_info
+        self.update_status_cache[update_info.resource_name] = {
             'status': 'available',
-            'details': {'version': latest_version, 'type': update_type, 'url': download_url}
+            'details': {'version': update_info.new_version}
         }
-        item = self.resource_items.get(resource_name)
-        if item: item.set_update_status(True)
-        if self.selected_resource and self.selected_resource.resource_name == resource_name:
-            self.detail_view.set_update_available(latest_version, update_type, download_url)
+        if item := self.resource_items.get(update_info.resource_name):
+            item.set_update_status(True)
+        if self.selected_resource and self.selected_resource.resource_name == update_info.resource_name:
+            self.detail_view.set_update_available(update_info.new_version)
 
     def _handle_update_not_found(self, resource_name):
         self.update_status_cache[resource_name] = {'status': 'latest'}
-        item = self.resource_items.get(resource_name)
-        if item: item.set_update_status(False)
+        if item := self.resource_items.get(resource_name): item.set_update_status(False)
         if self.selected_resource and self.selected_resource.resource_name == resource_name:
             self.detail_view.set_latest_version()
 
@@ -721,23 +784,13 @@ class DownloadPage(QWidget):
         if self.selected_resource and self.selected_resource.resource_name == resource_name:
             self.detail_view.set_downloading(progress, speed)
 
-    def _handle_download_completed(self, resource_name, file_path, data):
-        try:
-            if isinstance(data, dict):
-                self.installer.install_new_resource(resource_name, file_path, data)
-            else:
-                self.installer.install_update(data, file_path)
-        except Exception as e:
-            if self.selected_resource and self.selected_resource.resource_name == resource_name:
-                self.detail_view.set_error("安装失败")
-            notification_manager.show_error(f"安装失败: {str(e)}", resource_name)
-
     def _handle_download_failed(self, resource_name, error):
         if self.selected_resource and self.selected_resource.resource_name == resource_name:
-            self.detail_view.set_error("下载失败")
+            self.detail_view.set_error(f"下载失败: {error}")
         notification_manager.show_error(f"下载失败: {error}", resource_name)
 
     def check_all_updates(self):
+        # ... (此方法逻辑不变) ...
         self.check_all_btn.setText("检查中...")
         self.check_all_btn.setEnabled(False)
         resources_with_update = [r for r in global_config.get_all_resource_configs() if
@@ -749,16 +802,16 @@ class DownloadPage(QWidget):
             return
         for r in resources_with_update: self.update_status_cache[r.resource_name] = {'status': 'checking'}
 
-        # 使用一个专用的线程对象来处理批量检查
         batch_checker = UpdateChecker(resources_with_update)
         batch_checker.update_found.connect(self._handle_update_found)
         batch_checker.update_not_found.connect(self._handle_update_not_found)
         batch_checker.check_failed.connect(self._handle_check_failed)
         batch_checker.check_completed.connect(self._handle_batch_check_completed)
-        self.batch_checker_thread = batch_checker  # 防止被垃圾回收
+        self.batch_checker_thread = batch_checker
         batch_checker.start()
 
     def _handle_batch_check_completed(self, total_checked, updates_found):
+        # ... (此方法逻辑不变) ...
         self.check_all_btn.setEnabled(True)
         self.check_all_btn.setText("全部检查")
         if updates_found > 0:
@@ -798,19 +851,23 @@ class DownloadPage(QWidget):
         self.add_btn.setEnabled(True)
         self.add_btn.setText(" 添加资源")
 
+    # 安装完成/失败的处理方法
     def _handle_install_completed(self, resource_name, version, locked_files):
         notification_manager.show_success(f"资源 {resource_name} 已更新至版本 {version}", "更新成功")
         self.update_status_cache.pop(resource_name, None)
+        self.current_update_info.pop(resource_name, None)
         self.load_resources()
         for res in global_config.get_all_resource_configs():
             if res.resource_name == resource_name:
                 self._on_resource_selected(res)
+                # 安装完成后，将详情页状态设置为最新
+                self.detail_view.set_latest_version()
                 break
 
     def _handle_install_failed(self, resource_name, error_message):
         notification_manager.show_error(f"安装失败: {error_message}", resource_name)
         if self.selected_resource and self.selected_resource.resource_name == resource_name:
-            self.detail_view.set_error("安装失败")
+            self.detail_view.set_error(f"安装失败: {error_message}")
 
     def _handle_restart_required(self):
         reply = QMessageBox.question(self, "需要重启",
