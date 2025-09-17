@@ -9,7 +9,8 @@ from PySide6.QtGui import QPalette, QColor
 from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager
 from app.utils.notification_manager import notification_manager
-from app.utils.update_check import UpdateChecker
+from app.utils.update.checker import UpdateChecker
+from app.utils.update.models import UpdateInfo
 
 logger = log_manager.get_app_logger()
 
@@ -195,40 +196,41 @@ def is_git_repository(path='.'):
     except git.exc.NoSuchPathError:
         return False
 
+
+
+
+logger = log_manager.get_app_logger()
+
+
 class StartupResourceUpdateChecker:
-    """启动时的资源更新检查器"""
+    """启动时的资源更新检查器 (已适配新版)"""
 
     def __init__(self, main_window):
         self.main_window = main_window
         self.update_checker_thread = None
-        self.resources_with_updates = []
+        self.resources_with_updates: list[UpdateInfo] = []  # <-- 类型提示为 UpdateInfo 列表
 
     def check_for_updates(self):
         """检查是否需要自动检查资源更新"""
         try:
-            # 获取自动检查更新配置
             auto_check = global_config.get_app_config().auto_check_update
             if not isinstance(auto_check, bool):
                 auto_check = False
 
             if auto_check:
                 logger.info("自动检查资源更新已启用，开始检查...")
-
-                # 获取所有已安装的资源
                 resources = self._get_installed_resources()
-
                 if not resources:
                     logger.info("没有已安装的资源需要检查更新")
                     return
 
-                # 显示正在检查更新的通知
                 notification_manager.show_info(
                     f"正在后台检查 {len(resources)} 个资源的更新...",
                     "自动更新检查"
                 )
 
-                # 创建并启动资源更新检查线程
                 self.update_checker_thread = UpdateChecker(resources, single_mode=False)
+                # 连接信号到新的处理方法
                 self.update_checker_thread.update_found.connect(self._handle_resource_update_found)
                 self.update_checker_thread.update_not_found.connect(self._handle_resource_update_not_found)
                 self.update_checker_thread.check_failed.connect(self._handle_resource_check_failed)
@@ -238,66 +240,69 @@ class StartupResourceUpdateChecker:
                 logger.info("自动检查更新未启用")
 
         except Exception as e:
-            logger.error(f"启动时检查更新配置失败: {e}")
+            logger.error(f"启动时检查更新配置失败: {e}", exc_info=True)
 
     def _get_installed_resources(self):
         """获取所有已安装的资源"""
         try:
-            resources=global_config.resource_configs.values()
+            # global_config.resource_configs 是一个字典，我们需要它的值
+            resources = list(global_config.resource_configs.values())
             return resources
-
         except Exception as e:
-            logger.error(f"获取已安装资源列表失败: {e}")
+            logger.error(f"获取已安装资源列表失败: {e}", exc_info=True)
             return []
 
-    def _handle_resource_update_found(self, resource_name, latest_version, current_version, download_url, update_type):
-        """处理发现资源更新的情况"""
-        logger.info(f"资源 {resource_name} 发现新版本: {latest_version} (当前版本: {current_version})")
+    def _handle_resource_update_found(self, update_info: UpdateInfo):
+        """
+        【已修改】处理发现资源更新的情况。
+        现在接收一个 UpdateInfo 对象。
+        """
+        logger.info(
+            f"资源 {update_info.resource_name} 发现新版本: {update_info.new_version} (当前版本: {update_info.current_version})")
 
-        # 收集有更新的资源
-        self.resources_with_updates.append({
-            'name': resource_name,
-            'latest_version': latest_version,
-            'current_version': current_version,
-            'download_url': download_url,
-            'update_type': update_type
-        })
+        # 直接存储 UpdateInfo 对象
+        self.resources_with_updates.append(update_info)
 
-    def _handle_resource_update_not_found(self, resource_name):
+    def _handle_resource_update_not_found(self, resource_name: str):
         """处理资源未发现更新的情况"""
         logger.info(f"资源 {resource_name} 已是最新版本")
 
-    def _handle_resource_check_failed(self, resource_name, error_message):
+    def _handle_resource_check_failed(self, resource_name: str, error_message: str):
         """处理资源检查失败的情况"""
         logger.error(f"资源 {resource_name} 检查更新失败: {error_message}")
 
-    def _handle_check_completed(self, total_checked, updates_found):
-        """处理所有资源检查完成"""
+    def _handle_check_completed(self, total_checked: int, updates_found: int):
+        """
+        【已修改】处理所有资源检查完成。
+        """
         logger.info(f"资源更新检查完成: 共检查 {total_checked} 个资源，发现 {updates_found} 个更新")
 
         if updates_found > 0:
+            # 确保收集到的更新数量与报告的一致
+            if len(self.resources_with_updates) != updates_found:
+                logger.warning(
+                    f"Updates found count mismatch. Reported: {updates_found}, Collected: {len(self.resources_with_updates)}")
+
             # 构建更新通知消息
             update_list = []
             for update in self.resources_with_updates[:3]:  # 最多显示3个
-                update_list.append(f"• {update['name']} → {update['latest_version']}")
+                # 从 UpdateInfo 对象中获取信息
+                update_list.append(f"• {update.resource_name} → {update.new_version}")
 
             if updates_found > 3:
                 update_list.append(f"• ... 以及其他 {updates_found - 3} 个资源")
 
             message = f"发现 {updates_found} 个资源有可用更新：\n" + "\n".join(update_list)
 
-            # 显示更新通知
             notification_manager.show_warning(
                 message + "\n\n请前往资源管理页面查看详情",
                 "资源更新可用",
-                duration=10000  # 显示10秒
+                duration=10000
             )
 
-            # 可选：通知主窗口有资源更新
             if hasattr(self.main_window, 'set_resource_updates_available'):
+                # 传递 UpdateInfo 对象列表
                 self.main_window.set_resource_updates_available(True, self.resources_with_updates)
         else:
-            # 所有资源都是最新的，不显示通知（避免打扰用户）
             logger.info("所有资源均为最新版本")
-
 
