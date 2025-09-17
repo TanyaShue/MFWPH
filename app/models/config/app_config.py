@@ -140,7 +140,7 @@ class Resource:
     """设备内的资源配置。"""
     resource_name: str
     settings_name: str  # 引用 ResourceSettings 的名称
-    resource_pack:str=""
+    resource_pack: str = ""
     enable: bool = False
     # 内部引用，不会被序列化
     _app_config: Optional['AppConfig'] = field(default=None, repr=False, compare=False)
@@ -192,6 +192,10 @@ class AppConfig:
     source_file: str = ""
     CDK: str = ""
     github_token: str = ""
+
+    # 新增：用于存储每个特定资源的更新方法
+    resource_update_methods: Dict[str, str] = field(default_factory=dict)
+
     update_method: str = field(default="github")
     receive_beta_update: bool = False
     auto_check_update: bool = False
@@ -199,6 +203,14 @@ class AppConfig:
     window_position: str = field(default="center")
     debug_model: bool = False
     minimize_to_tray_on_close: Optional[bool] = False
+
+    def get_resource_update_method(self, resource_name: str) -> str:
+        """
+        获取指定资源的更新方法。
+        如果为该资源设置了特定的更新方法，则返回它。
+        否则，返回全局默认的更新方法。
+        """
+        return self.resource_update_methods.get(resource_name, self.update_method)
 
     def link_resources_to_config(self):
         """将所有资源链接到此 AppConfig 实例。"""
@@ -393,6 +405,8 @@ class AppConfig:
         else:
             config.github_token = data.get('github_token', '')
 
+        config.resource_update_methods = data.get('resource_update_methods', {})
+
         config.update_method = data.get('update_method', 'github')
         config.receive_beta_update = data.get('receive_beta_update', False)
         config.auto_check_update = data.get('auto_check_update', False)
@@ -409,6 +423,9 @@ class AppConfig:
         result = {"config_version": self.config_version}  # 写入最新的版本号
         if self.CDK: result["encrypted_cdk"] = self._encrypt_cdk()
         if self.github_token: result["encrypted_github_token"] = self._encrypt_github_token()
+        # 修改：将 resource_update_methods 字典保存到结果中
+        result["resource_update_methods"] = self.resource_update_methods
+
         if self.update_method: result["update_method"] = self.update_method
         result["receive_beta_update"] = getattr(self, "receive_beta_update", False)
         result["auto_check_update"] = getattr(self, "auto_check_update", False)

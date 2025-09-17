@@ -3,12 +3,12 @@
 from pathlib import Path
 
 from PySide6.QtCore import (QTimer, QCoreApplication, Qt, Signal, Property, QPropertyAnimation, QEasingCurve)
-from PySide6.QtGui import QIcon, QPainter, QColor, QPen, QPixmap, QFont
+from PySide6.QtGui import QIcon, QPainter, QColor, QPen, QPixmap
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QFrame, QPushButton,
                                QHBoxLayout, QMessageBox, QSizePolicy,
                                QDialog, QStackedWidget,
                                QScrollArea, QGraphicsDropShadowEffect,
-                               QStyleOption, QStyle, QComboBox)  # Import QComboBox
+                               QStyleOption, QStyle, QComboBox)
 
 from app.components.circular_progress_bar import CircularProgressBar
 from app.models.config.global_config import global_config
@@ -19,10 +19,11 @@ from app.widgets.add_resource_dialog import AddResourceDialog
 
 
 class AnimatedIndicator(QWidget):
-    """一个简单的动画指示器，用于显示更新状态"""
+    """A simple animated indicator to show update status"""
 
     def __init__(self, color="#10b981"):
         super().__init__()
+        self._opacity = 0.0  # Initialize the attribute FIRST.
         self.setFixedSize(8, 8)
         self._color = QColor(color)
         self._animation = QPropertyAnimation(self, b"opacity", self)
@@ -31,8 +32,6 @@ class AnimatedIndicator(QWidget):
         self._animation.setEndValue(1.0)
         self._animation.setLoopCount(-1)
         self._animation.setEasingCurve(QEasingCurve.InOutQuad)
-        # BUG FIX: Initialize the _opacity attribute here.
-        self._opacity = 0.0
 
     @Property(float)
     def opacity(self):
@@ -61,8 +60,8 @@ class AnimatedIndicator(QWidget):
 
 
 class ResourceListItem(QFrame):
-    """自定义资源列表项（简化版）"""
-    clicked = Signal(object)  # 发送resource对象
+    """Custom resource list item (simplified)"""
+    clicked = Signal(object)
 
     def __init__(self, resource):
         super().__init__()
@@ -81,7 +80,6 @@ class ResourceListItem(QFrame):
         layout.setContentsMargins(16, 12, 16, 12)
         layout.setSpacing(12)
 
-        # Left Icon
         self.icon_label = QLabel()
         self.icon_label.setObjectName("resourceItemIcon")
         self.icon_label.setFixedSize(40, 40)
@@ -89,22 +87,18 @@ class ResourceListItem(QFrame):
         self._set_icon(f"assets/resource/{self.resource.resource_id}/{self.resource.resource_icon}")
         layout.addWidget(self.icon_label)
 
-        # Middle Info
         info_container = QWidget()
         info_layout = QVBoxLayout(info_container)
         info_layout.setContentsMargins(0, 0, 0, 0)
         info_layout.setSpacing(4)
-
         self.name_label = QLabel(self.resource.resource_name)
         self.name_label.setObjectName("resourceItemName")
         self.version_label = QLabel(f"Version {self.resource.resource_version}")
         self.version_label.setObjectName("resourceItemVersion")
-
         info_layout.addWidget(self.name_label)
         info_layout.addWidget(self.version_label)
         layout.addWidget(info_container, 1)
 
-        # Update Indicator
         self.update_indicator = AnimatedIndicator("#10b981")
         self.update_indicator.hide()
         layout.addWidget(self.update_indicator)
@@ -141,44 +135,36 @@ class ResourceListItem(QFrame):
 
 
 class ResourceDetailView(QWidget):
-    """资源详情视图（集成操作）"""
+    """Resource detail view (with integrated actions)"""
     check_update_clicked = Signal(object)
-    start_update_clicked = Signal(object, object)  # resource, item
+    start_update_clicked = Signal(object, object)
+    # NEW: Signal to trigger a re-check when the source is changed
+    source_changed_recheck = Signal(object)
 
     def __init__(self):
         super().__init__()
         self.current_resource = None
         self.update_info = None
         self._init_ui()
-        # NEW: Connect the combobox signal
         self.source_combo.currentTextChanged.connect(self._on_source_changed)
 
     def _init_ui(self):
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
-
         scroll = QScrollArea()
         scroll.setWidgetResizable(True)
         scroll.setFrameShape(QFrame.NoFrame)
         scroll.setObjectName("detailScrollArea")
-
         content_widget = QWidget()
         layout = QVBoxLayout(content_widget)
         layout.setContentsMargins(32, 32, 32, 32)
         layout.setSpacing(24)
-
-        # Header
         header = self._create_header()
         layout.addWidget(header)
-
-        # Action Bar
         self.action_bar = self._create_action_bar()
         layout.addWidget(self.action_bar)
-
-        # Description
         desc_card = self._create_description_card()
         layout.addWidget(desc_card)
-
         layout.addStretch()
         scroll.setWidget(content_widget)
         main_layout.addWidget(scroll)
@@ -203,7 +189,6 @@ class ResourceDetailView(QWidget):
         info_layout.addWidget(self.title_label)
         info_layout.addWidget(self.author_label)
 
-        # NEW: Create update source dropdown
         source_layout = QVBoxLayout()
         source_layout.setSpacing(4)
         source_label = QLabel("Update Source")
@@ -225,23 +210,16 @@ class ResourceDetailView(QWidget):
         bar = QFrame()
         bar.setObjectName("detailActionBar")
         bar.setFixedHeight(80)
-
         self.action_layout = QHBoxLayout(bar)
         self.action_layout.setContentsMargins(24, 0, 24, 0)
-
-        # Action Stack
         self.action_stack = QStackedWidget()
         self.action_layout.addWidget(self.action_stack, 1)
-
-        # Page 0: Check for updates
         self.check_button = QPushButton("Check for Updates")
         self.check_button.setObjectName("checkButton")
         self.check_button.setFixedHeight(40)
         self.check_button.setCursor(Qt.PointingHandCursor)
         self.check_button.clicked.connect(self._on_check_clicked)
         self.action_stack.addWidget(self.check_button)
-
-        # Page 1: Update available
         update_widget = QWidget()
         update_layout = QHBoxLayout(update_widget)
         self.update_version_label = QLabel()
@@ -254,8 +232,6 @@ class ResourceDetailView(QWidget):
         update_layout.addWidget(self.update_version_label, 1)
         update_layout.addWidget(self.update_button)
         self.action_stack.addWidget(update_widget)
-
-        # Page 2: Downloading
         progress_widget = QWidget()
         progress_layout = QHBoxLayout(progress_widget)
         self.progress_bar = CircularProgressBar()
@@ -265,13 +241,10 @@ class ResourceDetailView(QWidget):
         progress_layout.addWidget(self.progress_bar)
         progress_layout.addWidget(self.speed_label, 1)
         self.action_stack.addWidget(progress_widget)
-
-        # Page 3: Status (Latest / Error)
         self.status_label = QLabel()
         self.status_label.setObjectName("statusLabel")
         self.status_label.setAlignment(Qt.AlignCenter)
         self.action_stack.addWidget(self.status_label)
-
         return bar
 
     def _create_description_card(self):
@@ -280,19 +253,17 @@ class ResourceDetailView(QWidget):
         layout = QVBoxLayout(card)
         layout.setSpacing(10)
         layout.setContentsMargins(24, 24, 24, 24)
-
         title = QLabel("Description")
         title.setObjectName("cardTitle")
-
         self.desc_label = QLabel("No description available.")
         self.desc_label.setObjectName("cardContent")
         self.desc_label.setWordWrap(True)
-
         layout.addWidget(title)
         layout.addWidget(self.desc_label)
         return card
 
-    def set_resource(self, resource):
+    # MODIFIED: Now accepts a cached status to restore the UI state
+    def set_resource(self, resource, cached_status=None):
         self.current_resource = resource
         self.update_info = None
         self.title_label.setText(resource.resource_name)
@@ -311,51 +282,71 @@ class ResourceDetailView(QWidget):
 
         self.desc_label.setText(resource.resource_description or "No description available for this resource.")
 
-        # NEW: Set the value for the update source dropdown
-        self.source_combo.blockSignals(True)  # Prevent signal emission while setting
-        # Use getattr to safely get the attribute with a default value
-        update_method = getattr(self.current_resource, 'resource_update_method', 'github').lower()
-        if 'mirror' in update_method:
-            self.source_combo.setCurrentText("MirrorChyan")
-        else:
-            self.source_combo.setCurrentText("GitHub")
+        self.source_combo.blockSignals(True)
+        # MODIFIED: Get update method from global_config.app_config
+        update_method = global_config.app_config.get_resource_update_method(resource.resource_name).lower()
+        self.source_combo.setCurrentText("MirrorChyan" if 'mirror' in update_method else "GitHub")
         self.source_combo.blockSignals(False)
 
-        self.reset_action_bar()
+        # NEW: Restore state from cache instead of always resetting
+        if cached_status:
+            status = cached_status.get('status')
+            details = cached_status.get('details', {})
+            if status == 'available':
+                self.set_update_available(details['version'], details['type'], details['url'])
+            elif status == 'latest':
+                self.set_latest_version()
+            elif status == 'error':
+                self.set_error(details.get('message', 'Unknown error'))
+            elif status == 'checking':
+                self.set_checking()
+            else:
+                self.reset_action_bar()
+        else:
+            self.reset_action_bar()
 
-    # NEW: Handler for when the user changes the update source
+    # MODIFIED: Now triggers a re-check
     def _on_source_changed(self, text):
         if not self.current_resource:
             return
 
         new_method = 'mirrorchyan' if text == "MirrorChyan" else 'github'
+        # MODIFIED: Get current method from and set to global_config.app_config
+        current_method = global_config.app_config.get_resource_update_method(self.current_resource.resource_name)
 
-        # Only save if the value actually changed
-        current_method = getattr(self.current_resource, 'resource_update_method', 'github')
         if new_method != current_method:
-            self.current_resource.resource_update_method = new_method
-            global_config.save_all_configs()
-            notification_manager.show_info(f"Update source for {self.current_resource.resource_name} set to {text}.")
+            # Update the central dictionary in AppConfig
+            global_config.app_config.resource_update_methods[self.current_resource.resource_name] = new_method
+            global_config.save_all_configs() # Persist the change
+            notification_manager.show_info(
+                f"Update source for '{self.current_resource.resource_name}' set to {text}. Re-checking for updates.",
+                "Setting Saved"
+            )
+            # NEW: Provide immediate feedback and emit signal to re-check
+            self.set_checking()
+            self.source_changed_recheck.emit(self.current_resource)
 
     def _on_check_clicked(self):
         if self.current_resource:
-            self.check_button.setText("Checking...")
-            self.check_button.setEnabled(False)
+            self.set_checking()
             self.check_update_clicked.emit(self.current_resource)
 
     def _on_update_clicked(self):
         if self.current_resource and self.update_info:
             self.start_update_clicked.emit(self.current_resource, self)
 
+    def set_checking(self):
+        """Sets the UI to the 'checking' state."""
+        self.check_button.setText("Checking...")
+        self.check_button.setEnabled(False)
+        self.action_stack.setCurrentIndex(0)  # Ensure the check button page is visible
+
     def set_update_available(self, new_version, update_type, download_url):
         self.update_info = {
             'version': new_version, 'type': update_type, 'url': download_url
         }
-        self.update_version_label.setText(
-            f"New version available: <b>{new_version}</b>"
-        )
-        update_text = "Incremental Update" if update_type == "incremental" else "Full Update"
-        self.update_button.setText(update_text)
+        self.update_version_label.setText(f"New version available: <b>{new_version}</b>")
+        self.update_button.setText("Incremental Update" if update_type == "incremental" else "Full Update")
         self.action_stack.setCurrentIndex(1)
 
     def set_downloading(self, progress, speed):
@@ -368,14 +359,16 @@ class ResourceDetailView(QWidget):
         self.status_label.setProperty("status", "success")
         self.status_label.style().polish(self.status_label)
         self.action_stack.setCurrentIndex(3)
-        QTimer.singleShot(3000, self.reset_action_bar)
+        # We don't auto-reset anymore to preserve state
+        # QTimer.singleShot(3000, self.reset_action_bar)
 
     def set_error(self, error_msg):
         self.status_label.setText(f"Error: {error_msg}")
         self.status_label.setProperty("status", "error")
         self.status_label.style().polish(self.status_label)
         self.action_stack.setCurrentIndex(3)
-        QTimer.singleShot(4000, self.reset_action_bar)
+        # We don't auto-reset anymore to preserve state
+        # QTimer.singleShot(4000, self.reset_action_bar)
 
     def reset_action_bar(self):
         self.check_button.setText("Check for Updates")
@@ -384,7 +377,7 @@ class ResourceDetailView(QWidget):
 
 
 class DownloadPage(QWidget):
-    """下载页面主类（重构版）"""
+    """Download page main class (refactored)"""
 
     def __init__(self, parent=None):
         super().__init__(parent)
@@ -394,6 +387,8 @@ class DownloadPage(QWidget):
         self.selected_resource = None
         self.installer = UpdateInstaller()
         self.git_installer_thread = None
+        # NEW: Cache for storing resource update status
+        self.update_status_cache = {}
         self._init_ui()
         self._connect_signals()
         self.load_resources()
@@ -403,10 +398,8 @@ class DownloadPage(QWidget):
         main_layout = QHBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(0)
-
         left_panel = self._create_left_panel()
         main_layout.addWidget(left_panel)
-
         right_panel = self._create_right_panel()
         main_layout.addWidget(right_panel, 1)
 
@@ -417,10 +410,8 @@ class DownloadPage(QWidget):
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(0)
-
         header = self._create_left_header()
         layout.addWidget(header)
-
         scroll_area = QScrollArea()
         scroll_area.setObjectName("resourceListScroll")
         scroll_area.setWidgetResizable(True)
@@ -431,7 +422,6 @@ class DownloadPage(QWidget):
         self.resources_layout.setSpacing(8)
         scroll_area.setWidget(self.resources_container)
         layout.addWidget(scroll_area)
-
         bottom_bar = self._create_bottom_bar()
         layout.addWidget(bottom_bar)
         return panel
@@ -455,21 +445,18 @@ class DownloadPage(QWidget):
         layout = QHBoxLayout(bar)
         layout.setContentsMargins(16, 0, 16, 0)
         layout.setSpacing(12)
-
         self.add_btn = QPushButton(" Add Resource")
         self.add_btn.setObjectName("bottomBarButton")
         self.add_btn.setIcon(QIcon("assets/icons/add.png"))
         self.add_btn.setFixedHeight(40)
         self.add_btn.setCursor(Qt.PointingHandCursor)
         self.add_btn.clicked.connect(self.show_add_resource_dialog)
-
         self.check_all_btn = QPushButton(" Check All")
         self.check_all_btn.setObjectName("bottomBarButton")
         self.check_all_btn.setIcon(QIcon("assets/icons/refresh.png"))
         self.check_all_btn.setFixedHeight(40)
         self.check_all_btn.setCursor(Qt.PointingHandCursor)
         self.check_all_btn.clicked.connect(self.check_all_updates)
-
         layout.addWidget(self.add_btn)
         layout.addWidget(self.check_all_btn)
         return bar
@@ -479,7 +466,6 @@ class DownloadPage(QWidget):
         panel.setObjectName("rightPanel")
         layout = QVBoxLayout(panel)
         layout.setContentsMargins(0, 0, 0, 0)
-
         self.content_stack = QStackedWidget()
         self.empty_widget = self._create_empty_state()
         self.detail_view = ResourceDetailView()
@@ -505,65 +491,43 @@ class DownloadPage(QWidget):
         layout.addWidget(hint_label)
         return widget
 
+    # MODIFIED: Added connection for the new signal
     def _connect_signals(self):
         self.installer.install_completed.connect(self._handle_install_completed)
         self.installer.install_failed.connect(self._handle_install_failed)
         self.installer.restart_required.connect(self._handle_restart_required)
         self.detail_view.check_update_clicked.connect(self._check_resource_update)
         self.detail_view.start_update_clicked.connect(self._start_update)
+        # NEW: Connect the re-check signal
+        self.detail_view.source_changed_recheck.connect(self._check_resource_update)
 
     def _apply_stylesheet(self):
         self.setStyleSheet("""
-            /* Main Page */
             #downloadPage { background-color: #f8fafc; }
-
-            /* Left Panel */
             #leftPanel { background-color: #ffffff; border-right: 1px solid #e2e8f0; }
             #leftPanelHeader { border-bottom: 1px solid #e2e8f0; }
             #leftPanelTitle { font-size: 18px; font-weight: 600; color: #1e293b; }
             #resourceListScroll { border: none; }
-
-            /* Resource List Item */
             #resourceItem { border-radius: 8px; border: 1px solid transparent; }
             #resourceItem:hover { background-color: #f1f5f9; }
             #resourceItem[selected="true"] { background-color: #e0f2fe; border-color: #38bdf8; }
             #resourceItemName { font-size: 14px; font-weight: 600; color: #334155; }
             #resourceItemVersion { font-size: 12px; color: #64748b; }
-
-            /* Bottom Bar */
             #leftPanelBottomBar { border-top: 1px solid #e2e8f0; }
-            #bottomBarButton {
-                background-color: #f1f5f9; color: #475569; border: none;
-                border-radius: 8px; font-size: 13px; font-weight: 500;
-            }
+            #bottomBarButton { background-color: #f1f5f9; color: #475569; border: none; border-radius: 8px; font-size: 13px; font-weight: 500; }
             #bottomBarButton:hover { background-color: #e2e8f0; }
-
-            /* Right Panel */
             #rightPanel { background-color: #f8fafc; }
             #detailScrollArea { border: none; }
-
-            /* Empty State */
             #emptyStateText { font-size: 16px; color: #475569; font-weight: 500; }
             #emptyStateHint { font-size: 13px; color: #94a3b8; }
-
-            /* Detail View */
             #detailIcon { border-radius: 12px; }
             #detailTitle { font-size: 24px; font-weight: 700; color: #1e293b; }
             #detailAuthor { font-size: 14px; color: #64748b; }
-
-            /* NEW Styles for Source Dropdown */
             #sourceLabel { font-size: 12px; color: #64748b; font-weight: 500; }
-            #sourceCombo {
-                border: 1px solid #e2e8f0; border-radius: 6px; 
-                padding: 6px; background-color: white;
-            }
+            #sourceCombo { border: 1px solid #e2e8f0; border-radius: 6px; padding: 6px; background-color: white; }
             #sourceCombo::drop-down { border: none; }
-
             #detailActionBar { background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; }
-            #checkButton, #updateButton {
-                border: none; border-radius: 8px; font-weight: 600;
-                padding: 0 16px;
-            }
+            #checkButton, #updateButton { border: none; border-radius: 8px; font-weight: 600; padding: 0 16px; }
             #checkButton { background-color: #3b82f6; color: white; }
             #checkButton:hover { background-color: #2563eb; }
             #updateButton { background-color: #10b981; color: white; }
@@ -572,57 +536,54 @@ class DownloadPage(QWidget):
             #downloadSpeed { font-size: 14px; color: #475569; margin-left: 12px; }
             #statusLabel[status="success"] { color: #16a34a; font-weight: 600; }
             #statusLabel[status="error"] { color: #dc2626; font-weight: 600; }
-
             #detailCard { background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; }
             #cardTitle { font-size: 16px; font-weight: 600; color: #334155; }
             #cardContent { font-size: 14px; color: #475569; line-height: 1.5; }
         """)
 
-    # --- The rest of the DownloadPage class is unchanged ---
-
     def load_resources(self):
-        # ... (no changes)
-        for item in self.resource_items.values():
-            item.deleteLater()
+        # ... (no changes) ...
+        for item in self.resource_items.values(): item.deleteLater()
         self.resource_items.clear()
         while self.resources_layout.count():
             item = self.resources_layout.takeAt(0)
-            if item.widget():
-                item.widget().deleteLater()
-
+            if item.widget(): item.widget().deleteLater()
         resources = global_config.get_all_resource_configs()
         for resource in resources:
             item = ResourceListItem(resource)
             item.clicked.connect(self._on_resource_selected)
             self.resources_layout.addWidget(item)
             self.resource_items[resource.resource_name] = item
-
         self.resources_layout.addStretch()
-
         if not self.selected_resource and resources:
             self._on_resource_selected(resources[0])
         elif not resources:
-            self.content_stack.setCurrentIndex(0)
-            self.selected_resource = None
+            self.content_stack.setCurrentIndex(0); self.selected_resource = None
 
+    # MODIFIED: Now passes cached status to the detail view
     def _on_resource_selected(self, resource):
-        # ... (no changes)
-        if self.selected_resource == resource:
-            return
-
+        if self.selected_resource == resource: return
         self.selected_resource = resource
         for name, item in self.resource_items.items():
             item.set_selected(name == resource.resource_name)
 
-        self.detail_view.set_resource(resource)
+        # NEW: Read from cache and pass it to the detail view
+        cached_status = self.update_status_cache.get(resource.resource_name)
+        self.detail_view.set_resource(resource, cached_status)
         self.content_stack.setCurrentIndex(1)
-        self.detail_view.reset_action_bar()
 
+    # MODIFIED: Now updates the cache when starting a check
     def _check_resource_update(self, resource):
-        # ... (no changes)
+        # Prevent starting a new check if one is already running for this resource
+        if self.update_status_cache.get(resource.resource_name, {}).get('status') == 'checking':
+            return
+
         if not resource.resource_rep_url and not resource.resource_update_service_id:
             self.detail_view.set_error("No update source configured")
             return
+
+        # NEW: Set status to 'checking' in the cache
+        self.update_status_cache[resource.resource_name] = {'status': 'checking'}
 
         thread = UpdateChecker(resource, single_mode=True)
         thread.update_found.connect(self._handle_update_found)
@@ -631,21 +592,15 @@ class DownloadPage(QWidget):
         self.threads.append(thread)
         thread.start()
 
+    # ... (_start_update is unchanged) ...
     def _start_update(self, resource, detail_view_item):
-        # ... (no changes)
-        if not detail_view_item.update_info:
-            return
-
+        if not detail_view_item.update_info: return
         detail_view_item.set_downloading(0, 0)
         temp_dir = Path("assets/temp")
         temp_dir.mkdir(parents=True, exist_ok=True)
-
         thread = UpdateDownloader(
-            resource.resource_name,
-            detail_view_item.update_info['url'],
-            temp_dir,
-            resource=resource,
-            version=detail_view_item.update_info['version']
+            resource.resource_name, detail_view_item.update_info['url'], temp_dir,
+            resource=resource, version=detail_view_item.update_info['version']
         )
         thread.progress_updated.connect(self._update_download_progress)
         thread.download_completed.connect(self._handle_download_completed)
@@ -653,35 +608,43 @@ class DownloadPage(QWidget):
         self.threads.append(thread)
         thread.start()
 
+    # --- Handlers now update the central cache ---
+
     def _handle_update_found(self, resource_name, latest_version, current_version, download_url, update_type):
-        # ... (no changes)
+        # NEW: Update cache
+        self.update_status_cache[resource_name] = {
+            'status': 'available',
+            'details': {'version': latest_version, 'type': update_type, 'url': download_url}
+        }
         item = self.resource_items.get(resource_name)
-        if item:
-            item.set_update_status(True)
+        if item: item.set_update_status(True)
         if self.selected_resource and self.selected_resource.resource_name == resource_name:
             self.detail_view.set_update_available(latest_version, update_type, download_url)
 
     def _handle_update_not_found(self, resource_name):
-        # ... (no changes)
+        # NEW: Update cache
+        self.update_status_cache[resource_name] = {'status': 'latest'}
         item = self.resource_items.get(resource_name)
-        if item:
-            item.set_update_status(False)
+        if item: item.set_update_status(False)
         if self.selected_resource and self.selected_resource.resource_name == resource_name:
             self.detail_view.set_latest_version()
 
     def _handle_check_failed(self, resource_name, error_message):
-        # ... (no changes)
+        # NEW: Update cache
+        self.update_status_cache[resource_name] = {
+            'status': 'error',
+            'details': {'message': error_message}
+        }
         if self.selected_resource and self.selected_resource.resource_name == resource_name:
             self.detail_view.set_error(error_message)
         notification_manager.show_error(f"Update check failed: {error_message}", resource_name)
 
+    # ... (the rest of the file is unchanged) ...
     def _update_download_progress(self, resource_name, progress, speed):
-        # ... (no changes)
         if self.selected_resource and self.selected_resource.resource_name == resource_name:
             self.detail_view.set_downloading(progress, speed)
 
     def _handle_download_completed(self, resource_name, file_path, data):
-        # ... (no changes)
         try:
             if isinstance(data, dict):
                 self.installer.install_new_resource(resource_name, file_path, data)
@@ -693,16 +656,13 @@ class DownloadPage(QWidget):
             notification_manager.show_error(f"Installation failed: {str(e)}", resource_name)
 
     def _handle_download_failed(self, resource_name, error):
-        # ... (no changes)
         if self.selected_resource and self.selected_resource.resource_name == resource_name:
             self.detail_view.set_error("Download failed")
         notification_manager.show_error(f"Download failed: {error}", resource_name)
 
     def check_all_updates(self):
-        # ... (no changes)
         self.check_all_btn.setText("Checking...")
         self.check_all_btn.setEnabled(False)
-
         resources_with_update = [r for r in global_config.get_all_resource_configs() if
                                  r.mirror_update_service_id or r.resource_rep_url]
         if not resources_with_update:
@@ -710,7 +670,8 @@ class DownloadPage(QWidget):
             self.check_all_btn.setEnabled(True)
             notification_manager.show_info("No resources with an update source found.", "Update Check")
             return
-
+        # Set all relevant items to checking status
+        for r in resources_with_update: self.update_status_cache[r.resource_name] = {'status': 'checking'}
         thread = UpdateChecker(resources_with_update)
         thread.update_found.connect(self._handle_update_found)
         thread.update_not_found.connect(self._handle_update_not_found)
@@ -720,7 +681,6 @@ class DownloadPage(QWidget):
         thread.start()
 
     def _handle_batch_check_completed(self, total_checked, updates_found):
-        # ... (no changes)
         self.check_all_btn.setEnabled(True)
         self.check_all_btn.setText("Check All")
         if updates_found > 0:
@@ -729,23 +689,18 @@ class DownloadPage(QWidget):
             notification_manager.show_success(f"All {total_checked} resources are up to date.", "Check Complete")
 
     def show_add_resource_dialog(self):
-        # ... (no changes)
         dialog = AddResourceDialog(self)
-        if dialog.exec_() == QDialog.Accepted:
-            self.add_new_resource(dialog.get_data())
+        if dialog.exec() == QDialog.Accepted: self.add_new_resource(dialog.get_data())
 
     def add_new_resource(self, data):
-        # ... (no changes)
         url, ref = data.get('url'), data.get('ref')
         if not url or not ref or "github.com" not in url:
             notification_manager.show_error("Please provide a valid GitHub repository URL and branch/tag.",
                                             "Invalid Input")
             return
-
         if self.git_installer_thread and self.git_installer_thread.isRunning():
             notification_manager.show_warning("Please wait for the current add operation to complete.")
             return
-
         self.add_btn.setEnabled(False)
         self.add_btn.setText("Adding...")
         self.git_installer_thread = GitInstallerThread(url, ref, self)
@@ -754,23 +709,22 @@ class DownloadPage(QWidget):
         self.git_installer_thread.start()
 
     def _handle_add_succeeded(self, resource_name):
-        # ... (no changes)
         self._restore_add_button()
         notification_manager.show_success(f"Resource '{resource_name}' was added successfully!", "Success")
         self.load_resources()
 
     def _handle_add_failed(self, error_message):
-        # ... (no changes)
         self._restore_add_button()
         notification_manager.show_error(f"Failed to add resource: {error_message}", "Error")
 
     def _restore_add_button(self):
-        """恢复添加按钮的初始状态"""
         self.add_btn.setEnabled(True)
         self.add_btn.setText(" Add Resource")
 
     def _handle_install_completed(self, resource_name, version, locked_files):
         notification_manager.show_success(f"Resource {resource_name} updated to version {version}", "Update Successful")
+        # Clear the cache for this resource so it shows "Check for Updates"
+        self.update_status_cache.pop(resource_name, None)
         self.load_resources()
         for res in global_config.get_all_resource_configs():
             if res.resource_name == resource_name:
@@ -778,17 +732,14 @@ class DownloadPage(QWidget):
                 break
 
     def _handle_install_failed(self, resource_name, error_message):
-        # ... (no changes)
         notification_manager.show_error(f"Installation failed: {error_message}", resource_name)
         if self.selected_resource and self.selected_resource.resource_name == resource_name:
             self.detail_view.set_error("Installation failed")
 
     def _handle_restart_required(self):
-        # ... (no changes)
-        reply = QMessageBox.question(
-            self, "Restart Required",
-            "This update requires the application to be restarted to take effect.\n\nRestart now?",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
+        reply = QMessageBox.question(self, "Restart Required",
+                                     "This update requires the application to be restarted to take effect.\n\nRestart now?",
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
         if reply == QMessageBox.Yes:
             QTimer.singleShot(100, QCoreApplication.quit)
         else:
