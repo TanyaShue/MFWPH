@@ -5,6 +5,7 @@ from PySide6.QtWidgets import (QDialog, QVBoxLayout, QFormLayout, QLineEdit,
 from PySide6.QtCore import QSize
 from PySide6.QtGui import QFont, Qt
 
+from app.models.config.global_config import global_config
 from app.utils.resource_manager import get_github_repo_refs
 
 class AddResourceDialog(QDialog):
@@ -131,10 +132,9 @@ class AddResourceDialog(QDialog):
         self.status_text_label.setProperty("status", "checking")
         self.refresh_style(self.status_text_label)
 
-        # 4. 使用 asyncio.to_thread 在后台线程中运行阻塞的网络请求
         try:
             is_valid, branches, tags = await asyncio.to_thread(
-                get_github_repo_refs, url_to_check
+                get_github_repo_refs, url_to_check,global_config.get_app_config().github_token
             )
 
         except Exception as e:

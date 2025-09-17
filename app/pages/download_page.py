@@ -13,55 +13,13 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QFrame, QPushButton
                                QScrollArea, QTextEdit, QGraphicsOpacityEffect, QGraphicsDropShadowEffect,
                                QStyleOption, QStyle)
 
+from app.components.circular_progress_bar import CircularProgressBar
 from app.models.config.global_config import global_config
 from app.models.config.resource_config import ResourceConfig
 from app.utils.update_check import UpdateChecker, UpdateDownloader
 from app.utils.update_install import UpdateInstaller
 from app.widgets.add_resource_dialog import AddResourceDialog
 from app.utils.notification_manager import notification_manager
-
-
-class CircularProgressBar(QWidget):
-    """圆形进度条控件"""
-
-    def __init__(self, parent=None):
-        super().__init__(parent)
-        self.value = 0
-        self.maximum = 100
-        self.setFixedSize(32, 32)
-
-    def setValue(self, value):
-        self.value = value
-        self.update()
-
-    def paintEvent(self, event):
-        painter = QPainter(self)
-        painter.setRenderHint(QPainter.Antialiasing)
-
-        # 定义绘制区域
-        rect = QRect(3, 3, 26, 26)
-
-        # 背景圆
-        pen = QPen()
-        pen.setWidth(3)
-        pen.setColor(QColor(229, 231, 235))  # #e5e7eb
-        painter.setPen(pen)
-        painter.drawEllipse(rect)
-
-        # 进度圆弧
-        if self.value > 0:
-            pen.setColor(QColor(59, 130, 246))  # #3b82f6
-            painter.setPen(pen)
-
-            start_angle = 90 * 16  # 从顶部开始
-            span_angle = -int(360 * self.value / self.maximum) * 16
-            painter.drawArc(rect, start_angle, span_angle)
-
-        # 中心文字
-        painter.setPen(QPen(QColor(75, 85, 99)))  # #4b5563
-        painter.setFont(QFont("Arial", 9))
-        painter.drawText(rect, Qt.AlignCenter, f"{self.value}%")
-
 
 class ResourceListItem(QFrame):
     """自定义资源列表项"""
@@ -562,9 +520,6 @@ class GitInstallerThread(QThread):
                 self.progress_updated.emit("API 下载中...")
                 self._download_zip_from_github(temp_dir, resource_dir)
 
-            # 创建并保存资源配置
-            self._create_and_save_config()
-
             self.install_succeeded.emit(self.repo_name)
 
         except Exception as e:
@@ -630,21 +585,6 @@ class GitInstallerThread(QThread):
         # 移动并重命名到最终目录
         final_path = resource_dir / self.repo_name
         shutil.move(str(unzipped_folder), str(final_path))
-
-    def _create_and_save_config(self):
-        """为新安装的资源创建配置文件并保存"""
-        new_resource = ResourceConfig(
-            resource_name=self.repo_name,
-            resource_version=self.ref.lstrip('v'),  # 移除版本号前的 'v'
-            resource_author=self.repo_url.split('/')[-2], # 以 GitHub 用户名作为作者
-            resource_description=f"从 {self.repo_url} 安装的资源。",
-            resource_rep_url=self.repo_url,
-            resource_update_service_id=self.repo_name, # 使用仓库名作为唯一标识
-            resource_icon="",  # 暂时留空
-            enabled=True
-        )
-        global_config.add_resource_config(new_resource)
-        global_config.save()
 
 
 class DownloadPage(QWidget):

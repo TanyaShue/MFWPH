@@ -4,6 +4,8 @@ from typing import Tuple, List, Optional, Dict, Any
 
 import requests
 
+from app.models.logging.log_manager import app_logger
+
 
 def get_github_repo_refs(url: str, github_token: str = None) -> Tuple[bool, List[str], List[str]]:
     """
@@ -20,7 +22,7 @@ def get_github_repo_refs(url: str, github_token: str = None) -> Tuple[bool, List
         - tags (List[str]): 仓库中所有标签的名称列表。
     """
     if not url.startswith("https://github.com/"):
-        print("错误：只支持 GitHub 仓库链接。")
+        app_logger.error("错误：只支持 GitHub 仓库链接。")
         return False, [], []
 
     try:
@@ -28,7 +30,7 @@ def get_github_repo_refs(url: str, github_token: str = None) -> Tuple[bool, List
         parts = url.rstrip("/").split("/")
         owner, repo = parts[-2], parts[-1].removesuffix(".git")
     except IndexError:
-        print("错误：无法从 URL 中解析 owner 和 repo。")
+        app_logger.error("错误：无法从 URL 中解析 owner 和 repo。")
         return False, [], []
 
     api_base_url = f"https://api.github.com/repos/{owner}/{repo}"
@@ -40,10 +42,10 @@ def get_github_repo_refs(url: str, github_token: str = None) -> Tuple[bool, List
     try:
         repo_resp = requests.get(api_base_url, headers=headers, timeout=10)
         if repo_resp.status_code != 200:
-            print(f"错误：无法访问仓库，请检查链接或权限 (status={repo_resp.status_code})。")
+            app_logger.error(f"错误：无法访问仓库，请检查链接或权限 (status={repo_resp.status_code})。")
             return False, [], []
     except requests.exceptions.RequestException as e:
-        print(f"错误：请求仓库信息时发生网络错误: {e}")
+        app_logger.error(f"错误：请求仓库信息时发生网络错误: {e}")
         return False, [], []
 
     # 2. 获取所有分支
@@ -54,9 +56,9 @@ def get_github_repo_refs(url: str, github_token: str = None) -> Tuple[bool, List
         if branch_resp.status_code == 200:
             branches = [item['name'] for item in branch_resp.json()]
         else:
-            print(f"警告：无法获取分支列表 (status={branch_resp.status_code})。")
+            app_logger.error(f"警告：无法获取分支列表 (status={branch_resp.status_code})。")
     except requests.exceptions.RequestException as e:
-        print(f"警告：请求分支列表时发生网络错误: {e}")
+        app_logger.error(f"警告：请求分支列表时发生网络错误: {e}")
 
     # 3. 获取所有标签
     tags = []
@@ -66,13 +68,13 @@ def get_github_repo_refs(url: str, github_token: str = None) -> Tuple[bool, List
         if tag_resp.status_code == 200:
             tags = [item['name'] for item in tag_resp.json()]
         else:
-            print(f"警告：无法获取标签列表 (status={tag_resp.status_code})。")
+            app_logger.error(f"警告：无法获取标签列表 (status={tag_resp.status_code})。")
     except requests.exceptions.RequestException as e:
-        print(f"警告：请求标签列表时发生网络错误: {e}")
+        app_logger.error(f"警告：请求标签列表时发生网络错误: {e}")
 
-    print(f"成功找到仓库: {owner}/{repo}")
-    print(f"分支: {branches}")
-    print(f"标签: {tags}")
+    app_logger.info(f"成功找到仓库: {owner}/{repo}")
+    app_logger.info(f"分支: {branches}")
+    app_logger.info(f"标签: {tags}")
 
     return True, branches, tags
 

@@ -191,6 +191,7 @@ class AppConfig:
     schedule_tasks: List[ScheduleTask] = field(default_factory=list)
     source_file: str = ""
     CDK: str = ""
+    github_token: str = ""
     update_method: str = field(default="github")
     receive_beta_update: bool = False
     auto_check_update: bool = False
@@ -227,6 +228,13 @@ class AppConfig:
         encrypted = f.encrypt(self.CDK.encode('utf-8'))
         return base64.urlsafe_b64encode(encrypted).decode('utf-8')
 
+    def _encrypt_github_token(self) -> str:
+        if not self.github_token: return ""
+        key = self._get_encryption_key()
+        f = Fernet(key)
+        encrypted = f.encrypt(self.github_token.encode('utf-8'))
+        return base64.urlsafe_b64encode(encrypted).decode('utf-8')
+
     @classmethod
     def _decrypt_cdk(cls, encrypted_cdk: str) -> str:
         if not encrypted_cdk: return ""
@@ -237,6 +245,18 @@ class AppConfig:
             return decrypted.decode('utf-8')
         except Exception as e:
             print(f"解密CDK失败: {e}")
+            return ""
+
+    @classmethod
+    def _decrypt_github_token(cls, encrypted_token: str) -> str:
+        if not encrypted_token: return ""
+        key = cls._get_encryption_key()
+        f = Fernet(key)
+        try:
+            decrypted = f.decrypt(base64.urlsafe_b64decode(encrypted_token))
+            return decrypted.decode('utf-8')
+        except Exception as e:
+            print(f"解密 GitHub Token 失败: {e}")
             return ""
 
     @classmethod
@@ -324,7 +344,6 @@ class AppConfig:
                 }
                 resource_settings.append(ResourceSettings(**settings_kwargs))
 
-        # ... (加载 devices 和 schedule_tasks 的逻辑基本不变) ...
         devices_data = data.get('devices', [])
         device_configs = []
         for device_data in devices_data:
@@ -367,6 +386,13 @@ class AppConfig:
             config.CDK = cls._decrypt_cdk(encrypted_cdk)
         else:
             config.CDK = data.get('CDK', '')
+
+        encrypted_github_token = data.get('encrypted_github_token', '')
+        if encrypted_github_token:
+            config.github_token = cls._decrypt_github_token(encrypted_github_token)
+        else:
+            config.github_token = data.get('github_token', '')
+
         config.update_method = data.get('update_method', 'github')
         config.receive_beta_update = data.get('receive_beta_update', False)
         config.auto_check_update = data.get('auto_check_update', False)
@@ -382,6 +408,7 @@ class AppConfig:
         """将 AppConfig 对象转换为字典，使用新的数据结构。"""
         result = {"config_version": self.config_version}  # 写入最新的版本号
         if self.CDK: result["encrypted_cdk"] = self._encrypt_cdk()
+        if self.github_token: result["encrypted_github_token"] = self._encrypt_github_token()
         if self.update_method: result["update_method"] = self.update_method
         result["receive_beta_update"] = getattr(self, "receive_beta_update", False)
         result["auto_check_update"] = getattr(self, "auto_check_update", False)
@@ -441,5 +468,3 @@ def resource_settings_to_dict(settings: ResourceSettings) -> Dict[str, Any]:
         'task_instances': {inst_id: task_instance_to_dict(inst) for inst_id, inst in settings.task_instances.items()},
         'task_order': settings.task_order
     }
-
-# --- END OF FILE app_config.py ---

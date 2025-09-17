@@ -57,6 +57,7 @@ class AppUpdateChecker(QThread):
 
         else:
             raise RuntimeError(f"Unsupported platform: {os_name}, arch: {arch}")
+
     def run(self):
         try:
             # 获取最新发布版本
@@ -106,7 +107,6 @@ class AppUpdateChecker(QThread):
 
 class SettingsPage(QWidget):
     """Settings page with categories on the left and content on the right"""
-
 
     def __init__(self):
         super().__init__()
@@ -286,7 +286,7 @@ class SettingsPage(QWidget):
     def create_startup_section(self):
         """Create the startup settings section"""
         layout = self.create_section("启动设置")
-        
+
         dep_source_button = QPushButton("依赖源")
         dep_source_button.setObjectName("primaryButton")
         dep_source_button.clicked.connect(self.show_dependency_sources_dialog)
@@ -382,6 +382,27 @@ class SettingsPage(QWidget):
 
         layout.addLayout(update_row)
 
+        # GitHub Token 输入区域
+        github_token_row = QHBoxLayout()
+        github_token_label = QLabel("GitHub Token:")
+        github_token_input = QLineEdit()
+        github_token_input.setEchoMode(QLineEdit.Password)
+        save_github_token_button = QPushButton("保存密钥")
+        save_github_token_button.setObjectName("primaryButton")
+
+        try:
+            current_token = global_config.get_app_config().github_token
+            if current_token:
+                github_token_input.setText(current_token)
+        except Exception:
+            pass
+
+        github_token_row.addWidget(github_token_label)
+        github_token_row.addWidget(github_token_input, 1)
+        github_token_row.addWidget(save_github_token_button)
+
+        layout.addLayout(github_token_row)
+
         # 设置更新源部分
         source_row = QHBoxLayout()
         update_source_label = QLabel("更新源:")
@@ -403,7 +424,6 @@ class SettingsPage(QWidget):
         layout.addLayout(source_row)
 
         # CDK 输入区域
-        layout.addSpacing(15)
         self.cdk_container = QWidget()
         self.cdk_stack = QStackedLayout(self.cdk_container)
 
@@ -444,6 +464,18 @@ class SettingsPage(QWidget):
         self.cdk_stack.setCurrentIndex(0 if self.update_source_combo.currentText() == "Mirror酱" else 1)
 
         layout.addWidget(self.cdk_container)
+
+        def save_github_token():
+            token_text = github_token_input.text()
+            global_config.get_app_config().github_token = token_text
+            global_config.save_all_configs()
+            notification_manager.show_success(
+                "GitHub Token 已成功保存到配置文件",
+                "保存成功"
+            )
+
+        save_github_token_button.clicked.connect(save_github_token)
+        github_token_input.returnPressed.connect(save_github_token)
 
         # 定义保存CDK功能的槽函数
         def save_cdk():
@@ -938,6 +970,7 @@ class SettingsPage(QWidget):
                 "调试模式切换失败，请重试",
                 "操作失败"
             )
+
 
 def get_version_info():
     """从versioninfo.txt文件中获取版本信息"""
