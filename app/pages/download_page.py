@@ -8,7 +8,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QFrame, QPushButton
                                QHBoxLayout, QMessageBox, QSizePolicy,
                                QDialog, QStackedWidget,
                                QScrollArea, QGraphicsDropShadowEffect,
-                               QStyleOption, QStyle, QComboBox)
+                               QStyleOption, QStyle, QComboBox, QProgressBar)  # 新增导入 QProgressBar
 
 from app.components.circular_progress_bar import CircularProgressBar
 from app.models.config.app_config import ResourceUpdateConfig
@@ -18,7 +18,7 @@ from app.utils.update_check import UpdateChecker, UpdateDownloader, GitInstaller
 from app.utils.update_install import UpdateInstaller
 from app.widgets.add_resource_dialog import AddResourceDialog
 
-# 新增：用于更新频道的显示文本和内部值的映射
+# 用于更新频道的显示文本和内部值的映射
 CHANNEL_MAP = {
     "稳定版": "stable",
     "测试版": "beta",
@@ -32,7 +32,7 @@ class AnimatedIndicator(QWidget):
 
     def __init__(self, color="#10b981"):
         super().__init__()
-        self._opacity = 0.0  # 必须先初始化属性
+        self._opacity = 0.0
         self.setFixedSize(8, 8)
         self._color = QColor(color)
         self._animation = QPropertyAnimation(self, b"opacity", self)
@@ -147,7 +147,8 @@ class ResourceDetailView(QWidget):
     """资源详情视图（集成操作按钮）"""
     check_update_clicked = Signal(object)
     start_update_clicked = Signal(object, object)
-    # 新增：当源或频道改变时，触发重新检查的信号
+    # 新增：取消下载信号
+    cancel_download_clicked = Signal(object)
     source_changed_recheck = Signal(object)
 
     def __init__(self):
@@ -199,7 +200,6 @@ class ResourceDetailView(QWidget):
         info_layout.addWidget(self.title_label)
         info_layout.addWidget(self.author_label)
 
-        # 更新源布局
         source_layout = QVBoxLayout()
         source_layout.setSpacing(4)
         source_label = QLabel("更新源")
@@ -211,13 +211,12 @@ class ResourceDetailView(QWidget):
         source_layout.addWidget(source_label)
         source_layout.addWidget(self.source_combo)
 
-        # 新增：更新频道布局
         channel_layout = QVBoxLayout()
         channel_layout.setSpacing(4)
         channel_label = QLabel("更新频道")
-        channel_label.setObjectName("sourceLabel")  # 复用样式
+        channel_label.setObjectName("sourceLabel")
         self.channel_combo = QComboBox()
-        self.channel_combo.setObjectName("sourceCombo")  # 复用样式
+        self.channel_combo.setObjectName("sourceCombo")
         self.channel_combo.addItems(CHANNEL_MAP.keys())
         self.channel_combo.setCursor(Qt.PointingHandCursor)
         channel_layout.addWidget(channel_label)
@@ -227,7 +226,7 @@ class ResourceDetailView(QWidget):
         layout.addLayout(info_layout, 1)
         layout.addStretch()
         layout.addLayout(source_layout)
-        layout.addLayout(channel_layout)  # 添加到头部
+        layout.addLayout(channel_layout)
         return header_widget
 
     def _create_action_bar(self):
@@ -238,12 +237,16 @@ class ResourceDetailView(QWidget):
         self.action_layout.setContentsMargins(24, 0, 24, 0)
         self.action_stack = QStackedWidget()
         self.action_layout.addWidget(self.action_stack, 1)
+
+        # 页面0: 检查更新
         self.check_button = QPushButton("检查更新")
         self.check_button.setObjectName("checkButton")
         self.check_button.setFixedHeight(40)
         self.check_button.setCursor(Qt.PointingHandCursor)
         self.check_button.clicked.connect(self._on_check_clicked)
         self.action_stack.addWidget(self.check_button)
+
+        # 页面1: 更新可用
         update_widget = QWidget()
         update_layout = QHBoxLayout(update_widget)
         self.update_version_label = QLabel()
@@ -256,19 +259,40 @@ class ResourceDetailView(QWidget):
         update_layout.addWidget(self.update_version_label, 1)
         update_layout.addWidget(self.update_button)
         self.action_stack.addWidget(update_widget)
+
+        # 页面2: 下载中 (已修改)
         progress_widget = QWidget()
         progress_layout = QHBoxLayout(progress_widget)
-        self.progress_bar = CircularProgressBar()
-        self.progress_bar.setFixedSize(32, 32)
+        progress_layout.setContentsMargins(0, 0, 0, 0)
+        progress_layout.setSpacing(12)
+
+        # 使用水平进度条
+        self.progress_bar = QProgressBar()
+        self.progress_bar.setFixedHeight(12)
+        self.progress_bar.setTextVisible(False)
+        self.progress_bar.setObjectName("downloadProgressBar")
+
         self.speed_label = QLabel("0 MB/s")
         self.speed_label.setObjectName("downloadSpeed")
-        progress_layout.addWidget(self.progress_bar)
-        progress_layout.addWidget(self.speed_label, 1)
+
+        # 新增取消按钮
+        self.cancel_button = QPushButton("取消")
+        self.cancel_button.setObjectName("cancelButton")
+        self.cancel_button.setFixedHeight(32)
+        self.cancel_button.setCursor(Qt.PointingHandCursor)
+        self.cancel_button.clicked.connect(self._on_cancel_clicked)
+
+        progress_layout.addWidget(self.progress_bar, 1)
+        progress_layout.addWidget(self.speed_label)
+        progress_layout.addWidget(self.cancel_button)
         self.action_stack.addWidget(progress_widget)
+
+        # 页面3: 状态显示
         self.status_label = QLabel()
         self.status_label.setObjectName("statusLabel")
         self.status_label.setAlignment(Qt.AlignCenter)
         self.action_stack.addWidget(self.status_label)
+
         return bar
 
     def _create_description_card(self):
@@ -286,7 +310,6 @@ class ResourceDetailView(QWidget):
         layout.addWidget(self.desc_label)
         return card
 
-    # 已修改：现在接受缓存状态以恢复UI
     def set_resource(self, resource, cached_status=None):
         self.current_resource = resource
         self.update_info = None
@@ -306,21 +329,18 @@ class ResourceDetailView(QWidget):
 
         self.desc_label.setText(resource.resource_description or "该资源暂无描述。")
 
-        # 阻塞信号，避免在设置时触发事件
         self.source_combo.blockSignals(True)
         self.channel_combo.blockSignals(True)
 
-        # 从全局配置中获取更新方法和频道
         update_method = global_config.app_config.get_resource_update_method(resource.resource_name).lower()
         update_channel = global_config.app_config.get_resource_update_channel(resource.resource_name)
 
-        self.source_combo.setCurrentText("Mirror酱" if 'MirrorChyan' in update_method else "GitHub")
+        self.source_combo.setCurrentText("Mirror酱" if 'mirrorchyan' in update_method else "GitHub")
         self.channel_combo.setCurrentText(REVERSE_CHANNEL_MAP.get(update_channel, "稳定版"))
 
         self.source_combo.blockSignals(False)
         self.channel_combo.blockSignals(False)
 
-        # 从缓存恢复UI状态，而不是总是重置
         if cached_status:
             status = cached_status.get('status')
             details = cached_status.get('details', {})
@@ -337,54 +357,41 @@ class ResourceDetailView(QWidget):
         else:
             self.reset_action_bar()
 
-    # 已修改：现在会触发重新检查
     def _on_source_changed(self, text):
         if not self.current_resource: return
-
         new_method = 'MirrorChyan' if text == "Mirror酱" else 'github'
-
-        # 获取或创建资源的更新配置
         config = global_config.app_config.resource_update_methods.get(
             self.current_resource.resource_name,
-            ResourceUpdateConfig(method=new_method, channel='stable')  # 如果不存在则创建一个默认的
+            ResourceUpdateConfig(method=new_method, channel='stable')
         )
-
         if new_method != config.method:
             config.method = new_method
             global_config.app_config.resource_update_methods[self.current_resource.resource_name] = config
-            global_config.save_all_configs()  # 持久化更改
+            global_config.save_all_configs()
             notification_manager.show_info(
-                f"'{self.current_resource.resource_name}' 的更新源已设为 {text}。正在重新检查更新...",
-                "设置已保存"
+                f"'{self.current_resource.resource_name}' 的更新源已设为 {text}。正在重新检查更新...", "设置已保存"
             )
             self.set_checking()
             self.source_changed_recheck.emit(self.current_resource)
 
-    # 新增：处理更新频道变化的逻辑
     def _on_channel_changed(self, text):
         if not self.current_resource: return
-
         new_channel = CHANNEL_MAP.get(text, 'stable')
-
-        # 获取或创建资源的更新配置
         config = global_config.app_config.resource_update_methods.get(
             self.current_resource.resource_name,
             ResourceUpdateConfig(method=self._get_current_method_from_ui(), channel=new_channel)
         )
-
         if new_channel != config.channel:
             config.channel = new_channel
             global_config.app_config.resource_update_methods[self.current_resource.resource_name] = config
-            global_config.save_all_configs()  # 持久化更改
+            global_config.save_all_configs()
             notification_manager.show_info(
-                f"'{self.current_resource.resource_name}' 的更新频道已设为 {text}。正在重新检查更新...",
-                "设置已保存"
+                f"'{self.current_resource.resource_name}' 的更新频道已设为 {text}。正在重新检查更新...", "设置已保存"
             )
             self.set_checking()
             self.source_changed_recheck.emit(self.current_resource)
 
     def _get_current_method_from_ui(self):
-        """从UI获取当前选中的更新方式"""
         return 'MirrorChyan' if self.source_combo.currentText() == "Mirror酱" else 'github'
 
     def _on_check_clicked(self):
@@ -396,8 +403,12 @@ class ResourceDetailView(QWidget):
         if self.current_resource and self.update_info:
             self.start_update_clicked.emit(self.current_resource, self)
 
+    def _on_cancel_clicked(self):
+        """新增：当用户点击取消按钮时，发射取消信号"""
+        if self.current_resource:
+            self.cancel_download_clicked.emit(self.current_resource)
+
     def set_checking(self):
-        """设置UI为“正在检查”状态"""
         self.check_button.setText("正在检查...")
         self.check_button.setEnabled(False)
         self.action_stack.setCurrentIndex(0)
@@ -407,13 +418,13 @@ class ResourceDetailView(QWidget):
             'version': new_version, 'type': update_type, 'url': download_url
         }
         self.update_version_label.setText(f"发现新版本: <b>{new_version}</b>")
-        self.update_button.setText("增量更新" if update_type == "incremental" else "完整更新")
+        self.update_button.setText("立即更新")
         self.action_stack.setCurrentIndex(1)
 
     def set_downloading(self, progress, speed):
         self.action_stack.setCurrentIndex(2)
         self.progress_bar.setValue(int(progress))
-        self.speed_label.setText(f"下载中... ({speed:.1f} MB/s)")
+        self.speed_label.setText(f"{speed:.1f} MB/s")
 
     def set_latest_version(self):
         self.status_label.setText("您当前已是最新版本。")
@@ -439,12 +450,13 @@ class DownloadPage(QWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.setObjectName("downloadPage")
-        self.threads = []
+        # self.threads 不再使用，改为更精确的管理
+        self.active_checkers = {}  # 管理检查更新线程
+        self.active_downloaders = {}  # 管理下载线程
         self.resource_items = {}
         self.selected_resource = None
         self.installer = UpdateInstaller()
         self.git_installer_thread = None
-        # 新增：用于缓存资源更新状态的字典
         self.update_status_cache = {}
         self._init_ui()
         self._connect_signals()
@@ -554,11 +566,12 @@ class DownloadPage(QWidget):
         self.installer.restart_required.connect(self._handle_restart_required)
         self.detail_view.check_update_clicked.connect(self._check_resource_update)
         self.detail_view.start_update_clicked.connect(self._start_update)
-        # 连接重新检查的信号
+        # 新增：连接取消下载和源变化信号
+        self.detail_view.cancel_download_clicked.connect(self._cancel_download)
         self.detail_view.source_changed_recheck.connect(self._check_resource_update)
 
     def _apply_stylesheet(self):
-        # 样式表部分保持不变，因为它们是UI设计的一部分，通常不需要翻译
+        # 样式表部分，为新组件添加了样式
         self.setStyleSheet("""
             #downloadPage { background-color: #f8fafc; }
             #leftPanel { background-color: #ffffff; border-right: 1px solid #e2e8f0; }
@@ -590,16 +603,20 @@ class DownloadPage(QWidget):
             #updateButton { background-color: #10b981; color: white; }
             #updateButton:hover { background-color: #059669; }
             #updateVersionInfo { font-size: 14px; color: #334155; }
-            #downloadSpeed { font-size: 14px; color: #475569; margin-left: 12px; }
+            #downloadSpeed { font-size: 13px; color: #475569; }
             #statusLabel[status="success"] { color: #16a34a; font-weight: 600; }
             #statusLabel[status="error"] { color: #dc2626; font-weight: 600; }
             #detailCard { background-color: #ffffff; border: 1px solid #e2e8f0; border-radius: 12px; }
             #cardTitle { font-size: 16px; font-weight: 600; color: #334155; }
             #cardContent { font-size: 14px; color: #475569; line-height: 1.5; }
+            /* 新增样式 */
+            #downloadProgressBar { border: none; background-color: #e2e8f0; border-radius: 6px; }
+            #downloadProgressBar::chunk { background-color: #3b82f6; border-radius: 6px; }
+            #cancelButton { background-color: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px; font-weight: 500; padding: 0 12px; }
+            #cancelButton:hover { background-color: #e2e8f0; border-color: #d1d5db; }
         """)
 
     def load_resources(self):
-        # 清理旧的列表项
         for item in self.resource_items.values(): item.deleteLater()
         self.resource_items.clear()
         while self.resources_layout.count():
@@ -625,38 +642,32 @@ class DownloadPage(QWidget):
         self.selected_resource = resource
         for name, item in self.resource_items.items():
             item.set_selected(name == resource.resource_name)
-
-        # 从缓存中读取状态并传递给详情视图
         cached_status = self.update_status_cache.get(resource.resource_name)
         self.detail_view.set_resource(resource, cached_status)
         self.content_stack.setCurrentIndex(1)
 
     def _check_resource_update(self, resource):
-        # 防止重复检查
-        if self.update_status_cache.get(resource.resource_name, {}).get('status') == 'checking':
-            return
-
-        if not resource.resource_rep_url and not resource.resource_update_service_id:
+        if resource.resource_name in self.active_checkers: return
+        if not resource.resource_rep_url and not resource.mirror_update_service_id:
             self.detail_view.set_error("未配置更新源")
             return
-
-        # 在缓存中设置状态为“正在检查”
         self.update_status_cache[resource.resource_name] = {'status': 'checking'}
-
-        # 启动更新检查线程（假设 UpdateChecker 能处理 channel 参数）
-        # 注意：您可能需要修改 UpdateChecker 类以实际使用 channel 参数
         thread = UpdateChecker(resource, single_mode=True)
         thread.update_found.connect(self._handle_update_found)
         thread.update_not_found.connect(self._handle_update_not_found)
         thread.check_failed.connect(self._handle_check_failed)
-        self.threads.append(thread)
+        thread.finished.connect(lambda: self.active_checkers.pop(resource.resource_name, None))
+        self.active_checkers[resource.resource_name] = thread
         thread.start()
 
     def _start_update(self, resource, detail_view_item):
         if not detail_view_item.update_info: return
+        if resource.resource_name in self.active_downloaders: return
+
         detail_view_item.set_downloading(0, 0)
         temp_dir = Path("assets/temp")
         temp_dir.mkdir(parents=True, exist_ok=True)
+
         thread = UpdateDownloader(
             resource.resource_name, detail_view_item.update_info['url'], temp_dir,
             resource=resource, version=detail_view_item.update_info['version']
@@ -664,8 +675,24 @@ class DownloadPage(QWidget):
         thread.progress_updated.connect(self._update_download_progress)
         thread.download_completed.connect(self._handle_download_completed)
         thread.download_failed.connect(self._handle_download_failed)
-        self.threads.append(thread)
+        # 线程结束后自动清理
+        thread.finished.connect(lambda: self.active_downloaders.pop(resource.resource_name, None))
+        self.active_downloaders[resource.resource_name] = thread
         thread.start()
+
+    # 新增：取消下载的处理逻辑
+    def _cancel_download(self, resource):
+        thread = self.active_downloaders.get(resource.resource_name)
+        if thread:
+            thread.cancel()  # 调用线程的取消方法
+            # UI需要恢复到下载前的状态
+            cached_status = self.update_status_cache.get(resource.resource_name)
+            if cached_status and cached_status['status'] == 'available':
+                details = cached_status['details']
+                self.detail_view.set_update_available(details['version'], details['type'], details['url'])
+            else:
+                self.detail_view.reset_action_bar()
+            notification_manager.show_info(f"'{resource.resource_name}' 的下载已取消。", "操作已取消")
 
     def _handle_update_found(self, resource_name, latest_version, current_version, download_url, update_type):
         self.update_status_cache[resource_name] = {
@@ -685,10 +712,7 @@ class DownloadPage(QWidget):
             self.detail_view.set_latest_version()
 
     def _handle_check_failed(self, resource_name, error_message):
-        self.update_status_cache[resource_name] = {
-            'status': 'error',
-            'details': {'message': error_message}
-        }
+        self.update_status_cache[resource_name] = {'status': 'error', 'details': {'message': error_message}}
         if self.selected_resource and self.selected_resource.resource_name == resource_name:
             self.detail_view.set_error(error_message)
         notification_manager.show_error(f"更新检查失败: {error_message}", resource_name)
@@ -724,13 +748,15 @@ class DownloadPage(QWidget):
             notification_manager.show_info("没有找到可检查更新的资源。", "更新检查")
             return
         for r in resources_with_update: self.update_status_cache[r.resource_name] = {'status': 'checking'}
-        thread = UpdateChecker(resources_with_update)
-        thread.update_found.connect(self._handle_update_found)
-        thread.update_not_found.connect(self._handle_update_not_found)
-        thread.check_failed.connect(self._handle_check_failed)
-        thread.check_completed.connect(self._handle_batch_check_completed)
-        self.threads.append(thread)
-        thread.start()
+
+        # 使用一个专用的线程对象来处理批量检查
+        batch_checker = UpdateChecker(resources_with_update)
+        batch_checker.update_found.connect(self._handle_update_found)
+        batch_checker.update_not_found.connect(self._handle_update_not_found)
+        batch_checker.check_failed.connect(self._handle_check_failed)
+        batch_checker.check_completed.connect(self._handle_batch_check_completed)
+        self.batch_checker_thread = batch_checker  # 防止被垃圾回收
+        batch_checker.start()
 
     def _handle_batch_check_completed(self, total_checked, updates_found):
         self.check_all_btn.setEnabled(True)
@@ -774,7 +800,6 @@ class DownloadPage(QWidget):
 
     def _handle_install_completed(self, resource_name, version, locked_files):
         notification_manager.show_success(f"资源 {resource_name} 已更新至版本 {version}", "更新成功")
-        # 清除此资源的缓存，使其状态变回“检查更新”
         self.update_status_cache.pop(resource_name, None)
         self.load_resources()
         for res in global_config.get_all_resource_configs():
@@ -794,5 +819,4 @@ class DownloadPage(QWidget):
         if reply == QMessageBox.Yes:
             QTimer.singleShot(100, QCoreApplication.quit)
         else:
-            notification_manager.show_info(
-                "更新文件已下载但尚未应用，请稍后手动重启程序。", "等待重启")
+            notification_manager.show_info("更新文件已下载但尚未应用，请稍后手动重启程序。", "等待重启")

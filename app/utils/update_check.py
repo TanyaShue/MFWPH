@@ -20,8 +20,7 @@ logger = log_manager.get_app_logger()
 class UpdateChecker(QThread):
     """资源更新检查线程"""
     # 信号定义
-    update_found = Signal(str, str, str, str,
-                          str)  # resource_name, latest_version, current_version, download_url, update_type
+    update_found = Signal(str, str, str, str,str)  # resource_name, latest_version, current_version, download_url, update_type
     update_not_found = Signal(str)  # resource_name
     check_failed = Signal(str, str)  # resource_name, error_message
     check_completed = Signal(int, int)  # total_checked, updates_found
