@@ -31,8 +31,7 @@ CHANNEL_MAP = {
 }
 REVERSE_CHANNEL_MAP = {v: k for k, v in CHANNEL_MAP.items()}
 
-# ... (AnimatedIndicator, ResourceListItem, ResourceDetailView, GitInstallerThread 类代码不变) ...
-# ... (为节省篇幅，这里省略了这些未改变的类，请保留您原有的代码) ...
+
 class AnimatedIndicator(QWidget):
     """一个简单的动画指示器，用于显示更新状态"""
 
@@ -341,33 +340,51 @@ class ResourceDetailView(QWidget):
 
     def _on_source_changed(self, text):
         if not self.current_resource: return
+        resource_name = self.current_resource.resource_name
         new_method = 'MirrorChyan' if text == "Mirror酱" else 'github'
-        config = global_config.app_config.resource_update_methods.get(
-            self.current_resource.resource_name,
-            ResourceUpdateConfig(method=new_method, channel='stable')
-        )
-        if new_method != config.method:
-            config.method = new_method
-            global_config.app_config.resource_update_methods[self.current_resource.resource_name] = config
+
+        # 获取当前配置，如果不存在则为 None
+        config = global_config.app_config.resource_update_methods.get(resource_name)
+
+        # 判断是否需要更新：配置不存在，或者配置存在但方法不同
+        if config is None or config.method != new_method:
+            if config is None:
+                # 如果配置不存在，创建一个新的，并从UI获取当前频道值
+                current_channel = CHANNEL_MAP.get(self.channel_combo.currentText(), 'stable')
+                config = ResourceUpdateConfig(method=new_method, channel=current_channel)
+                global_config.app_config.resource_update_methods[resource_name] = config
+            else:
+                # 如果配置已存在，只更新方法
+                config.method = new_method
+
             global_config.save_all_configs()
             notification_manager.show_info(
-                f"'{self.current_resource.resource_name}' 的更新源已设为 {text}。正在重新检查更新...", "设置已保存")
+                f"'{resource_name}' 的更新源已设为 {text}。正在重新检查更新...", "设置已保存")
             self.set_checking()
             self.source_changed_recheck.emit(self.current_resource)
 
     def _on_channel_changed(self, text):
         if not self.current_resource: return
+        resource_name = self.current_resource.resource_name
         new_channel = CHANNEL_MAP.get(text, 'stable')
-        config = global_config.app_config.resource_update_methods.get(
-            self.current_resource.resource_name,
-            ResourceUpdateConfig(method=self._get_current_method_from_ui(), channel=new_channel)
-        )
-        if new_channel != config.channel:
-            config.channel = new_channel
-            global_config.app_config.resource_update_methods[self.current_resource.resource_name] = config
+
+        # 获取当前配置，如果不存在则为 None
+        config = global_config.app_config.resource_update_methods.get(resource_name)
+
+        # 判断是否需要更新：配置不存在，或者配置存在但频道不同
+        if config is None or config.channel != new_channel:
+            if config is None:
+                # 如果配置不存在，创建一个新的，并从UI获取当前更新源
+                current_method = self._get_current_method_from_ui()
+                config = ResourceUpdateConfig(method=current_method, channel=new_channel)
+                global_config.app_config.resource_update_methods[resource_name] = config
+            else:
+                # 如果配置已存在，只更新频道
+                config.channel = new_channel
+
             global_config.save_all_configs()
             notification_manager.show_info(
-                f"'{self.current_resource.resource_name}' 的更新频道已设为 {text}。正在重新检查更新...", "设置已保存")
+                f"'{resource_name}' 的更新频道已设为 {text}。正在重新检查更新...", "设置已保存")
             self.set_checking()
             self.source_changed_recheck.emit(self.current_resource)
 
