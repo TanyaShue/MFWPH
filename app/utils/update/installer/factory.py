@@ -1,12 +1,10 @@
-# --- START OF FILE app/utils/update/installer/factory.py ---
-
 from PySide6.QtCore import QObject, Signal, QThread
 
 from app.utils.update.models import UpdateInfo, UpdateSource
 from app.utils.update.installer.base import BaseInstaller
 from app.utils.update.installer.github import GithubInstaller
 from app.utils.update.installer.mirror import MirrorInstaller
-from app.utils.update.installer.app import AppInstaller  # <-- 导入新的 AppInstaller
+from app.utils.update.installer.app import AppInstaller
 from app.models.config.resource_config import ResourceConfig
 from app.models.logging.log_manager import log_manager
 
@@ -38,43 +36,55 @@ class UpdateInstallerFactory(QObject):
             self.install_failed.emit(update_info.resource_name, "另一个安装正在进行中")
             return
 
+        installer_class = None
         if update_info.source == UpdateSource.GITHUB:
             if not resource:
                 self.install_failed.emit(update_info.resource_name, "GitHub 资源更新需要 resource 对象")
                 return
             self.installer = GithubInstaller(resource, update_info, file_path)
+            installer_class = "GithubInstaller"
         elif update_info.source == UpdateSource.MIRROR:
             if not resource:
                 self.install_failed.emit(update_info.resource_name, "Mirror酱资源更新需要 resource 对象")
                 return
             self.installer = MirrorInstaller(resource, update_info, file_path)
-        elif update_info.source == UpdateSource.APP:  # <-- 新增的分支
+            installer_class = "MirrorInstaller"
+        elif update_info.source == UpdateSource.APP:
             self.installer = AppInstaller(update_info, file_path)
+            installer_class = "AppInstaller"
         else:
             error_msg = f"不支持的更新源: {update_info.source}"
             logger.error(error_msg)
             self.install_failed.emit(update_info.resource_name, error_msg)
             return
 
+        logger.debug(f"Successfully created '{installer_class}' instance.")
+
         self.thread = QThread()
         self.installer.moveToThread(self.thread)
+        logger.debug(f"'{installer_class}' moved to a new QThread.")
+
+        # 连接信号
         self.installer.install_started.connect(self.install_started)
         self.installer.install_completed.connect(self.install_completed)
         self.installer.install_failed.connect(self.install_failed)
         self.installer.restart_required.connect(self.restart_required)
         self.thread.started.connect(self.installer.install)
+        logger.debug("All signals connected.")
 
         def on_finished():
+            logger.debug(f"QThread for '{installer_class}' has finished. Starting cleanup.")
             self.thread.quit()
             self.thread.wait()
             self.installer.deleteLater()
             self.thread.deleteLater()
             self.installer = None
             self.thread = None
+            logger.debug("Installer and QThread have been cleaned up.")
 
         self.installer.install_completed.connect(on_finished)
         self.installer.install_failed.connect(on_finished)
-        self.installer.restart_required.connect(on_finished)  # 确保重启信号也会清理线程
+        self.installer.restart_required.connect(on_finished)
 
+        logger.info("Starting installer thread...")
         self.thread.start()
-

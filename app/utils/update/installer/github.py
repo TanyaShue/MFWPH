@@ -1,11 +1,7 @@
-# --- START OF FILE app/utils/update/installer/github.py ---
-
 import shutil
 import tempfile
 import zipfile
-import os
 import git
-from git.exc import InvalidGitRepositoryError
 from pathlib import Path
 
 from app.utils.update.installer.base import BaseInstaller
