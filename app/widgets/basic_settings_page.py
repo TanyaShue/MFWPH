@@ -247,20 +247,25 @@ class BasicSettingsPage(QFrame):
             description_label.setContentsMargins(10, 10, 10, 10)
             self.settings_content_layout.addWidget(description_label)
 
-        scroll_area = QScrollArea()
-        scroll_area.setWidgetResizable(True)
-        scroll_area.setFrameShape(QFrame.NoFrame)
-        scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
-
-        self.task_container = DraggableTaskContainer()
-        self.task_container.setObjectName('draggableTaskContainer')
-        self.task_container.order_changed.connect(self.on_task_order_changed)
-
+        # 检查是否有任务来决定布局策略
         if not settings.task_order:
+            # --- 情况1: 没有任务 ---
             no_tasks_label = QLabel("当前没有已添加的任务, 请点击下方的'添加任务'按钮。")
             no_tasks_label.setAlignment(Qt.AlignCenter)
             self.settings_content_layout.addWidget(no_tasks_label)
+            # 在这里添加 stretch 将提示标签推到顶部
+            self.settings_content_layout.addStretch(1)
         else:
+            # --- 情况2: 有任务 ---
+            scroll_area = QScrollArea()
+            scroll_area.setWidgetResizable(True)
+            scroll_area.setFrameShape(QFrame.NoFrame)
+            scroll_area.setHorizontalScrollBarPolicy(Qt.ScrollBarAlwaysOff)
+
+            self.task_container = DraggableTaskContainer()
+            self.task_container.setObjectName('draggableTaskContainer')
+            self.task_container.order_changed.connect(self.on_task_order_changed)
+
             # 核心逻辑变更：遍历 task_order 来构建UI
             for i, instance_id in enumerate(settings.task_order):
                 task_instance = settings.task_instances.get(instance_id)
@@ -287,8 +292,8 @@ class BasicSettingsPage(QFrame):
                         self.task_container.add_task_widget(line)
 
             scroll_area.setWidget(self.task_container)
-            self.settings_content_layout.addWidget(scroll_area)
-        self.settings_content_layout.addStretch(1)
+
+            self.settings_content_layout.addWidget(scroll_area, 1)
     def set_remove_mode(self, enabled: bool):
         """槽函数: 接收来自父组件的信号, 更新所有任务项的模式"""
         if self.task_container:

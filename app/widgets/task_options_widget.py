@@ -22,9 +22,6 @@ class TaskOptionsWidget(QFrame):
     任务选项设置组件，用于显示和配置单个任务实例的详细选项。
     """
 
-    # 选项值更新信号 - 现在不需要了，因为更改是即时保存的
-    # option_value_changed = Signal(...)
-
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_resource_name = None
