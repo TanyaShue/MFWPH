@@ -5,6 +5,7 @@ import os
 import platform
 import shutil
 import subprocess
+import sys
 import tarfile
 import time
 import zipfile
@@ -214,7 +215,12 @@ class GlobalPythonRuntimeManager:
         """
         加载配置文件。如果文件不存在，则使用包含预编译Python源的默认配置创建它。
         """
-        config_path = Path("assets/config/python_sources.json")
+        # --- 唯一的修改在这里 ---
+        # 我们需要将 os.path.join 返回的字符串，用 Path() 包装起来，转换成一个 Path 对象
+        # 这样下面的 .exists() 和 .parent 才能正常工作
+        config_path_str = os.path.join(os.getcwd(), "assets", "config", "python_runtime_config.json")
+        config_path = Path(config_path_str)
+
         build_tag = "20240415"
 
         default_config = {
@@ -261,6 +267,7 @@ class GlobalPythonRuntimeManager:
         if not config_path.exists():
             self.logger.info(f"配置文件 {config_path} 不存在，将创建默认配置文件。")
             try:
+                # config_path 是 Path 对象，所以 .parent 可以正常使用
                 config_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(config_path, 'w', encoding='utf-8') as f:
                     json.dump(default_config, f, indent=4, ensure_ascii=False)
