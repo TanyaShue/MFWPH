@@ -32,8 +32,8 @@ class BaseInstaller(QObject, ABC, metaclass=InstallerMeta):
         # 增加初始化日志
         resource_name = resource.resource_name if resource else update_info.resource_name
         logger.debug(
-            f"{self.__class__.__name__} initialized for '{resource_name}'. "
-            f"New version: '{self.new_version}', File path: '{self.file_path}'"
+            f"{self.__class__.__name__} 已为 '{resource_name}' 初始化。 "
+            f"新版本: '{self.new_version}', 文件路径: '{self.file_path}'"
         )
 
     @abstractmethod

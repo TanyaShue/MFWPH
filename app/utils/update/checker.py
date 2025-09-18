@@ -26,21 +26,21 @@ class UpdateChecker(QThread):
         self.github_api_url = "https://api.github.com"
         self.is_cancelled = False
         logger.debug(
-            f"UpdateChecker initialized. Single mode: {single_mode}. Resources to check: {len(self.resources)}.")
+            f"UpdateChecker 已初始化。单模式: {single_mode}。待检查资源数: {len(self.resources)}。")
 
     def run(self):
         updates_found = 0
-        logger.debug("UpdateChecker thread started.")
+        logger.debug("UpdateChecker 线程已启动。")
         for resource in self.resources:
             if self.is_cancelled:
-                logger.info("Update check was cancelled.")
+                logger.info("更新检查已被取消。")
                 break
             try:
-                logger.debug(f"Checking updates for resource: '{resource.resource_name}'.")
+                logger.debug(f"正在为资源 '{resource.resource_name}' 检查更新。")
                 app_config = global_config.get_app_config()
                 update_method = app_config.get_resource_update_method(resource.resource_name)
                 update_channel = app_config.get_resource_update_channel(resource.resource_name)
-                logger.debug(f"Update method: '{update_method}', Update channel: '{update_channel}'.")
+                logger.debug(f"更新方式: '{update_method}', 更新通道: '{update_channel}'。")
 
                 update_result = False
                 if update_method.lower() == "mirrorchyan":
@@ -57,16 +57,16 @@ class UpdateChecker(QThread):
 
         if not self.single_mode:
             logger.info(
-                f"Update check completed. Total checked: {len(self.resources)}, Updates found: {updates_found}.")
+                f"更新检查完成。总计检查: {len(self.resources)}, 发现更新: {updates_found}。")
             self.check_completed.emit(len(self.resources), updates_found)
-        logger.debug("UpdateChecker thread finished.")
+        logger.debug("UpdateChecker 线程已结束。")
 
     def cancel(self):
         self.is_cancelled = True
 
     def _check_mirror_update(self, resource: ResourceConfig, channel: str):
         rid = resource.mirror_update_service_id
-        logger.debug(f"Checking MirrorChyan update for '{resource.resource_name}' with service ID '{rid}'.")
+        logger.debug(f"正在为 '{resource.resource_name}' 检查 MirrorChyan 更新, 服务 ID 为 '{rid}'。")
         if not rid:
             if self.single_mode: self.check_failed.emit(resource.resource_name, "该资源没有mirror酱更新途径")
             return False
@@ -83,12 +83,12 @@ class UpdateChecker(QThread):
         try:
             response = requests.get(api_url, params=params)
             logger.debug(
-                f"MirrorChyan API response for '{resource.resource_name}': Status {response.status_code}, Body: {response.text}")
+                f"'{resource.resource_name}' 的 MirrorChyan API 响应: 状态 {response.status_code}, 内容: {response.text}")
 
             try:
                 result = response.json()
             except requests.exceptions.JSONDecodeError:
-                logger.warning(f"MirrorChyan API did not return valid JSON. Status: {response.status_code}")
+                logger.warning(f"MirrorChyan API 未返回有效的 JSON。状态码: {response.status_code}")
                 self.check_failed.emit(resource.resource_name, f"API响应格式错误 (Status: {response.status_code})")
                 return False
 
@@ -105,7 +105,7 @@ class UpdateChecker(QThread):
             if error_code is not None and error_code != 0:
                 detail = error_map.get(error_code, result.get("msg", "未知业务错误"))
                 logger.warning(
-                    f"MirrorChyan API returned business error for '{resource.resource_name}': {detail} (Code: {error_code})")
+                    f"'{resource.resource_name}' 的 MirrorChyan API 返回业务错误: {detail} (代码: {error_code})")
                 if self.single_mode:
                     self.check_failed.emit(resource.resource_name, f"业务错误 ({error_code}): {detail}")
                 return False
@@ -115,17 +115,17 @@ class UpdateChecker(QThread):
             download_url = data.get("url", "")
             update_type = data.get("update_type", "full")
             logger.debug(
-                f"Parsed MirrorChyan data: version='{latest_version}', url='{download_url}', type='{update_type}'.")
+                f"解析的 MirrorChyan 数据: 版本='{latest_version}', 下载链接='{download_url}', 类型='{update_type}'。")
 
             # 【修正】在比较版本前，移除版本号字符串头部的 'v'
             latest_version_str = latest_version.lstrip('v')
             current_version_str = resource.resource_version.lstrip('v')
-            logger.debug(f"Comparing versions - Latest: '{latest_version_str}', Current: '{current_version_str}'.")
+            logger.debug(f"正在比较版本 - 最新: '{latest_version_str}', 当前: '{current_version_str}'。")
 
             # 【修正】使用处理过的、符合 SemVer 规范的字符串进行比较
             if latest_version_str and semver.compare(latest_version_str, current_version_str) > 0:
                 logger.info(
-                    f"New MirrorChyan version found for '{resource.resource_name}': {latest_version} (current: {resource.resource_version}).")
+                    f"为 '{resource.resource_name}' 发现了新的 MirrorChyan 版本: {latest_version} (当前: {resource.resource_version})。")
                 update_info = UpdateInfo(
                     resource_name=resource.resource_name, current_version=resource.resource_version,
                     new_version=latest_version,  # 仍然使用带 'v' 的原始版本号创建 UpdateInfo
@@ -135,7 +135,7 @@ class UpdateChecker(QThread):
                 self.update_found.emit(update_info)
                 return True
             else:
-                logger.info(f"Resource '{resource.resource_name}' is up to date (MirrorChyan).")
+                logger.info(f"资源 '{resource.resource_name}' 已是最新版本 (MirrorChyan)。")
                 if self.single_mode: self.update_not_found.emit(resource.resource_name)
                 return False
         except requests.exceptions.RequestException as e:
@@ -145,7 +145,7 @@ class UpdateChecker(QThread):
 
     def _check_github_update(self, resource: ResourceConfig, channel: str):
         repo_url = resource.resource_rep_url
-        logger.debug(f"Checking GitHub update for '{resource.resource_name}' from repo '{repo_url}'.")
+        logger.debug(f"正在为 '{resource.resource_name}' 从仓库 '{repo_url}' 检查 GitHub 更新。")
         if not repo_url or "github.com" not in repo_url:
             if self.single_mode: self.check_failed.emit(resource.resource_name, "未配置有效的 GitHub 仓库 URL")
             return False
@@ -153,25 +153,25 @@ class UpdateChecker(QThread):
         try:
             owner_repo = repo_url.rstrip("/").split("github.com/")[1].replace(".git", "")
             api_url = f"{self.github_api_url}/repos/{owner_repo}/tags"
-            logger.debug(f"Constructed GitHub API URL: {api_url}")
+            logger.debug(f"已构造 GitHub API URL: {api_url}")
 
             headers = {"Accept": "application/vnd.github.v3+json"}
             github_token = global_config.app_config.github_token
             if github_token:
-                logger.debug("Using configured GitHub token for API request.")
+                logger.debug("正在使用配置的 GitHub token 进行 API 请求。")
                 headers["Authorization"] = f"token {github_token}"
 
             response = requests.get(api_url, headers=headers)
-            logger.debug(f"GitHub API response for '{resource.resource_name}': Status {response.status_code}")
+            logger.debug(f"'{resource.resource_name}' 的 GitHub API 响应: 状态 {response.status_code}")
 
             if response.status_code != 200:
                 msg = f"GitHub API 返回错误 ({response.status_code})"
-                logger.warning(f"{msg}. Body: {response.text}")
+                logger.warning(f"{msg}. 内容: {response.text}")
                 if self.single_mode: self.check_failed.emit(resource.resource_name, msg)
                 return False
 
             tags = response.json()
-            logger.debug(f"Received {len(tags)} tags from GitHub API.")
+            logger.debug(f"从 GitHub API 收到 {len(tags)} 个标签。")
 
             valid_tags = []
             for tag in tags:
@@ -180,26 +180,26 @@ class UpdateChecker(QThread):
                     version_info = semver.VersionInfo.parse(tag_name)
                     valid_tags.append((version_info, tag))
                 except ValueError:
-                    logger.debug(f"Skipping non-SemVer tag: '{tag.get('name')}'")
+                    logger.debug(f"跳过非 SemVer 标签: '{tag.get('name')}'")
 
             if not valid_tags:
-                logger.warning("Repository contains no valid SemVer tags.")
+                logger.warning("仓库中不包含任何有效的 SemVer 标签。")
                 if self.single_mode: self.check_failed.emit(resource.resource_name,
                                                             "仓库中未找到任何有效的 SemVer 版本标签")
                 return False
 
-            logger.debug(f"Found {len(valid_tags)} valid SemVer tags. Sorting...")
+            logger.debug(f"找到 {len(valid_tags)} 个有效的 SemVer 标签。正在排序...")
             valid_tags.sort(key=lambda item: item[0], reverse=True)
 
             latest_tag_data = None
             if channel == "stable":
-                logger.debug("Searching for the latest stable (non-prerelease) version.")
+                logger.debug("正在搜索最新的稳定版 (非预发布版)。")
                 for version_info, tag_data in valid_tags:
                     if version_info.prerelease is None:
                         latest_tag_data = tag_data
                         break
             else:
-                logger.debug(f"Searching for the latest version in '{channel}' channel (including prereleases).")
+                logger.debug(f"正在 '{channel}' 通道中搜索最新版本 (包括预发布版)。")
                 latest_tag_data = valid_tags[0][1]
 
             if not latest_tag_data:
@@ -208,14 +208,14 @@ class UpdateChecker(QThread):
                 if self.single_mode: self.check_failed.emit(resource.resource_name, msg)
                 return False
 
-            logger.debug(f"Latest tag selected for channel '{channel}': {latest_tag_data.get('name')}")
+            logger.debug(f"为 '{channel}' 通道选择的最新标签: {latest_tag_data.get('name')}")
             latest_version_str = latest_tag_data.get("name", "").lstrip("v")
             current_version_str = resource.resource_version.lstrip("v")
-            logger.debug(f"Comparing versions - Latest: '{latest_version_str}', Current: '{current_version_str}'.")
+            logger.debug(f"正在比较版本 - 最新: '{latest_version_str}', 当前: '{current_version_str}'。")
 
             if semver.compare(latest_version_str, current_version_str) > 0:
                 logger.info(
-                    f"New GitHub version found for '{resource.resource_name}': {latest_version_str} (current: {current_version_str}).")
+                    f"为 '{resource.resource_name}' 发现了新的 GitHub 版本: {latest_version_str} (当前: {current_version_str})。")
                 update_info = UpdateInfo(
                     resource_name=resource.resource_name, current_version=resource.resource_version,
                     new_version=latest_version_str, download_url=latest_tag_data.get("zipball_url", ""),
@@ -224,11 +224,10 @@ class UpdateChecker(QThread):
                 self.update_found.emit(update_info)
                 return True
             else:
-                logger.info(f"Resource '{resource.resource_name}' is up to date (GitHub).")
+                logger.info(f"资源 '{resource.resource_name}' 已是最新版本 (GitHub)。")
                 if self.single_mode: self.update_not_found.emit(resource.resource_name)
                 return False
         except requests.exceptions.RequestException as e:
             logger.error(f"检查 GitHub 更新时发生网络请求异常: {e}", exc_info=True)
             if self.single_mode: self.check_failed.emit(resource.resource_name, f"网络请求失败: {str(e)}")
             return False
-

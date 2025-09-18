@@ -29,10 +29,10 @@ class UpdateInstallerFactory(QObject):
         """
         【已修改】主安装方法。resource 参数现在是可选的。
         """
-        logger.info(f"Installer factory creating installer for source: {update_info.source.name}")
+        logger.info(f"安装器工厂正在为更新源 {update_info.source.name} 创建安装器")
 
         if self.thread and self.thread.isRunning():
-            logger.warning("An installation is already in progress.")
+            logger.warning("一个安装任务已在进行中。")
             self.install_failed.emit(update_info.resource_name, "另一个安装正在进行中")
             return
 
@@ -58,11 +58,11 @@ class UpdateInstallerFactory(QObject):
             self.install_failed.emit(update_info.resource_name, error_msg)
             return
 
-        logger.debug(f"Successfully created '{installer_class}' instance.")
+        logger.debug(f"已成功创建 '{installer_class}' 实例。")
 
         self.thread = QThread()
         self.installer.moveToThread(self.thread)
-        logger.debug(f"'{installer_class}' moved to a new QThread.")
+        logger.debug(f"'{installer_class}' 已移动到新的 QThread。")
 
         # 连接信号
         self.installer.install_started.connect(self.install_started)
@@ -70,21 +70,21 @@ class UpdateInstallerFactory(QObject):
         self.installer.install_failed.connect(self.install_failed)
         self.installer.restart_required.connect(self.restart_required)
         self.thread.started.connect(self.installer.install)
-        logger.debug("All signals connected.")
+        logger.debug("所有信号已连接。")
 
         def on_finished():
-            logger.debug(f"QThread for '{installer_class}' has finished. Starting cleanup.")
+            logger.debug(f"'{installer_class}' 的 QThread 已结束。开始清理。")
             self.thread.quit()
             self.thread.wait()
             self.installer.deleteLater()
             self.thread.deleteLater()
             self.installer = None
             self.thread = None
-            logger.debug("Installer and QThread have been cleaned up.")
+            logger.debug("安装器和 QThread 已被清理。")
 
         self.installer.install_completed.connect(on_finished)
         self.installer.install_failed.connect(on_finished)
         self.installer.restart_required.connect(on_finished)
 
-        logger.info("Starting installer thread...")
+        logger.info("正在启动安装器线程...")
         self.thread.start()

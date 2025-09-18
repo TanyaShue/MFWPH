@@ -22,7 +22,7 @@ class AppInstaller(BaseInstaller):
         self.file_path = Path(file_path)
         self.new_version = update_info.new_version
         logger.debug(
-            f"AppInstaller initialized for 'MFWPH 主程序'. New version: '{self.new_version}', File: '{self.file_path}'")
+            f"AppInstaller 已为 'MFWPH 主程序' 初始化。新版本: '{self.new_version}', 文件: '{self.file_path}'")
 
         base_path = update_utils.get_base_path()
         self.app_name = update_utils.get_executable_name("MFWPH")
@@ -31,12 +31,12 @@ class AppInstaller(BaseInstaller):
 
     def install(self):
         """主程序的安装逻辑非常简单：总是启动外部更新器"""
-        logger.info("Starting installation for 'MFWPH 主程序'.")
+        logger.info("开始为 'MFWPH 主程序' 进行安装。")
         self.install_started.emit("MFWPH 主程序")
         try:
             if not self.updater_path.exists():
                 raise FileNotFoundError(f"独立更新程序不存在: {self.updater_path}")
-            logger.debug(f"Updater found at: {self.updater_path}")
+            logger.debug(f"在以下位置找到更新程序: {self.updater_path}")
 
             absolute_file_path = self.file_path.resolve()
             current_pid = os.getpid()
@@ -49,7 +49,7 @@ class AppInstaller(BaseInstaller):
             subprocess.Popen(args, creationflags=creation_flags)
             logger.info(f"已启动独立更新程序: {' '.join(args)}")
 
-            logger.info("Restart required signal emitted. The application should now exit.")
+            logger.info("已发出需要重启信号。应用程序现在应当退出。")
             self.restart_required.emit()
 
             # 这个信号可能在应用退出前不会被主线程处理，但我们仍然发送它

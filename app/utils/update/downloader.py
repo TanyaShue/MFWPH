@@ -1,5 +1,3 @@
-# --- START OF FILE app/utils/update/downloader.py ---
-
 import time
 from pathlib import Path
 import requests
@@ -24,13 +22,13 @@ class UpdateDownloader(QThread):
         self.output_dir = output_dir
         self.is_cancelled = False
         logger.debug(
-            f"UpdateDownloader initialized for '{self.update_info.resource_name}' to version '{self.update_info.new_version}'.")
+            f"UpdateDownloader 已为 '{self.update_info.resource_name}' 初始化，目标版本 '{self.update_info.new_version}'。")
 
     def run(self):
         resource_name = self.update_info.resource_name
         url = self.update_info.download_url
         version = self.update_info.new_version
-        logger.debug(f"Downloader thread started for '{resource_name}'. URL: {url}")
+        logger.debug(f"下载器线程已为 '{resource_name}' 启动。URL: {url}")
 
         try:
             if not url:
@@ -58,7 +56,7 @@ class UpdateDownloader(QThread):
                     if self.is_cancelled:
                         f.close()
                         if output_path.exists(): output_path.unlink()
-                        logger.info(f"Download for '{resource_name}' cancelled.")
+                        logger.info(f"'{resource_name}' 的下载任务已被取消。")
                         return
 
                     if chunk:
@@ -71,7 +69,7 @@ class UpdateDownloader(QThread):
                         progress = (downloaded / total_size) * 100 if total_size > 0 else 0
                         self.progress_updated.emit(resource_name, progress, speed_mb_per_sec)
 
-            logger.info(f"Successfully downloaded '{resource_name}' to '{output_path}'.")
+            logger.info(f"已成功下载 '{resource_name}' 到 '{output_path}'。")
             self.download_completed.emit(self.update_info, str(output_path))
 
         except Exception as e:
@@ -80,5 +78,3 @@ class UpdateDownloader(QThread):
 
     def cancel(self):
         self.is_cancelled = True
-
-# --- END OF FILE app/utils/update/downloader.py ---

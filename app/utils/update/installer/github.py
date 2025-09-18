@@ -36,7 +36,7 @@ class GithubInstaller(BaseInstaller):
                 self._update_via_zip(resource_path)
 
         except Exception as e:
-            logger.error(f"安装 GitHub 资源 {self.resource.resource_name} 失败: {e}")
+            logger.error(f"安装 GitHub 资源 {self.resource.resource_name} 失败: {e}", exc_info=True)
             self.install_failed.emit(self.resource.resource_name, str(e))
 
     def _update_via_git(self, repo: git.Repo):
@@ -63,6 +63,7 @@ class GithubInstaller(BaseInstaller):
             global_config.save_all_configs()
             self.install_completed.emit(self.resource.resource_name, self.new_version, [])
         except Exception as e:
+            logger.error(f"Git 更新失败: {str(e)}", exc_info=True)
             self.install_failed.emit(self.resource.resource_name, f"Git 更新失败: {str(e)}")
 
     def _update_via_zip(self, resource_path: Path):
@@ -78,6 +79,7 @@ class GithubInstaller(BaseInstaller):
             global_config.save_all_configs()
             self.install_completed.emit(self.resource.resource_name, self.new_version, [])
         except Exception as e:
+            logger.error(f"ZIP 更新失败: {str(e)}", exc_info=True)
             self.install_failed.emit(self.resource.resource_name, f"ZIP 更新失败: {str(e)}")
 
     def _apply_full_update_from_zip(self, source_zip_path, target_dir):
@@ -93,4 +95,3 @@ class GithubInstaller(BaseInstaller):
                 shutil.rmtree(target_dir)
             shutil.copytree(source_content_dir, target_dir)
             logger.info(f"已从 '{source_zip_path}' 完整更新到 '{target_dir}'")
-

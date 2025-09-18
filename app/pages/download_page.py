@@ -742,7 +742,7 @@ class DownloadPage(QWidget):
             (r for r in global_config.get_all_resource_configs() if r.resource_name == update_info.resource_name), None)
         if resource:
             # 下载完成后，调用安装器，并传递真实的 file_path
-            self.installer.install_update(update_info, resource, file_path)
+            self.installer.install_update(update_info, file_path, resource)
         else:
             self._handle_install_failed(update_info.resource_name, "找不到本地资源配置")
 
