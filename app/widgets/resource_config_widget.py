@@ -127,7 +127,7 @@ class ResourceConfigWidget(QFrame):
 
         layout.addLayout(settings_row_layout)
 
-        # ... 资源包部分保持不变 ...
+        # ... 资源包部分 ...
         pack_layout = QHBoxLayout()
         pack_label = QLabel("资源包:")
         self.pack_selector = QComboBox()
@@ -255,7 +255,9 @@ class ResourceConfigWidget(QFrame):
 
         # 强制刷新样式
         for btn in [self.add_cancel_button, self.edit_save_button, self.delete_confirm_button]:
-            btn.style().polish(btn)    # --- 核心逻辑与数据方法 (无弹窗) ---
+            btn.style().polish(btn)
+
+    # --- 核心逻辑与数据方法 (无弹窗) ---
 
     def show_for_resource(self, device_config, resource_name):
         self.device_config = device_config
@@ -284,7 +286,8 @@ class ResourceConfigWidget(QFrame):
         self.settings_selector.clear()
 
         app_config = global_config.get_app_config()
-        resource_settings_list = [s for s in app_config.resource_settings if s.resource_name == self.selected_resource_name]
+        resource_settings_list = [s for s in app_config.resource_settings if
+                                  s.resource_name == self.selected_resource_name]
 
         for settings in resource_settings_list:
             self.settings_selector.addItem(settings.name, settings.name)
@@ -309,19 +312,23 @@ class ResourceConfigWidget(QFrame):
         new_settings_name = self.settings_selector.itemData(index)
         self.selected_settings_name = new_settings_name
 
-        resource_in_device = next((r for r in self.device_config.resources if r.resource_name == self.selected_resource_name), None)
+        resource_in_device = next(
+            (r for r in self.device_config.resources if r.resource_name == self.selected_resource_name), None)
         if resource_in_device and resource_in_device.settings_name != new_settings_name:
             resource_in_device.settings_name = new_settings_name
             global_config.save_all_configs()
-            self.logger.info(f"设备 {self.device_config.device_name} 的资源 {self.selected_resource_name} 现在使用设置 {new_settings_name}")
+            self.logger.info(
+                f"设备 {self.device_config.device_name} 的资源 {self.selected_resource_name} 现在使用设置 {new_settings_name}")
 
         self.settings_changed.emit(self.selected_resource_name, new_settings_name)
         self._update_ui_state()
 
     def delete_settings(self):
         app_config = global_config.get_app_config()
-        app_config.resource_settings = [s for s in app_config.resource_settings if not (s.name == self.selected_settings_name and s.resource_name == self.selected_resource_name)]
-        alternative_setting = next((s for s in app_config.resource_settings if s.resource_name == self.selected_resource_name), None)
+        app_config.resource_settings = [s for s in app_config.resource_settings if not (
+                    s.name == self.selected_settings_name and s.resource_name == self.selected_resource_name)]
+        alternative_setting = next(
+            (s for s in app_config.resource_settings if s.resource_name == self.selected_resource_name), None)
         new_setting_name = alternative_setting.name if alternative_setting else None
         for device in app_config.devices:
             for res in device.resources:
@@ -333,10 +340,12 @@ class ResourceConfigWidget(QFrame):
 
     def rename_settings(self, old_name, new_name):
         app_config = global_config.get_app_config()
-        if any(s.name == new_name and s.resource_name == self.selected_resource_name for s in app_config.resource_settings):
+        if any(s.name == new_name and s.resource_name == self.selected_resource_name for s in
+               app_config.resource_settings):
             self.logger.warning(f"设置名称 '{new_name}' 已存在，重命名失败。")
             return
-        settings = next((s for s in app_config.resource_settings if s.name == old_name and s.resource_name == self.selected_resource_name), None)
+        settings = next((s for s in app_config.resource_settings if
+                         s.name == old_name and s.resource_name == self.selected_resource_name), None)
         if settings: settings.name = new_name
         for device in app_config.devices:
             for res in device.resources:
@@ -351,13 +360,16 @@ class ResourceConfigWidget(QFrame):
         base_name = "新方案"
         new_name = base_name
         counter = 1
-        while any(s.name == new_name and s.resource_name == self.selected_resource_name for s in app_config.resource_settings):
+        while any(s.name == new_name and s.resource_name == self.selected_resource_name for s in
+                  app_config.resource_settings):
             new_name = f"{base_name}_{counter}"
             counter += 1
-        new_settings = ResourceSettings(name=new_name, resource_name=self.selected_resource_name, task_instances={}, task_order=[])
+        new_settings = ResourceSettings(name=new_name, resource_name=self.selected_resource_name, task_instances={},
+                                        task_order=[])
         app_config.resource_settings.append(new_settings)
         self.selected_settings_name = new_name
-        device_resource = next((r for r in self.device_config.resources if r.resource_name == self.selected_resource_name), None)
+        device_resource = next(
+            (r for r in self.device_config.resources if r.resource_name == self.selected_resource_name), None)
         if device_resource: device_resource.settings_name = new_name
         global_config.save_all_configs()
         self.update_settings_selector()
@@ -384,24 +396,27 @@ class ResourceConfigWidget(QFrame):
             for pack in resource_config.resource_pack:
                 pack_name = pack.get('name', '未命名资源包')
                 self.pack_selector.addItem(pack_name, pack_name)
-            device_resource = next((r for r in self.device_config.resources if r.resource_name == self.selected_resource_name), None)
-            if device_resource and hasattr(device_resource, 'selected_pack') and device_resource.selected_pack:
-                index = self.pack_selector.findData(device_resource.selected_pack)
+            device_resource = next(
+                (r for r in self.device_config.resources if r.resource_name == self.selected_resource_name), None)
+            if device_resource and hasattr(device_resource, 'resource_pack') and device_resource.resource_pack:
+                index = self.pack_selector.findData(device_resource.resource_pack)
                 if index >= 0: self.pack_selector.setCurrentIndex(index)
         self.pack_selector.blockSignals(False)
 
     def on_pack_changed(self, index):
         if index < 0: return
         pack_name = self.pack_selector.itemData(index)
-        device_resource = next((r for r in self.device_config.resources if r.resource_name == self.selected_resource_name), None)
+        device_resource = next(
+            (r for r in self.device_config.resources if r.resource_name == self.selected_resource_name), None)
         if device_resource:
-            if not hasattr(device_resource, 'selected_pack') or device_resource.selected_pack != pack_name:
-                device_resource.selected_pack = pack_name
+            if not hasattr(device_resource, 'resource_pack') or device_resource.resource_pack != pack_name:
+                device_resource.resource_pack = pack_name
                 global_config.save_all_configs()
                 self.logger.info(f"资源 [{self.selected_resource_name}] 已切换到资源包 [{pack_name}]")
 
     def update_resource_status(self, resource_name, enabled):
         if self.status_dot and self.status_text and self.selected_resource_name == resource_name:
-            self.status_dot.setStyleSheet(f"background-color: {'#34a853' if enabled else '#ea4335'}; border-radius: 4px;")
+            self.status_dot.setStyleSheet(
+                f"background-color: {'#34a853' if enabled else '#ea4335'}; border-radius: 4px;")
             self.status_text.setText(f"{'已启用' if enabled else '已禁用'}")
             self.status_text.setStyleSheet(f"color: {'#34a853' if enabled else '#ea4335'}; font-size: 12px;")
