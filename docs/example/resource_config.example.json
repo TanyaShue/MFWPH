@@ -1,9 +1,10 @@
 {
   "resource_name": "demo_resource",
+  "resource_id": "demo_resource## 这个名称要和你这个资源所处的文件夹名称相同,git仓库名称一样,主要用于查找目录",
   "resource_version": "1.0.0",
   "resource_author": "John Doe",
   "resource_description": "示例资源描述",
-  "resource_update_service_id": "update_service_001",
+  "mirror_update_service_id": "update_service_001",
   "resource_rep_url": "https://example.com/repo.git",
   "resource_icon": "icon.png",
   "agent": {
@@ -12,11 +13,28 @@
     "agent_path": "agent.py",
     "use_venv": true
   },
+  "resource_pack": [
+    {
+      "name": "国服",
+      "path": [
+        "./resource_pack/Official"
+      ]
+    },
+    {
+      "name": "日服",
+      "path": [
+        "./resource_pack/Official",
+        "./resource_pack/日服"
+      ]
+    }
+  ],
   "resource_tasks": [
     {
       "task_name": "task1",
       "task_entry": "main.py",
-      "option": ["enable_logging"]
+      "option": [
+        "enable_logging"
+      ]
     }
   ],
   "options": [
@@ -30,8 +48,14 @@
       "type": "select",
       "default": "fast",
       "choices": [
-        {"name": "Fast Mode", "value": "fast"},
-        {"name": "Safe Mode", "value": "safe"}
+        {
+          "name": "Fast Mode",
+          "value": "fast"
+        },
+        {
+          "name": "Safe Mode",
+          "value": "safe"
+        }
       ]
     }
   ]
