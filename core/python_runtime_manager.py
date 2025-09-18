@@ -95,13 +95,12 @@ class PythonRuntime:
         except Exception as e:
             self.logger.error(f"保存运行时缓存失败: {e}")
 
+    # --- MODIFIED: 适配预编译版本的目录结构 ---
     def get_python_executable(self) -> Path:
         """获取Python可执行文件路径"""
         if platform.system() == "Windows":
             return self.python_dir / "python.exe"
-
-        # --- MODIFIED: 对Linux和macOS，预编译版的可执行文件路径是统一的 ---
-        # 预编译包解压后内部是标准的目录结构
+        # 对于 Linux 和 macOS 的预编译版本，可执行文件位于 bin 目录下
         return self.python_dir / "bin" / "python3"
 
     def _get_resource_hash(self, resource_name: str) -> str:
@@ -210,72 +209,60 @@ class GlobalPythonRuntimeManager:
             self._initialized = True
             self.logger.info(f"🚀 全局Python运行时管理器初始化: {self.runtime_base_dir.absolute()}")
 
-    # --- MODIFICATION START: 更新下载源为可移植的预编译版本 ---
+    # --- MODIFIED: 更新默认配置以使用预编译、可移植的Python版本 ---
     def _load_config(self) -> Dict[str, Any]:
         """
-        加载配置文件，源已更新为python-build-standalone项目的预编译便携版。
-        这避免了在Linux和macOS上进行本地编译，大大提高了速度和可靠性。
-        如果配置文件不存在，则会使用默认配置自动创建。
+        加载配置文件。如果文件不存在，则使用包含预编译Python源的默认配置创建它。
         """
         config_path = Path("assets/config/python_sources.json")
-        # 使用20240415作为稳定的构建日期标签，如果未来需要更新版本可以修改此日期
         build_tag = "20240415"
 
         default_config = {
             "fallback_versions": {
-                "3.10": "3.10.5",
+                "3.10": "3.10.13",
                 "3.11": "3.11.9",
                 "3.12": "3.12.3"
             },
+            "build_tag": build_tag,
             "python_download_sources": {
                 "windows": [
-                    "https://mirrors.aliyun.com/python-release/windows/python-{version}-embed-amd64.zip",
                     "https://mirrors.huaweicloud.com/python/{version}/python-{version}-embed-amd64.zip",
                     "https://registry.npmmirror.com/-/binary/python/{version}/python-{version}-embed-amd64.zip",
-                    "https://npm.taobao.org/mirrors/python/{version}/python-{version}-embed-amd64.zip",
                     "https://www.python.org/ftp/python/{version}/python-{version}-embed-amd64.zip"
                 ],
                 "linux": [
-                    "https://mirrors.aliyun.com/python-release/source/Python-{version}.tgz",
-                    "https://mirrors.huaweicloud.com/python/{version}/Python-{version}.tgz",
-                    "https://registry.npmmirror.com/-/binary/python/{version}/Python-{version}.tgz",
-                    "https://npm.taobao.org/mirrors/python/{version}/Python-{version}.tgz",
-                    "https://www.python.org/ftp/python/{version}/Python-{version}.tgz"
+                    "https://registry.npmmirror.com/-/binary/python-build-standalone/v{build_tag}/python-{version}-pgo+lto-x86_64-unknown-linux-gnu-install_only.tar.gz",
+                    "https://github.com/indygreg/python-build-standalone/releases/download/{build_tag}/python-{version}-pgo+lto-x86_64-unknown-linux-gnu-install_only.tar.gz"
                 ],
-                "darwin": [
-                    "https://mirrors.aliyun.com/python-release/source/Python-{version}.tgz",
-                    "https://mirrors.huaweicloud.com/python/{version}/Python-{version}.tgz",
-                    "https://registry.npmmirror.com/-/binary/python/{version}/Python-{version}.tgz",
-                    "https://npm.taobao.org/mirrors/python/{version}/Python-{version}.tgz",
-                    "https://www.python.org/ftp/python/{version}/Python-{version}.tgz"
-                ]
+                "darwin": {
+                    "x86_64": [
+                        "https://registry.npmmirror.com/-/binary/python-build-standalone/v{build_tag}/python-{version}-pgo+lto-x86_64-apple-darwin-install_only.tar.gz",
+                        "https://github.com/indygreg/python-build-standalone/releases/download/{build_tag}/python-{version}-pgo+lto-x86_64-apple-darwin-install_only.tar.gz"
+                    ],
+                    "aarch64": [
+                        "https://registry.npmmirror.com/-/binary/python-build-standalone/v{build_tag}/python-{version}-pgo+lto-aarch64-apple-darwin-install_only.tar.gz",
+                        "https://github.com/indygreg/python-build-standalone/releases/download/{build_tag}/python-{version}-pgo+lto-aarch64-apple-darwin-install_only.tar.gz"
+                    ]
+                }
             },
-            "build_tag": build_tag,  # 将构建标签也加入配置，方便统一管理
             "pip_sources": [
                 "https://pypi.tuna.tsinghua.edu.cn/simple/",
                 "https://mirrors.aliyun.com/pypi/simple/",
                 "https://pypi.douban.com/simple/",
                 "https://pypi.mirrors.ustc.edu.cn/simple/",
-                "https://mirrors.cloud.tencent.com/pypi/simple/",
                 "https://pypi.org/simple/"
             ],
             "get_pip_sources": [
-                "https://mirrors.aliyun.com/pypi/get-pip.py",
-                "https://pypi.tuna.tsinghua.edu.cn/mirrors/pypi/get-pip.py",
-                "https://mirrors.huaweicloud.com/repository/pypi/get-pip.py",
-                "https://registry.npmmirror.com/-/binary/pypa/get-pip.py",
-                "https://bootstrap.pypa.io/get-pip.py"
+                "https://bootstrap.pypa.io/get-pip.py",
+                "https://pypi.tuna.tsinghua.edu.cn/mirrors/pypi/get-pip.py"
             ]
         }
 
-        # --- 新增逻辑：如果文件不存在，则创建并写入默认配置 ---
         if not config_path.exists():
             self.logger.info(f"配置文件 {config_path} 不存在，将创建默认配置文件。")
             try:
-                # 确保父目录存在
                 config_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(config_path, 'w', encoding='utf-8') as f:
-                    # 将 default_config 写入文件，使用 indent 参数美化格式
                     json.dump(default_config, f, indent=4, ensure_ascii=False)
                 return default_config
             except Exception as e:
@@ -288,8 +275,6 @@ class GlobalPythonRuntimeManager:
         except Exception as e:
             self.logger.error(f"加载配置文件 {config_path} 失败: {e}。将使用默认配置。")
             return default_config
-
-    # --- MODIFICATION END ---
 
     def get_runtime(self, version: str) -> PythonRuntime:
         """获取指定版本的Python运行时"""
@@ -330,23 +315,21 @@ class GlobalPythonRuntimeManager:
         runtime = self.get_runtime(version)
         if runtime.is_python_installed():
             self.logger.info(f"✅ Python {version} 已安装")
-            # 即使Python已安装，仍需确保pip可用
             return await self._ensure_pip_installed(runtime)
+
         lock = await self._get_install_lock(version)
         async with lock:
             if runtime.is_python_installed():
                 return await self._ensure_pip_installed(runtime)
+
             self.logger.info(f"Python {version} 未安装，开始下载...")
-            # 下载和安装Python的核心逻辑
             python_installed = await self._download_and_install_python_core(runtime)
             if not python_installed:
                 self.logger.error(f"Python {runtime.version} 核心安装失败。")
                 notification_manager.show_error(f"Python {runtime.version} 安装失败", "错误")
-                # 确保清理不完整的安装
                 shutil.rmtree(runtime.python_dir, ignore_errors=True)
                 return False
 
-            # 独立处理pip的安装，不再因为pip失败而删除整个Python
             if await self._ensure_pip_installed(runtime):
                 self.logger.info(f"✅ Python {runtime.version} 及 pip 安装完成")
                 notification_manager.show_success(f"Python {runtime.version} 安装成功", "完成")
@@ -356,6 +339,7 @@ class GlobalPythonRuntimeManager:
                 notification_manager.show_error(f"Python {runtime.version} 已安装，但 pip 安装失败", "错误")
                 return False
 
+    # --- MODIFIED: 重写此函数以下载预编译版本并处理macOS架构 ---
     async def _download_and_install_python_core(self, runtime: PythonRuntime) -> bool:
         """
         仅下载并解压Python。全平台统一为下载预编译包并解压。
@@ -363,17 +347,30 @@ class GlobalPythonRuntimeManager:
         """
         system = platform.system().lower()
         patch_version = self._get_patch_version(runtime.version)
-        arch = platform.machine()
-        if system == "darwin" and arch == "arm64":
-            arch = "aarch64"
+        all_sources = self.config.get("python_download_sources", {})
 
-        sources = self.config.get("python_download_sources", {}).get(system, [])
+        sources = []
+        if system == "darwin":
+            # 针对 macOS，需要判断 CPU 架构
+            arch = platform.machine()
+            if arch == "arm64":
+                arch = "aarch64"  # 统一为 aarch64
+
+            arch_sources = all_sources.get(system, {}).get(arch)
+            if not arch_sources:
+                self.logger.error(f"不支持的 macOS 架构: {arch}")
+                return False
+            sources = arch_sources
+        else:
+            # 适用于 Windows 和 Linux
+            sources = all_sources.get(system, [])
+
         if not sources:
-            self.logger.error(f"不支持的系统: {system}")
+            self.logger.error(f"未找到适用于 {system} 的 Python 下载源")
             return False
 
         build_tag = self.config.get("build_tag", "20240415")
-        urls = [url.format(version=patch_version, build_tag=build_tag, arch=arch) for url in sources]
+        urls = [url.format(version=patch_version, build_tag=build_tag) for url in sources]
         temp_dir = self.runtime_base_dir / f"temp_{runtime.version}"
 
         try:
@@ -382,12 +379,23 @@ class GlobalPythonRuntimeManager:
                     filename = url.split("/")[-1]
                     temp_dir.mkdir(exist_ok=True)
                     temp_file = temp_dir / filename
+
+                    self.logger.info(f"尝试从 {url} 下载...")
                     await self._download_file_async(url, temp_file)
+
                     await self._extract_archive(temp_file, runtime.python_dir)
+
                     if system == "windows":
                         await self._setup_windows_embedded(runtime.version, runtime.python_dir)
-                    # Python核心文件已解压，返回成功
-                    return True
+
+                    if runtime.get_python_executable().exists():
+                        self.logger.info(f"✅ Python {runtime.version} 核心文件安装成功。")
+                        return True
+                    else:
+                        self.logger.error("解压后未找到 Python 可执行文件，尝试下一个源。")
+                        shutil.rmtree(runtime.python_dir, ignore_errors=True)
+                        continue
+
                 except Exception as e:
                     self.logger.error(f"从 {url} 下载或解压失败: {e}", exc_info=True)
                     shutil.rmtree(runtime.python_dir, ignore_errors=True)
@@ -396,6 +404,7 @@ class GlobalPythonRuntimeManager:
             if temp_dir.exists():
                 shutil.rmtree(temp_dir, ignore_errors=True)
 
+        self.logger.error(f"所有下载源均失败，Python {runtime.version} 安装失败。")
         return False
 
     async def _download_file_async(self, url: str, filepath: Path):
@@ -432,7 +441,7 @@ class GlobalPythonRuntimeManager:
             if archive_path.suffix == '.zip':
                 with zipfile.ZipFile(archive_path, 'r') as zf:
                     zf.extractall(temp_extract_dir)
-            else:  # .tar.gz
+            else:
                 with tarfile.open(archive_path, 'r:*') as tf:
                     tf.extractall(path=temp_extract_dir)
 
@@ -469,14 +478,12 @@ class GlobalPythonRuntimeManager:
         python_exe = runtime.get_python_executable()
         kwargs = self._get_subprocess_kwargs()
 
-        # 1. 检查pip是否已存在
         process = await asyncio.create_subprocess_exec(str(python_exe), "-m", "pip", "--version", **kwargs)
         await process.communicate()
         if process.returncode == 0:
             self.logger.info("pip已存在，开始升级核心包...")
             return await self._upgrade_core_packages(runtime)
 
-        # 2. 如果pip不存在，尝试使用ensurepip
         self.logger.info("pip未找到，尝试使用 ensurepip 进行安装...")
         process_ensure = await asyncio.create_subprocess_exec(
             str(python_exe), "-m", "ensurepip", "--upgrade", **kwargs
@@ -490,7 +497,6 @@ class GlobalPythonRuntimeManager:
         self.logger.warning(f"ensurepip 失败: {stderr_ensure.decode(errors='ignore')}")
         self.logger.info("尝试备选方案：下载 get-pip.py 进行安装...")
 
-        # 3. ensurepip失败，尝试下载get-pip.py
         get_pip_sources = self.config.get("get_pip_sources", [])
         temp_get_pip_path = runtime.python_dir / "get-pip.py"
 
