@@ -1,7 +1,7 @@
 import shutil
 import tempfile
 import zipfile
-import git
+# import git
 from pathlib import Path
 
 from app.utils.update.installer.base import BaseInstaller
@@ -31,6 +31,7 @@ class GithubInstaller(BaseInstaller):
 
             if should_try_git and git_is_available:
                 logger.info(f"开始为 Git 仓库 '{self.resource.resource_name}' 执行 Git 更新...")
+                import git
                 repo = git.Repo(resource_path)
                 self._update_via_git(repo)
 
@@ -51,8 +52,9 @@ class GithubInstaller(BaseInstaller):
             logger.error(f"安装 GitHub 资源 {self.resource.resource_name} 失败: {e}", exc_info=True)
             self.install_failed.emit(self.resource.resource_name, str(e))
 
-    def _update_via_git(self, repo: git.Repo):
+    def _update_via_git(self, repo):
         try:
+            import git
             if repo.is_dirty(untracked_files=True):
                 logger.warning("检测到本地有未提交的修改，将使用 git stash 暂存。")
                 repo.git.stash('save', 'MaaYYsGUI-Auto-Update-Stash')

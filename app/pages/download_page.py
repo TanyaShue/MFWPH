@@ -3,7 +3,7 @@ import shutil
 import tempfile
 from pathlib import Path
 
-import git
+# import git
 import requests
 from PySide6.QtCore import (QTimer, QCoreApplication, Qt, Signal, Property, QPropertyAnimation, QEasingCurve, QThread)
 from PySide6.QtGui import QIcon, QPainter, QColor, QPen, QPixmap
@@ -12,7 +12,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QFrame, QPushButton
                                QDialog, QStackedWidget,
                                QScrollArea, QGraphicsDropShadowEffect,
                                QStyleOption, QStyle, QComboBox, QProgressBar)  # 新增导入 QProgressBar
-from git import InvalidGitRepositoryError
+# from git import InvalidGitRepositoryError
 
 from app.models.config.app_config import ResourceUpdateConfig
 from app.models.config.global_config import global_config
@@ -460,6 +460,7 @@ class GitInstallerThread(QThread):
 
             if shutil.which('git') is not None:
                 self.progress_updated.emit("Git 克隆中...")
+                import git
                 git.Repo.clone_from(self.repo_url, final_path, branch=self.ref, depth=1)
             else:
                 notification_manager.show_info("未检测到 Git 环境，将使用 API 下载。")
@@ -728,6 +729,7 @@ class DownloadPage(QWidget):
             # 1. 首先检查 Git 是否存在
             if shutil.which('git') is not None:
                 try:
+                    import git
                     # 2. 如果 Git 存在，再尝试打开仓库
                     git.Repo(resource_path)
                     is_git_repo = True
