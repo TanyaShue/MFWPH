@@ -2,7 +2,6 @@ import os
 import shutil
 import sys
 
-import git
 import psutil
 from PySide6.QtGui import QPalette, QColor
 
@@ -144,59 +143,6 @@ def kill_processes():
             app_logger.error(f"Error handling process: {e}")
 
     app_logger.info("Process cleanup completed")
-
-def check_git_environment(path='.'):
-    """
-    检测当前程序环境是否有可用的 Git 环境。
-
-    这个方法会检查两件事：
-    1. 系统是否安装了 Git 并且在 PATH 中可以找到。
-    2. 指定的路径（默认为当前目录）是否是一个 Git 仓库。
-
-    Args:
-        path (str, optional): 要检查的目录路径。默认为当前目录 '.'。
-
-    Returns:
-        tuple: 一个包含两个布尔值的元组 (git_installed, is_repo)。
-               - git_installed (bool): 如果系统安装了 Git，则为 True，否则为 False。
-               - is_repo (bool): 如果指定路径是 Git 仓库，则为 True，否则为 False。
-    """
-    git_installed = is_git_installed()
-    is_repo = False
-
-    if git_installed:
-        is_repo = is_git_repository(path)
-
-    return git_installed, is_repo
-
-def is_git_installed():
-    """
-    检查系统中是否安装了 Git。
-
-    Returns:
-        bool: 如果找到了 Git 可执行文件，则为 True，否则为 False。
-    """
-    return shutil.which('git') is not None
-
-def is_git_repository(path='.'):
-    """
-    检查给定的路径是否是一个 Git 仓库。
-
-    Args:
-        path (str, optional): 要检查的目录路径。默认为当前目录 '.'。
-
-    Returns:
-        bool: 如果路径是一个有效的 Git 仓库，则为 True，否则为 False。
-    """
-    try:
-        _ = git.Repo(path, search_parent_directories=True)
-        return True
-    except git.exc.InvalidGitRepositoryError:
-        return False
-    except git.exc.NoSuchPathError:
-        return False
-
-
 
 
 logger = log_manager.get_app_logger()

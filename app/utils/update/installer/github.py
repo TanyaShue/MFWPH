@@ -24,16 +24,28 @@ class GithubInstaller(BaseInstaller):
         resource_path = Path(self.resource.source_file).parent
 
         try:
-            # 策略1：如果 file_path 为 None，说明 UI 层已决策使用 Git 路径
-            if self.file_path is None:
+            # --- 修改开始 ---
+            # 检查是否应该尝试Git更新 (file_path为None) 并且 Git环境是否存在
+            should_try_git = self.file_path is None
+            git_is_available = shutil.which('git') is not None
+
+            if should_try_git and git_is_available:
                 logger.info(f"开始为 Git 仓库 '{self.resource.resource_name}' 执行 Git 更新...")
                 repo = git.Repo(resource_path)
                 self._update_via_git(repo)
 
-            # 策略2：如果 file_path 有值，说明 UI 层决策了下载，使用 ZIP 路径
+            # 如果不满足Git更新条件，或者UI决策了下载，则统一走ZIP路径
             else:
-                logger.info(f"'{self.resource.resource_name}' 不是 Git 仓库或UI决策下载，将使用 ZIP 包覆盖更新。")
+                if should_try_git and not git_is_available:
+                    logger.warning(f"'{self.resource.resource_name}' 是一个Git仓库，但未检测到Git环境，将尝试ZIP包更新。")
+                    # 如果没有ZIP包，这里需要报错
+                    if not self.file_path:
+                        raise FileNotFoundError("需要Git更新但环境不存在，且没有提供备用的ZIP文件路径。")
+                else:
+                    logger.info(f"'{self.resource.resource_name}' 不是 Git 仓库或UI决策下载，将使用 ZIP 包覆盖更新。")
+
                 self._update_via_zip(resource_path)
+            # --- 修改结束 ---
 
         except Exception as e:
             logger.error(f"安装 GitHub 资源 {self.resource.resource_name} 失败: {e}", exc_info=True)

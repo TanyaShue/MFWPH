@@ -723,11 +723,19 @@ class DownloadPage(QWidget):
         # 决策点：仅对GitHub源检查本地是否为Git仓库
         if update_info.source == UpdateSource.GITHUB:
             resource_path = Path(resource.source_file).parent
-            try:
-                # 尝试打开Git仓库，如果成功，说明是Git环境
-                git.Repo(resource_path)
-                is_git_repo = True
-            except InvalidGitRepositoryError:
+
+            # --- 修改开始 ---
+            # 1. 首先检查 Git 是否存在
+            if shutil.which('git') is not None:
+                try:
+                    # 2. 如果 Git 存在，再尝试打开仓库
+                    git.Repo(resource_path)
+                    is_git_repo = True
+                except InvalidGitRepositoryError:
+                    # 文件夹不是一个Git仓库，但Git程序是存在的
+                    is_git_repo = False
+            else:
+                # 如果 Git 程序本身就不存在，那它肯定不是一个Git仓库
                 is_git_repo = False
 
         # 情况A：是Git仓库，直接安装，跳过下载
