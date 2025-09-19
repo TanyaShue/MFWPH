@@ -1,9 +1,7 @@
 # --- START OF FILE app/widgets/task_options_widget.py ---
 from typing import Dict
 
-# task_options_widget.py
-from PySide6.QtCore import Qt, Signal
-from PySide6.QtGui import QIcon
+from PySide6.QtCore import Qt
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
     QScrollArea, QCheckBox, QLineEdit, QSizePolicy, QTextEdit, QSplitter
@@ -25,15 +23,15 @@ class TaskOptionsWidget(QFrame):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.current_resource_name = None
-        self.current_instance_id = None  # 新增：使用 instance_id 唯一标识
+        self.current_instance_id = None  # 使用 instance_id 作为唯一标识符
         self.current_task_name = None
         self.current_task_config = None
         self.current_device_resource = None
-        self.option_widgets = {}
+        self.option_widgets = {}  # 存储选项控件的引用
         self.logger = None
-        self.init_ui()
         self.setObjectName("taskSettingsFrame")
         self.setFrameShape(QFrame.StyledPanel)
+        self.init_ui()
 
     def init_ui(self):
         """初始化UI"""
@@ -72,7 +70,6 @@ class TaskOptionsWidget(QFrame):
         self.content_layout = QVBoxLayout(self.content_widget)
         self.content_layout.setContentsMargins(0, 5, 0, 5)
         self.content_layout.setSpacing(8)
-
         self.scroll_area.setWidget(self.content_widget)
         self.splitter.addWidget(self.scroll_area)
 
@@ -80,26 +77,23 @@ class TaskOptionsWidget(QFrame):
         self.doc_widget = QWidget()
         doc_layout = QVBoxLayout(self.doc_widget)
         doc_layout.setContentsMargins(5, 5, 5, 5)
-
         doc_title = QLabel("选项文档")
         doc_title.setObjectName("docTitle")
         self.doc_display = QTextEdit()
         self.doc_display.setReadOnly(True)
         self.doc_display.setObjectName("docDisplay")
         self.doc_display.setPlaceholderText("点击上方的一个选项来查看其详细说明...")
-
         doc_layout.addWidget(doc_title)
         doc_layout.addWidget(self.doc_display)
-        self.doc_widget.setVisible(False)
-
+        self.doc_widget.setVisible(False)  # 初始隐藏
         self.splitter.addWidget(self.doc_widget)
-        self.splitter.setSizes([400, 100])
+        self.splitter.setSizes([400, 100])  # 设置初始大小比例
 
         self.layout.addWidget(self.splitter)
         self.show_placeholder()
 
     def show_placeholder(self):
-        """显示占位符信息"""
+        """显示占位符信息，当没有任务被选中时"""
         self._clear_content()
         self.doc_widget.setVisible(False)
 
@@ -112,7 +106,7 @@ class TaskOptionsWidget(QFrame):
         self.content_layout.addStretch()
 
     def show_task_options(self, resource_name, instance_id, task_name, task_config, device_resource):
-        """显示指定任务实例的选项设置，现在通过 instance_id 定位"""
+        """外部调用的主方法，显示指定任务实例的选项设置"""
         self.current_resource_name = resource_name
         self.current_instance_id = instance_id
         self.current_task_name = task_name
@@ -139,6 +133,7 @@ class TaskOptionsWidget(QFrame):
         current_instance_options = self._get_current_instance_options()
         self.option_widgets.clear()
 
+        # 遍历任务定义中的每个选项，并为其创建控件
         for option_name in task_config.option:
             option_config = next(
                 (opt for opt in full_resource_config.options if opt.name == option_name),
@@ -147,6 +142,7 @@ class TaskOptionsWidget(QFrame):
             if not option_config:
                 continue
 
+            # 每个选项都放在一个可点击的容器中，以显示文档
             option_container = QFrame()
             option_container.setObjectName("optionContainer")
             container_layout = QVBoxLayout(option_container)
@@ -166,22 +162,23 @@ class TaskOptionsWidget(QFrame):
         self.content_layout.addStretch()
 
     def _show_option_doc(self, option_config):
-        """显示选中选项的文档"""
+        """显示选中选项的文档字符串"""
         if hasattr(option_config, 'doc') and option_config.doc:
             self.doc_display.setText(option_config.doc)
             self.doc_widget.setVisible(True)
         else:
-            self.doc_widget.setVisible(False)
+            self.doc_display.setText("此选项没有提供文档说明。")
+            self.doc_widget.setVisible(True)
 
     def _get_current_instance_options(self) -> Dict[str, OptionConfig]:
-        """获取当前任务实例的选项值字典"""
+        """获取当前任务实例已保存的选项值字典"""
         task_instance = self._get_current_task_instance()
         if not task_instance or not hasattr(task_instance, 'options'):
             return {}
         return {opt.option_name: opt for opt in task_instance.options}
 
     def _get_current_task_instance(self) -> TaskInstance | None:
-        """辅助方法，获取当前正在编辑的任务实例对象"""
+        """辅助方法，根据当前上下文获取正在编辑的任务实例对象"""
         if not self.current_device_resource or not self.current_instance_id:
             return None
         app_config = global_config.get_app_config()
@@ -197,7 +194,7 @@ class TaskOptionsWidget(QFrame):
         return settings.task_instances.get(self.current_instance_id)
 
     def _create_option_widget(self, option, option_name, current_options):
-        """创建单个选项的控件"""
+        """根据选项类型（如选择、布尔、输入）创建相应的控件"""
         if isinstance(option, SettingsGroupOption):
             return self._create_settings_group_widget(option, option_name, current_options)
 
@@ -216,13 +213,13 @@ class TaskOptionsWidget(QFrame):
         option_layout.addWidget(option_label)
         option_layout.addStretch()
 
+        # 根据选项类型创建不同的输入控件
         if isinstance(option, SelectOption):
             widget = NoWheelComboBox()
             widget.setMinimumWidth(120)
             for choice in option.choices:
                 widget.addItem(choice.name, choice.value)
 
-            # 优先从实例的选项中取值，否则使用默认值
             current_value = option.default
             if option_name in current_options:
                 current_value = current_options[option_name].value
@@ -233,45 +230,32 @@ class TaskOptionsWidget(QFrame):
 
             widget.currentIndexChanged.connect(
                 lambda index, w=widget, o_name=option_name:
-                self._on_option_changed(o_name, w.itemData(index))  # 使用 itemData 获取正确值
+                self._on_option_changed(o_name, w.itemData(index))
             )
-
         elif isinstance(option, BoolOption):
             widget = QCheckBox()
             widget.setObjectName("optionCheckBox")
-
             current_value = option.default
             if option_name in current_options:
                 current_value = current_options[option_name].value
-
             widget.setChecked(bool(current_value))
-
             widget.stateChanged.connect(
                 lambda state, o_name=option_name, cb=widget:
                 self._on_option_changed(o_name, cb.isChecked())
             )
-
         elif isinstance(option, InputOption):
             widget = QLineEdit()
             widget.setObjectName("optionLineEdit")
             widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
             widget.setMinimumWidth(120)
-
             current_value = option.default
             if option_name in current_options:
                 current_value = current_options[option_name].value
-
             widget.setText(str(current_value))
-
             widget.editingFinished.connect(
                 lambda o_name=option_name, le=widget:
                 self._on_option_changed(o_name, le.text())
             )
-            if hasattr(option, 'option_type'):
-                if option.option_type == 'number':
-                    widget.setPlaceholderText("输入数字...")
-                elif option.option_type == 'text':
-                    widget.setPlaceholderText("输入文本...")
         else:
             widget = QLabel("不支持的选项类型")
             widget.setObjectName("notSupportedLabel")
@@ -281,23 +265,25 @@ class TaskOptionsWidget(QFrame):
         return option_widget
 
     def _create_settings_group_widget(self, option, option_name, current_options):
-        """创建设置组控件"""
+        """为 SettingsGroupOption 创建可折叠的组控件"""
         group_widget = CollapsibleGroupWidget(option.name)
         if hasattr(option, 'description') and option.description:
             group_widget.set_description(option.description)
 
+        # 设置组的启用状态
         group_enabled = option.default
         if option_name in current_options:
             group_enabled = bool(current_options[option_name].value)
         group_widget.set_group_enabled(group_enabled)
 
+        # 为组内的每个子选项创建控件
         for sub_option in option.settings:
             sub_option_name = f"{option_name}.{sub_option.name}"
+            # ... (创建子控件的逻辑与 _create_option_widget 类似) ...
             sub_widget_container = QWidget()
             sub_layout = QHBoxLayout(sub_widget_container)
             sub_layout.setContentsMargins(0, 0, 0, 0)
             sub_layout.setSpacing(8)
-
             sub_label = QLabel(sub_option.name)
             sub_label.setObjectName("subOptionLabel")
             sub_label.setMinimumWidth(100)
@@ -313,38 +299,26 @@ class TaskOptionsWidget(QFrame):
             if isinstance(sub_option, SelectOption):
                 widget = NoWheelComboBox()
                 widget.setMinimumWidth(120)
-                for choice in sub_option.choices:
-                    widget.addItem(choice.name, choice.value)
-
+                for choice in sub_option.choices: widget.addItem(choice.name, choice.value)
                 index = widget.findData(current_value)
                 if index >= 0: widget.setCurrentIndex(index)
-
                 widget.currentIndexChanged.connect(
-                    lambda index, w=widget, o_name=sub_option_name:
-                    self._on_option_changed(o_name, w.itemData(index))
-                )
-
+                    lambda i, w=widget, o=sub_option_name: self._on_option_changed(o, w.itemData(i)))
             elif isinstance(sub_option, BoolOption):
                 widget = QCheckBox()
                 widget.setObjectName("subOptionCheckBox")
                 widget.setChecked(bool(current_value))
                 widget.stateChanged.connect(
-                    lambda state, o_name=sub_option_name, cb=widget:
-                    self._on_option_changed(o_name, cb.isChecked())
-                )
-
+                    lambda s, o=sub_option_name, c=widget: self._on_option_changed(o, c.isChecked()))
             elif isinstance(sub_option, InputOption):
                 widget = QLineEdit()
                 widget.setObjectName("subOptionLineEdit")
                 widget.setSizePolicy(QSizePolicy.Expanding, QSizePolicy.Fixed)
                 widget.setMinimumWidth(120)
                 widget.setText(str(current_value))
-                widget.editingFinished.connect(
-                    lambda o_name=sub_option_name, le=widget:
-                    self._on_option_changed(o_name, le.text())
-                )
+                widget.editingFinished.connect(lambda o=sub_option_name, l=widget: self._on_option_changed(o, l.text()))
             else:
-                widget = QLabel("不支持的选项类型")
+                widget = QLabel("不支持")
                 widget.setObjectName("notSupportedLabel")
 
             sub_layout.addWidget(widget)
@@ -358,14 +332,14 @@ class TaskOptionsWidget(QFrame):
         return group_widget
 
     def _on_settings_group_changed(self, group_name, enabled):
-        """处理设置组启用状态改变"""
+        """处理设置组启用/禁用状态的改变"""
         self._on_option_changed(group_name, enabled)
         if self.logger:
             status = "已启用" if enabled else "已禁用"
             self.logger.info(f"设置组 [{group_name}] {status}")
 
     def _on_option_changed(self, option_name, value):
-        """处理选项值改变，直接修改 TaskInstance 的 options"""
+        """核心方法：当任何选项的值改变时，直接修改数据模型并保存"""
         task_instance = self._get_current_task_instance()
         if not task_instance:
             if self.logger: self.logger.error(f"无法找到 instance_id 为 {self.current_instance_id} 的任务实例！")
@@ -394,30 +368,21 @@ class TaskOptionsWidget(QFrame):
         global_config.save_all_configs()
 
         if self.logger:
-            value_str = "启用" if isinstance(value, bool) and value else \
-                "禁用" if isinstance(value, bool) and not value else \
-                    str(value)
-            if prev_value is not None:
-                prev_value_str = "启用" if isinstance(prev_value, bool) and prev_value else \
-                    "禁用" if isinstance(prev_value, bool) and not prev_value else \
-                        str(prev_value)
-                self.logger.info(
-                    f"任务 [{self.current_task_name}] 的选项 [{option_name}] "
-                    f"已更新: {prev_value_str} → {value_str}"
-                )
-            else:
-                self.logger.info(
-                    f"任务 [{self.current_task_name}] 添加了新选项 [{option_name}]，"
-                    f"值为: {value_str}"
-                )
+            # 格式化日志输出，使其更易读
+            value_str = "启用" if isinstance(value, bool) and value else "禁用" if isinstance(value,
+                                                                                              bool) and not value else str(
+                value)
+            log_msg = f"任务 [{self.current_task_name}] 的选项 [{option_name}] 已更新为: {value_str}"
+            self.logger.info(log_msg)
 
     def _convert_option_value(self, option_name, value):
-        """转换选项值的类型"""
+        """根据选项的原始定义，将输入值转换为正确的类型（如布尔、数字）"""
         if not self.current_resource_name: return value
         full_resource_config = global_config.get_resource_config(self.current_resource_name)
         if not full_resource_config: return value
 
         original_option = None
+        # 处理嵌套选项（在SettingsGroup中）
         if '.' in option_name:
             group_name, sub_option_name = option_name.split('.', 1)
             group_option = next((opt for opt in full_resource_config.options if opt.name == group_name), None)
@@ -428,6 +393,7 @@ class TaskOptionsWidget(QFrame):
 
         if not original_option: return value
 
+        # 类型转换
         if isinstance(original_option, (BoolOption, SettingsGroupOption)):
             if not isinstance(value, bool):
                 return str(value).lower() in ['true', '1', 'yes', 'y']
@@ -436,10 +402,11 @@ class TaskOptionsWidget(QFrame):
                 return float(value) if '.' in str(value) else int(value)
             except (ValueError, TypeError):
                 if self.logger: self.logger.error(f"选项 {option_name} 的值 '{value}' 无法转换为数字")
+                return original_option.default  # 转换失败时返回默认值
         return value
 
     def _show_error(self, message):
-        """显示错误信息"""
+        """在界面上显示错误信息"""
         self._clear_content()
         error_label = QLabel(message)
         error_label.setAlignment(Qt.AlignCenter)
@@ -449,7 +416,7 @@ class TaskOptionsWidget(QFrame):
         self.content_layout.addStretch()
 
     def _show_no_options(self):
-        """显示无选项信息"""
+        """显示无选项的提示信息"""
         self._clear_content()
         no_options_label = QLabel("该任务没有可配置的选项")
         no_options_label.setAlignment(Qt.AlignCenter)
@@ -459,7 +426,7 @@ class TaskOptionsWidget(QFrame):
         self.content_layout.addStretch()
 
     def _clear_content(self):
-        """清除内容"""
+        """安全地清除滚动区域内的所有内容"""
         while self.content_layout.count():
             item = self.content_layout.takeAt(0)
             if item:
@@ -468,7 +435,7 @@ class TaskOptionsWidget(QFrame):
                     widget.deleteLater()
 
     def clear(self):
-        """清除所有内容并重置状态"""
+        """清除所有内容并重置内部状态，通常在切换设备或资源时调用"""
         self.current_resource_name = None
         self.current_instance_id = None
         self.current_task_name = None
@@ -477,5 +444,3 @@ class TaskOptionsWidget(QFrame):
         self.option_widgets.clear()
         self.title_label.setText("任务选项设置")
         self.show_placeholder()
-
-# --- END OF FILE app/widgets/task_options_widget.py ---

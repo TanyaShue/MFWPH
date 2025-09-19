@@ -14,7 +14,7 @@ from app.widgets.task_options_widget import TaskOptionsWidget
 
 
 class DeviceInfoPage(QWidget):
-    """Device information page"""
+    """设备信息页面，集成所有设备相关的UI组件"""
 
     def __init__(self, device_name, parent=None):
         super().__init__(parent)
@@ -23,6 +23,7 @@ class DeviceInfoPage(QWidget):
         self.init_ui()
 
     def init_ui(self):
+        """初始化用户界面"""
         main_layout = QVBoxLayout(self)
         main_layout.setContentsMargins(0, 0, 0, 0)
         main_layout.setSpacing(15)
@@ -92,7 +93,7 @@ class DeviceInfoPage(QWidget):
 
     def connect_signals(self):
         """设置组件之间的信号和槽连接"""
-        # 1. 当在资源列表(左上)中选择一个资源时
+        # 1. 当在资源列表(左上)中选择一个资源时，触发 on_resource_selected
         self.resource_widget.resource_selected.connect(self.on_resource_selected)
 
         # 2. 当资源启用状态改变时，更新配置小部件(中上)的UI
@@ -117,14 +118,21 @@ class DeviceInfoPage(QWidget):
         # (它会等待 ResourceConfigWidget 发出 settings_changed 信号后再真正加载任务)
         self.task_settings_widget.show_for_resource(resource_name)
 
-        # 步骤3: 清除旧的任务选项
+        # 步骤3: 清除旧的任务选项，显示占位符
         self.task_options_widget.clear()
 
     def refresh_ui(self):
-        """刷新所有UI组件"""
+        """
+        刷新所有UI组件。
+        通常在设备配置发生变化后（例如，编辑设备设置后）调用。
+        """
         self.device_config = global_config.get_device_config(self.device_name)
+
+        # 依次刷新每个子组件
         self.basic_info_widget.refresh_ui(self.device_config)
         self.resource_widget.refresh_ui(self.device_config)
+
+        # 清空依赖于资源选择的组件
         self.task_settings_widget.clear_settings()
         self.task_options_widget.clear()
         self.resource_config_widget.clear()

@@ -46,7 +46,7 @@ class BasicInfoWidget(QFrame):
         self.refresh_display()
 
     def init_ui(self):
-        # ... (UI 初始化部分基本不变) ...
+        """初始化用户界面"""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(12, 8, 12, 8)
         layout.setSpacing(10)
@@ -126,6 +126,7 @@ class BasicInfoWidget(QFrame):
             layout.addLayout(button_layout)
 
         else:
+            # 如果没有设备配置，显示错误信息
             error_label = QLabel("未找到设备配置")
             error_label.setObjectName("errorText")
             error_label.setStyleSheet("color: #ff4444; font-size: 12px;")
@@ -137,32 +138,34 @@ class BasicInfoWidget(QFrame):
         device_status_manager.state_changed.connect(self.on_state_changed)
         device_status_manager.ui_info_changed.connect(self.on_ui_info_changed)
 
-        # NEW: 监听定时任务管理器的变化
+        # 监听定时任务管理器的变化
         scheduled_task_manager.task_added.connect(self.on_schedule_changed)
         scheduled_task_manager.task_removed.connect(self.on_schedule_changed)
         scheduled_task_manager.task_modified.connect(self.on_schedule_changed)
         scheduled_task_manager.task_status_changed.connect(self.on_schedule_changed)
 
-    # NEW: 用于处理定时任务变化的槽函数
     def on_schedule_changed(self, *args):
         """当任何定时任务变化时，刷新此组件的显示"""
         self.refresh_display()
 
     def on_state_changed(self, name: str, old_state: DeviceState, new_state: DeviceState, context: dict):
+        """当设备状态改变时的槽函数"""
         if name == self.device_name:
             self.refresh_display()
 
     def on_ui_info_changed(self, device_name: str, ui_info: DeviceUIInfo):
+        """当设备UI信息改变时的槽函数"""
         if device_name == self.device_name:
             self.update_display(ui_info)
 
     def refresh_display(self):
+        """从管理器获取最新信息并刷新整个组件的显示"""
         ui_info = device_status_manager.get_device_ui_info(self.device_name)
         if ui_info:
             self.update_display(ui_info)
 
     def update_display(self, ui_info: DeviceUIInfo):
-        # ... (状态指示器和按钮的更新逻辑保持不变) ...
+        """根据传入的UI信息更新界面元素"""
         # 更新状态指示器
         if hasattr(self, 'status_indicator'):
             self.status_indicator.setStyleSheet(f"""
@@ -182,7 +185,7 @@ class BasicInfoWidget(QFrame):
                 tooltip += f"（进度: {ui_info.progress}%）"
             self.status_indicator.setToolTip(tooltip)
 
-        # 更新按钮
+        # 更新运行/停止按钮
         if hasattr(self, 'run_btn'):
             self.run_btn.setText(ui_info.button_text)
             self.run_btn.setEnabled(ui_info.button_enabled)
@@ -190,16 +193,15 @@ class BasicInfoWidget(QFrame):
             if ui_info.is_busy:
                 self.run_btn.setIcon(QIcon("assets/icons/stop.svg"))
                 self.run_btn.setToolTip("停止当前任务")
-                # ... (样式代码省略)
             else:
                 self.run_btn.setIcon(QIcon("assets/icons/play.svg"))
                 self.run_btn.setToolTip("开始执行任务")
-                # ... (样式代码省略)
 
+            # 强制刷新按钮样式
             self.run_btn.style().unpolish(self.run_btn)
             self.run_btn.style().polish(self.run_btn)
 
-        # MODIFIED: 更新定时任务显示
+        # 更新定时任务显示
         if hasattr(self, 'schedule_value'):
             scheduled_info = self._get_scheduled_info()
 
@@ -213,7 +215,7 @@ class BasicInfoWidget(QFrame):
                 self.schedule_value.setToolTip("此设备没有活动的定时任务")
 
     def _get_scheduled_info(self) -> dict:
-        """MODIFIED: 从定时任务管理器获取并格式化定时任务信息"""
+        """从定时任务管理器获取并格式化定时任务信息"""
         try:
             device_tasks = scheduled_task_manager.get_tasks_for_device(self.device_name)
 
@@ -251,7 +253,7 @@ class BasicInfoWidget(QFrame):
 
     @asyncSlot()
     async def handle_run_stop_action(self):
-        # ... (此方法保持不变) ...
+        """处理运行/停止按钮的点击事件"""
         if not self.device_config: return
         if self.device_manager.is_busy():
             await self.stop_device_tasks()
@@ -260,7 +262,7 @@ class BasicInfoWidget(QFrame):
 
     @asyncSlot()
     async def run_device_tasks(self):
-        # ... (此方法保持不变) ...
+        """异步运行设备的所有任务"""
         try:
             if self.device_config:
                 self.logger.info("开始任务")
@@ -272,7 +274,7 @@ class BasicInfoWidget(QFrame):
 
     @asyncSlot()
     async def stop_device_tasks(self):
-        # ... (此方法保持不变) ...
+        """异步停止设备的所有任务"""
         try:
             if self.device_config:
                 self.logger.info("停止设备任务")
@@ -283,18 +285,21 @@ class BasicInfoWidget(QFrame):
             self.logger.error(f"停止任务时出错: {str(e)}")
 
     def open_settings_dialog(self):
-        # ... (此方法保持不变) ...
+        """打开设备设置对话框"""
         if self.device_config:
             original_device_name = self.device_name
             dialog = AddDeviceDialog(global_config, self, edit_mode=True, device_config=self.device_config)
             dialog.exec_()
+            # 对话框关闭后，检查配置是否仍然存在
             updated_device_config = global_config.get_device_config(original_device_name)
             if updated_device_config:
                 self.logger.info("设备配置已更新")
                 self.device_config = updated_device_config
+                # 如果父组件有 refresh_ui 方法，则调用它来刷新整个页面
                 if hasattr(self.parent_widget, 'refresh_ui'):
                     self.parent_widget.refresh_ui()
             else:
+                # 如果配置不存在，说明设备可能已被删除
                 main_window = self.window()
                 if hasattr(main_window, 'on_device_deleted'):
                     main_window.on_device_deleted()
@@ -302,22 +307,19 @@ class BasicInfoWidget(QFrame):
                     main_window.show_previous_device_or_home(original_device_name)
 
     def refresh_ui(self, device_config=None):
-        # ... (此方法保持不变) ...
+        """安全地刷新UI，先清除旧的UI再重新初始化"""
         if device_config: self.device_config = device_config
         if self.layout():
-            while self.layout().count():
-                child = self.layout().takeAt(0)
-                if child.widget():
-                    child.widget().deleteLater()
-                elif child.layout():
-                    self._clear_layout(child.layout())
+            # 使用一个虚拟QWidget接管并销毁旧布局及其所有子项，这是最安全的方式
             QWidget().setLayout(self.layout())
+
+        # 重新创建UI和信号连接
         self.init_ui()
         self.connect_signals()
         self.refresh_display()
 
     def _clear_layout(self, layout):
-        # ... (此方法保持不变) ...
+        """递归地清除布局中的所有项目"""
         if layout is not None:
             while layout.count():
                 child = layout.takeAt(0)
@@ -327,16 +329,16 @@ class BasicInfoWidget(QFrame):
                     self._clear_layout(child.layout())
 
     def showEvent(self, event):
+        """当组件显示时，确保其内容是最新的"""
         super().showEvent(event)
         self.refresh_display()
 
     def closeEvent(self, event):
-        """清理资源，断开所有信号连接"""
+        """清理资源，断开所有信号连接，防止内存泄漏"""
         try:
             device_status_manager.state_changed.disconnect(self.on_state_changed)
             device_status_manager.ui_info_changed.disconnect(self.on_ui_info_changed)
 
-            # NEW: 断开定时任务管理器的信号
             scheduled_task_manager.task_added.disconnect(self.on_schedule_changed)
             scheduled_task_manager.task_removed.disconnect(self.on_schedule_changed)
             scheduled_task_manager.task_modified.disconnect(self.on_schedule_changed)

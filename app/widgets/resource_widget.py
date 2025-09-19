@@ -3,7 +3,7 @@
 from PySide6.QtCore import Qt, QSize, Signal
 from PySide6.QtGui import QFont, QIcon
 from PySide6.QtWidgets import (
-    QVBoxLayout, QHBoxLayout, QFrame, QLabel,
+    QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
     QPushButton, QTableWidget, QTableWidgetItem, QHeaderView,
     QCheckBox
 )
@@ -15,12 +15,12 @@ from core.tasker_manager import task_manager
 
 
 class ResourceWidget(QFrame):
-    """Resource selection widget with table of available resources"""
+    """资源选择小部件，以表格形式显示可用资源"""
 
-    # Signal to notify when a resource is selected for configuration
+    # 当一个资源被选中进行配置时发出此信号
     resource_selected = Signal(str)
 
-    # New signal to notify when a resource's enable status changes
+    # 当一个资源的启用状态改变时发出此信号
     resource_status_changed = Signal(str, bool)
 
     def __init__(self, device_name, device_config, parent=None):
@@ -35,40 +35,41 @@ class ResourceWidget(QFrame):
         self.init_ui()
 
     def init_ui(self):
+        """初始化用户界面"""
         layout = QVBoxLayout(self)
         layout.setContentsMargins(0, 0, 0, 0)
         layout.setSpacing(12)
-        # Create resource table
+        # 创建资源表格
         self.resource_table = self.create_resource_table()
         layout.addWidget(self.resource_table)
 
     def create_resource_table(self):
-        """Create a compact, optimized table for resource selection"""
-        # Get all available resources
+        """创建一个紧凑、优化的表格用于资源选择"""
+        # 获取所有可用的资源配置
         all_resources = global_config.get_all_resource_configs()
 
-        # Create mapping of enabled resources for this device
+        # 创建此设备已启用资源的映射，以便快速查找
         resource_enabled_map = {}
         if self.device_config and hasattr(self.device_config, 'resources'):
             resource_enabled_map = {r.resource_name: r.enable for r in self.device_config.resources}
 
-        # Create table
+        # 创建表格
         table = QTableWidget(len(all_resources), 3)
         table.setObjectName("resourceTable")
         table.setHorizontalHeaderLabels(["启用", "资源名称", "操作"])
 
-        # Optimize header layout
+        # 优化表头布局
         header = table.horizontalHeader()
         header.setSectionResizeMode(0, QHeaderView.Fixed)
         header.setSectionResizeMode(1, QHeaderView.Stretch)
         header.setSectionResizeMode(2, QHeaderView.Fixed)
         header.setDefaultAlignment(Qt.AlignLeft | Qt.AlignVCenter)
 
-        # Set compact column widths
-        table.setColumnWidth(0, 40)  # Checkbox column
-        table.setColumnWidth(2, 80)  # Action buttons column
+        # 设置紧凑的列宽
+        table.setColumnWidth(0, 40)  # 复选框列
+        table.setColumnWidth(2, 80)  # 操作按钮列
 
-        # Streamline table appearance
+        # 简化表格外观
         table.verticalHeader().setVisible(False)
         table.setEditTriggers(QTableWidget.NoEditTriggers)
         table.setAlternatingRowColors(True)
@@ -80,7 +81,7 @@ class ResourceWidget(QFrame):
         for row, resource_config in enumerate(all_resources):
             resource_name = resource_config.resource_name
 
-            # Checkbox for enabling/disabling the resource
+            # 复选框，用于启用/禁用资源
             checkbox = QCheckBox()
             checkbox.setChecked(resource_enabled_map.get(resource_name, False))
             checkbox.stateChanged.connect(
@@ -88,37 +89,37 @@ class ResourceWidget(QFrame):
                 self.update_resource_enable_status(r_name, cb.isChecked())
             )
 
-            # Create a layout-less container for the checkbox
+            # 创建一个无布局的容器来放置复选框，以实现居中对齐
             checkbox_container = QLabel()
             layout = QHBoxLayout(checkbox_container)
             layout.setContentsMargins(4, 0, 0, 0)
             layout.addWidget(checkbox)
             table.setCellWidget(row, 0, checkbox_container)
 
-            # Resource name - smaller font size
+            # 资源名称
             name_item = QTableWidgetItem(resource_name)
-            name_item.setFont(QFont("Segoe UI", 10))  # Reduced font size
+            name_item.setFont(QFont("Segoe UI", 10))
             table.setItem(row, 1, name_item)
 
-            # Action buttons in a compact container
+            # 操作按钮的紧凑容器
             button_container = QLabel()
             button_layout = QHBoxLayout(button_container)
             button_layout.setContentsMargins(4, 0, 4, 0)
-            button_layout.setSpacing(4)  # Reduced spacing
+            button_layout.setSpacing(4)
 
-            # Create smaller buttons
+            # 创建更小的按钮
             run_btn = QPushButton()
-            run_btn.setFixedSize(24, 24)  # Smaller size
+            run_btn.setFixedSize(24, 24)
             run_btn.setIcon(QIcon("assets/icons/play.svg"))
-            run_btn.setIconSize(QSize(14, 14))  # Smaller icon
+            run_btn.setIconSize(QSize(14, 14))
             run_btn.setToolTip("运行此资源")
             run_btn.clicked.connect(lambda checked, r_name=resource_name:
                                     task_manager.run_resource_task(self.device_config.device_name, r_name))
 
             settings_btn = QPushButton()
-            settings_btn.setFixedSize(24, 24)  # Smaller size
+            settings_btn.setFixedSize(24, 24)
             settings_btn.setIcon(QIcon("assets/icons/settings.svg"))
-            settings_btn.setIconSize(QSize(14, 14))  # Smaller icon
+            settings_btn.setIconSize(QSize(14, 14))
             settings_btn.setToolTip("配置此资源")
             settings_btn.clicked.connect(lambda checked, r_name=resource_name:
                                          self.show_resource_settings(r_name))
@@ -127,10 +128,10 @@ class ResourceWidget(QFrame):
             button_layout.addWidget(settings_btn)
             table.setCellWidget(row, 2, button_container)
 
-            # Optimize row height
-            table.setRowHeight(row, 32)  # Reduced row height
+            # 优化行高
+            table.setRowHeight(row, 32)
 
-        # Apply stylesheet for more compact appearance
+        # 应用样式表以获得更紧凑的外观
         table.setStyleSheet("""
             QTableWidget {
                 background-color: transparent;
@@ -161,7 +162,7 @@ class ResourceWidget(QFrame):
         if resource:
             return resource
 
-        # 如果不存在，则创建它。首先，查找或创建一个默认的配置方案
+        # 如果不存在，则创建它
         self.logger.info(f"资源 {resource_name} 首次在本设备上配置，将创建默认条目。")
         app_config = global_config.get_app_config()
 
@@ -182,23 +183,19 @@ class ResourceWidget(QFrame):
             app_config.resource_settings.append(new_settings)
             self.logger.info(f"为资源 {resource_name} 创建了全局默认配置方案 '{default_settings_name}'。")
 
-        # 为此设备创建新的资源条目，此时 resource_pack 仍为默认的 ""
+        # 为此设备创建新的资源条目
         new_resource = Resource(
             resource_name=resource_name,
             settings_name=default_settings_name,
             enable=False
         )
 
-        # --- 新增逻辑：检查并设置默认的 resource_pack ---
-        # 1. 获取该资源的全局定义
+        # 检查并设置默认的 resource_pack
         global_resource_config = global_config.get_resource_config(resource_name)
-
-        # 2. 检查是否存在可用的资源包列表
         if (global_resource_config and
                 hasattr(global_resource_config, 'resource_pack') and
                 isinstance(global_resource_config.resource_pack, list) and
                 len(global_resource_config.resource_pack) > 0):
-            # 3. 获取第一个资源包的名称作为默认值
             first_pack = global_resource_config.resource_pack[0]
             if isinstance(first_pack, dict) and 'name' in first_pack:
                 default_pack_name = first_pack['name']
@@ -209,7 +206,7 @@ class ResourceWidget(QFrame):
         return new_resource
 
     def update_resource_enable_status(self, resource_name, enabled):
-        """更新资源的启用状态"""
+        """更新资源的启用状态并保存配置"""
         if not self.device_config:
             return
 
@@ -239,18 +236,18 @@ class ResourceWidget(QFrame):
         self.resource_selected.emit(resource_name)
 
     def refresh_ui(self, device_config):
-        """Refresh widget with updated device config"""
+        """
+        FIXED: 使用安全的方式刷新小部件。
+        此方法会先清除所有现有内容，然后再重新初始化UI。
+        """
         self.device_config = device_config
-        # Remove current layout and its widgets to prevent duplicates
-        old_layout = self.layout()
-        if old_layout is not None:
-            while old_layout.count():
-                item = old_layout.takeAt(0)
-                widget = item.widget()
-                if widget is not None:
-                    widget.deleteLater()
-            # Delete the old layout itself
-            del old_layout
 
-        # Reinitialize UI
+        # 检查是否存在旧布局
+        if self.layout() is not None:
+            # 创建一个新的空QWidget，并将旧布局设置给它。
+            # 当这个虚拟的widget被销毁时，它会负责清理旧布局及其所有子项。
+            # 这是在PyQt/PySide中安全地替换布局的常用技巧。
+            QWidget().setLayout(self.layout())
+
+        # 重新初始化UI，这会创建一个全新的布局并应用到当前小部件
         self.init_ui()

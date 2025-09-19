@@ -16,6 +16,7 @@ from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QFrame, QPushButton
 
 from app.models.config.app_config import ResourceUpdateConfig
 from app.models.config.global_config import global_config
+from app.models.logging.log_manager import app_logger
 from app.utils.notification_manager import notification_manager
 from app.utils.update.checker import UpdateChecker
 from app.utils.update.downloader import UpdateDownloader
@@ -733,7 +734,8 @@ class DownloadPage(QWidget):
                     # 2. 如果 Git 存在，再尝试打开仓库
                     git.Repo(resource_path)
                     is_git_repo = True
-                except InvalidGitRepositoryError:
+                except Exception as e:
+                    app_logger.error(e)
                     # 文件夹不是一个Git仓库，但Git程序是存在的
                     is_git_repo = False
             else:
