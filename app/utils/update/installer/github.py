@@ -105,7 +105,17 @@ class GithubInstaller(BaseInstaller):
             unzipped_folder = next(extract_path.iterdir(), None)
             source_content_dir = unzipped_folder if unzipped_folder and unzipped_folder.is_dir() else extract_path
 
+            # --- 修改开始 ---
+            # 不再直接删除整个目标目录，而是清理其中的内容，但保留 .git 文件夹
+            logger.info(f"正在清理目标目录 '{target_dir}' (保留 .git)...")
             if target_dir.exists():
-                shutil.rmtree(target_dir)
-            shutil.copytree(source_content_dir, target_dir)
+                for item in target_dir.iterdir():
+                    if item.name == '.git':
+                        continue  # 跳过 .git 目录
+                    if item.is_dir():
+                        shutil.rmtree(item)
+                    else:
+                        item.unlink()
+
+            shutil.copytree(source_content_dir, target_dir, dirs_exist_ok=True)
             logger.info(f"已从 '{source_zip_path}' 完整更新到 '{target_dir}'")
