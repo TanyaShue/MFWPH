@@ -5,7 +5,6 @@ import os
 import platform
 import shutil
 import subprocess
-import sys
 import tarfile
 import time
 import zipfile
@@ -14,7 +13,6 @@ from typing import Optional, Dict, Any, List, Tuple
 from dataclasses import dataclass
 import aiohttp
 import aiofiles
-import filelock
 
 # --- 新增的导入 ---
 import ssl
@@ -220,7 +218,6 @@ class GlobalPythonRuntimeManager:
         # 这样下面的 .exists() 和 .parent 才能正常工作
         config_path_str = os.path.join(os.getcwd(), "assets", "config", "python_runtime_config.json")
         config_path = Path(config_path_str)
-
         build_tag = "20240415"
 
         default_config = {
@@ -264,12 +261,14 @@ class GlobalPythonRuntimeManager:
             ]
         }
 
+        # --- 新增逻辑：如果文件不存在，则创建并写入默认配置 ---
         if not config_path.exists():
             self.logger.info(f"配置文件 {config_path} 不存在，将创建默认配置文件。")
             try:
-                # config_path 是 Path 对象，所以 .parent 可以正常使用
+                # 确保父目录存在
                 config_path.parent.mkdir(parents=True, exist_ok=True)
                 with open(config_path, 'w', encoding='utf-8') as f:
+                    # 将 default_config 写入文件，使用 indent 参数美化格式
                     json.dump(default_config, f, indent=4, ensure_ascii=False)
                 return default_config
             except Exception as e:

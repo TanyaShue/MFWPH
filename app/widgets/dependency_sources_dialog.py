@@ -70,7 +70,7 @@ class DependencySourcesDialog(QDialog):
         self.setMinimumSize(800, 700)
         self.setObjectName("dependencyDialog")
 
-        self.json_path = Path("assets/config/python_sources.json")
+        self.json_path = Path("assets/config/python_runtime_config.json")
         self.data = self._load_data()
         self.test_threads = []
 
