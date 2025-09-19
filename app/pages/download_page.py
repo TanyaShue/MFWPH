@@ -749,7 +749,7 @@ class DownloadPage(QWidget):
             self.detail_view.status_label.setProperty("status", "")
             self.detail_view.action_stack.setCurrentIndex(3)
             # 直接调用安装器，并传递 file_path=None
-            self.installer.install_update(update_info, resource, file_path=None)
+            self.installer.install_update(update_info, file_path=None, resource=resource)  # <--- 修正行
 
         # 情况B：不是Git仓库或源是Mirror酱，启动下载流程
         else:
