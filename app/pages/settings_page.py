@@ -178,37 +178,44 @@ class SettingsPage(QWidget):
             notification_manager.show_error("保存设置失败", "错误")
 
     def check_app_update(self):
-        """【已修改】检查主程序更新，根据复选框状态传递频道"""
+        """
+        【已修改】检查主程序更新。如果当前版本未知，则假定版本为 "0.0.0" 以获取最新版本。
+        """
         if self.update_checker_thread and self.update_checker_thread.isRunning(): return
         if self.download_thread and self.download_thread.isRunning(): return
 
         current_version = get_version_info()
+        effective_version = current_version
+
         if current_version == "未知版本":
-            notification_manager.show_error("无法获取当前应用版本，无法检查更新。", "版本检查失败")
-            return
+            notification_manager.show_warning("无法获取当前应用版本，将尝试获取最新可用版本。", "版本未知")
+            effective_version = "0.0.0"
 
         self.check_button.setEnabled(False)
         self.check_button.setText("检查中...")
         self.update_button.hide()
 
-        # 根据复选框状态决定频道
         channel = 'beta' if self.beta_checkbox.isChecked() else 'stable'
         notification_manager.show_info(f"正在从 GitHub ({channel}频道) 检查最新版本...", "检查更新")
 
         app_resource_mock = SimpleNamespace(
             resource_name="MFWPH 主程序",
-            resource_version=current_version,
+            resource_version=effective_version,
             mirror_update_service_id=None,
             resource_rep_url="https://github.com/TanyaShue/MFWPH"
         )
 
-        # 将频道作为参数传递给检查器
-        self.update_checker_thread = UpdateChecker(app_resource_mock, single_mode=True, channel=channel)
+        # 【已修改】将 source='github' 作为参数传递给检查器，以强制使用 GitHub 源
+        self.update_checker_thread = UpdateChecker(
+            app_resource_mock,
+            single_mode=True,
+            channel=channel,
+            source='github'
+        )
         self.update_checker_thread.update_found.connect(self.handle_update_found)
         self.update_checker_thread.update_not_found.connect(self.handle_update_not_found)
         self.update_checker_thread.check_failed.connect(self.handle_check_failed)
         self.update_checker_thread.start()
-
     # --- 其他所有方法（create_*, handle_*, 等）保持不变 ---
     def create_section(self, title):
         section = QWidget()

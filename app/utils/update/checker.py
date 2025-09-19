@@ -18,10 +18,15 @@ class UpdateChecker(QThread):
     check_failed = Signal(str, str)
     check_completed = Signal(int, int)
 
-    def __init__(self, resources, single_mode=False):
+    def __init__(self, resources, single_mode=False, channel=None, source=None):
+        """
+        【已修改】构造函数现在接受一个可选的 'source' 参数来强制指定更新源。
+        """
         super().__init__()
         self.resources = [resources] if single_mode else resources
         self.single_mode = single_mode
+        self.channel = channel
+        self.source = source  # 保存从外部传入的强制更新源
         self.mirror_base_url = "https://mirrorchyan.com/api"
         self.github_api_url = "https://api.github.com"
         self.is_cancelled = False
@@ -38,12 +43,21 @@ class UpdateChecker(QThread):
             try:
                 logger.debug(f"正在为资源 '{resource.resource_name}' 检查更新。")
                 app_config = global_config.get_app_config()
-                update_method = app_config.get_resource_update_method(resource.resource_name)
-                update_channel = app_config.get_resource_update_channel(resource.resource_name)
+
+                # --- 修改开始 ---
+                # 优先使用构造时传入的 source，其次才从配置中获取
+                update_method = self.source
+                if not update_method:
+                    update_method = app_config.get_resource_update_method(resource.resource_name)
+
+                update_channel = self.channel
+                if not update_channel:
+                    update_channel = app_config.get_resource_update_channel(resource.resource_name)
+
                 logger.debug(f"更新方式: '{update_method}', 更新通道: '{update_channel}'。")
 
                 update_result = False
-                if update_method.lower() == "mirrorchyan":
+                if update_method and update_method.lower() == "mirrorchyan":
                     update_result = self._check_mirror_update(resource, update_channel)
                 else:
                     update_result = self._check_github_update(resource, update_channel)
@@ -117,18 +131,16 @@ class UpdateChecker(QThread):
             logger.debug(
                 f"解析的 MirrorChyan 数据: 版本='{latest_version}', 下载链接='{download_url}', 类型='{update_type}'。")
 
-            # 【修正】在比较版本前，移除版本号字符串头部的 'v'
             latest_version_str = latest_version.lstrip('v')
             current_version_str = resource.resource_version.lstrip('v')
             logger.debug(f"正在比较版本 - 最新: '{latest_version_str}', 当前: '{current_version_str}'。")
 
-            # 【修正】使用处理过的、符合 SemVer 规范的字符串进行比较
             if latest_version_str and semver.compare(latest_version_str, current_version_str) > 0:
                 logger.info(
                     f"为 '{resource.resource_name}' 发现了新的 MirrorChyan 版本: {latest_version} (当前: {resource.resource_version})。")
                 update_info = UpdateInfo(
                     resource_name=resource.resource_name, current_version=resource.resource_version,
-                    new_version=latest_version,  # 仍然使用带 'v' 的原始版本号创建 UpdateInfo
+                    new_version=latest_version,
                     download_url=download_url,
                     update_type=update_type, source=UpdateSource.MIRROR
                 )
