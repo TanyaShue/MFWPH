@@ -608,7 +608,7 @@ class GlobalPythonRuntimeManager:
             for source in self.config.get("pip_sources", []):
                 try:
                     self.logger.info(f"使用pip源安装依赖: {source}")
-                    notification_manager.show_info("正在安装依赖，请耐心等待...", "安装依赖", 5000)
+                    notification_manager.show_info("正在安装依赖，请耐心等待...", "安装依赖", 10000)
                     cmd = [
                         str(info.python_exe), "-m", "pip", "install",
                         "-r", str(requirements_path), "-i", source,
