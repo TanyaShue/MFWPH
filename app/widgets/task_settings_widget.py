@@ -42,7 +42,7 @@ class TaskSettingsWidget(QFrame):
         self.content_stack.addWidget(self.basic_settings_page)
         self.layout.addWidget(self.content_stack)
 
-        # 任务管理按钮区域（添加、移除）
+        # 任务管理按钮区域（添加、移除、取消）
         self.task_buttons_widget = QWidget()
         task_buttons_layout = QHBoxLayout(self.task_buttons_widget)
         task_buttons_layout.setContentsMargins(0, 0, 0, 0)
@@ -53,10 +53,17 @@ class TaskSettingsWidget(QFrame):
 
         self.remove_task_btn = QPushButton("移除任务")
         self.remove_task_btn.setObjectName("secondaryButton")
-        self.remove_task_btn.clicked.connect(self.toggle_remove_mode)
+        self.remove_task_btn.clicked.connect(self.handle_remove_mode)
+
+        # 新增“取消”按钮
+        self.cancel_remove_btn = QPushButton("取消")
+        self.cancel_remove_btn.setObjectName("secondaryButton")
+        self.cancel_remove_btn.clicked.connect(self.cancel_remove_mode)
+        self.cancel_remove_btn.setVisible(False)  # 初始状态下隐藏
 
         task_buttons_layout.addWidget(self.add_task_btn)
         task_buttons_layout.addWidget(self.remove_task_btn)
+        task_buttons_layout.addWidget(self.cancel_remove_btn)
         self.layout.addWidget(self.task_buttons_widget)
 
         # 初始时隐藏所有内容，直到有资源被选择
@@ -83,7 +90,7 @@ class TaskSettingsWidget(QFrame):
         self.content_stack.setVisible(True)
         # 如果之前在移除模式，则退出该模式以避免状态混淆
         if self.is_remove_mode:
-            self.toggle_remove_mode()
+            self.cancel_remove_mode()
 
     def clear_settings(self):
         """清除设置内容，并隐藏相关控件"""
@@ -92,31 +99,58 @@ class TaskSettingsWidget(QFrame):
         self.task_buttons_widget.setVisible(False)
         self.content_stack.setVisible(False)
         if self.is_remove_mode:
-            self.toggle_remove_mode()
+            self.cancel_remove_mode()
 
-    def toggle_remove_mode(self):
-        """切换任务移除模式"""
-        self.is_remove_mode = not self.is_remove_mode
-        self.remove_mode_changed.emit(self.is_remove_mode)
+    def handle_remove_mode(self):
+        """处理移除模式的进入和确认"""
+        if not self.is_remove_mode:
+            # --- 进入移除模式 ---
+            self.is_remove_mode = True
+            self.remove_mode_changed.emit(True)
 
-        if self.is_remove_mode:
-            self.remove_task_btn.setText("保存移除")
+            self.remove_task_btn.setText("确认移除")
             self.remove_task_btn.setObjectName("dangerButton")
-            self.add_task_btn.setEnabled(False) # 移除模式下禁用添加
+
+            # --- 核心改动：隐藏“添加任务”按钮 ---
+            self.add_task_btn.setVisible(False)
+            self.cancel_remove_btn.setVisible(True)
         else:
-            self.remove_task_btn.setText("移除任务")
-            self.remove_task_btn.setObjectName("secondaryButton")
-            self.add_task_btn.setEnabled(True)
-            # 退出移除模式时，保存所有更改
-            global_config.save_all_configs()
-            self.logger.info(f"已保存对资源 {self.current_resource_name} 的任务移除操作")
+            # --- 确认并退出移除模式 ---
+            removed_count = self.basic_settings_page.commit_removals()
+            if removed_count > 0:
+                global_config.save_all_configs()
+                self.logger.info(f"已确认并移除了 {removed_count} 个任务。")
+            else:
+                self.logger.info("没有任务被标记为移除，操作已取消。")
+
+            self.exit_remove_mode()
+
+        # 强制刷新按钮样式
+        self.remove_task_btn.style().polish(self.remove_task_btn)
+
+    def cancel_remove_mode(self):
+        """取消所有待移除的标记，并退出移除模式"""
+        self.basic_settings_page.cancel_removals()
+        self.logger.info("已取消任务移除操作。")
+        self.exit_remove_mode()
+
+    def exit_remove_mode(self):
+        """重置UI到正常状态，这是一个公共的退出函数"""
+        self.is_remove_mode = False
+        self.remove_mode_changed.emit(False)
+
+        self.remove_task_btn.setText("移除任务")
+        self.remove_task_btn.setObjectName("secondaryButton")
+
+        # --- 核心改动：恢复显示“添加任务”和“移除任务”按钮 ---
+        self.add_task_btn.setVisible(True)
+        self.cancel_remove_btn.setVisible(False)
 
         # 强制刷新按钮样式
         self.remove_task_btn.style().polish(self.remove_task_btn)
 
     def _on_add_task_clicked(self):
         """处理添加任务按钮点击事件"""
-        # 从 basic_settings_page 获取当前上下文（资源名称和配置方案名称）
         resource_name = self.basic_settings_page.selected_resource_name
         settings_name = self.basic_settings_page.selected_settings_name
         if not resource_name or not settings_name: return
@@ -132,13 +166,10 @@ class TaskSettingsWidget(QFrame):
 
             if settings:
                 for task_name in new_task_names:
-                    # 创建新的任务实例
                     new_instance = TaskInstance(task_name=task_name, options=[])
-                    # 添加到配置中
                     settings.task_instances[new_instance.instance_id] = new_instance
                     settings.task_order.append(new_instance.instance_id)
 
                 global_config.save_all_configs()
                 self.logger.info(f"为资源 {resource_name} 添加了新任务: {', '.join(new_task_names)}")
-                # 刷新UI以显示新添加的任务
                 self.display_tasks_for_setting(resource_name, settings_name)

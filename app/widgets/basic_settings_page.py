@@ -24,6 +24,7 @@ class TaskItemWidget(QFrame):
         self.task_instance = task_instance
         self.task_config = task_config
         self.is_remove_mode = False
+        self.is_marked_for_removal = False  # 新增状态：是否被标记为待删除
 
         self.setObjectName("taskItemWidget")
         self.setFrameShape(QFrame.StyledPanel)
@@ -88,14 +89,43 @@ class TaskItemWidget(QFrame):
         """设置或取消移除模式, 改变按钮图标和行为"""
         self.is_remove_mode = enabled
         if enabled:
-            self.settings_btn.setIcon(QIcon("assets/icons/delete.svg"))
-            self.settings_btn.setToolTip("移除此任务")
+            # 进入移除模式时，如果自己已经被标记，显示取消标记图标
+            if self.is_marked_for_removal:
+                self.settings_btn.setIcon(QIcon("assets/icons/revert.svg"))  # 假设你有一个“撤销”图标
+                self.settings_btn.setToolTip("取消移除")
+            else:
+                self.settings_btn.setIcon(QIcon("assets/icons/delete.svg"))
+                self.settings_btn.setToolTip("标记此任务为待移除")
             self.settings_btn.setObjectName("dangerButton")
         else:
+            # 退出移除模式，恢复正常状态
+            self.set_marked_for_removal(False)  # 确保标记状态被清除
             self.settings_btn.setIcon(QIcon("assets/icons/settings.svg"))
             self.settings_btn.setToolTip("配置任务")
             self.settings_btn.setObjectName("taskSettingsButton")
+
         # 强制刷新样式
+        self.settings_btn.style().polish(self.settings_btn)
+
+    def set_marked_for_removal(self, marked: bool):
+        """
+        改变控件的视觉外观，以表明它是否被标记为待删除
+        """
+        self.is_marked_for_removal = marked
+        if marked:
+            # 使用动态属性来改变样式，方便在QSS中定义
+            self.setProperty("markedForRemoval", True)
+            self.settings_btn.setIcon(QIcon("assets/icons/revert.svg"))  # 切换为撤销图标
+            self.settings_btn.setToolTip("取消移除")
+        else:
+            self.setProperty("markedForRemoval", False)
+            # 只有在移除模式下才恢复为删除图标，否则应该是设置图标
+            if self.is_remove_mode:
+                self.settings_btn.setIcon(QIcon("assets/icons/delete.svg"))
+                self.settings_btn.setToolTip("标记此任务为待移除")
+
+        # 刷新样式以应用或移除属性
+        self.style().polish(self)
         self.settings_btn.style().polish(self.settings_btn)
 
     def mousePressEvent(self, event):
@@ -193,6 +223,7 @@ class BasicSettingsPage(QFrame):
         self.selected_resource_name = None
         self.selected_settings_name = None  # 跟踪当前选择的配置方案名称
         self.task_container = None
+        self.pending_removal_ids = set()  # 新增：用于存储待删除任务的ID
 
         self.setObjectName("contentCard")
         self.setFrameShape(QFrame.StyledPanel)
@@ -230,6 +261,7 @@ class BasicSettingsPage(QFrame):
         self.selected_resource_name = resource_name
         self.selected_settings_name = settings_name
         self._clear_layout(self.settings_content_layout)
+        self.pending_removal_ids.clear()  # 切换显示时，清空待删除列表
 
         app_config = global_config.get_app_config()
         full_resource_config = global_config.get_resource_config(resource_name)
@@ -287,27 +319,75 @@ class BasicSettingsPage(QFrame):
                 child.set_remove_mode(enabled)
 
     def on_task_remove_requested(self, instance_id: str):
-        """根据 instance_id 从数据模型和UI中移除任务"""
+        """
+        修改后的逻辑：不再立即删除，而是标记/取消标记任务
+        """
+        widget_to_mark = next(
+            (w for w in self.task_container.task_widgets if w.task_instance.instance_id == instance_id), None)
+        if not widget_to_mark:
+            return
+
+        if instance_id in self.pending_removal_ids:
+            # 如果已被标记，则取消标记
+            self.pending_removal_ids.remove(instance_id)
+            widget_to_mark.set_marked_for_removal(False)
+            self.logger.debug(f"任务 (ID: {instance_id}) 已被取消移除标记。")
+        else:
+            # 如果未被标记，则进行标记
+            self.pending_removal_ids.add(instance_id)
+            widget_to_mark.set_marked_for_removal(True)
+            self.logger.debug(f"任务 (ID: {instance_id}) 已被标记为待移除。")
+
+    def commit_removals(self) -> int:
+        """
+        执行真正的删除操作，由父组件在用户确认后调用。
+        返回被删除的任务数量。
+        """
+        if not self.pending_removal_ids:
+            return 0
+
         app_config = global_config.get_app_config()
         settings = next((s for s in app_config.resource_settings if s.name == self.selected_settings_name), None)
 
-        if not settings or instance_id not in settings.task_instances:
-            return
+        if not settings:
+            return 0
 
-        # 从数据模型中移除
-        removed_task = settings.task_instances.pop(instance_id)
-        settings.task_order.remove(instance_id)
+        removed_count = 0
+        for instance_id in self.pending_removal_ids:
+            if instance_id not in settings.task_instances:
+                continue
 
-        # 从UI中移除
+            # 从数据模型中移除
+            removed_task = settings.task_instances.pop(instance_id)
+            settings.task_order.remove(instance_id)
+
+            # 从UI中移除
+            if self.task_container:
+                widget_to_remove = next(
+                    (w for w in self.task_container.task_widgets if w.task_instance.instance_id == instance_id), None)
+                if widget_to_remove:
+                    self.task_container.layout.removeWidget(widget_to_remove)
+                    self.task_container.task_widgets.remove(widget_to_remove)
+                    widget_to_remove.deleteLater()
+
+            self.logger.info(f"任务 '{removed_task.task_name}' (ID: {instance_id}) 已被移除。")
+            removed_count += 1
+
+        self.pending_removal_ids.clear()
+        return removed_count
+
+    def cancel_removals(self):
+        """
+        取消所有待删除的标记，恢复UI，由父组件在用户取消后调用。
+        """
         if self.task_container:
-            widget_to_remove = next(
-                (w for w in self.task_container.task_widgets if w.task_instance.instance_id == instance_id), None)
-            if widget_to_remove:
-                self.task_container.layout.removeWidget(widget_to_remove)
-                self.task_container.task_widgets.remove(widget_to_remove)
-                widget_to_remove.deleteLater()
+            for instance_id in self.pending_removal_ids:
+                widget_to_restore = next(
+                    (w for w in self.task_container.task_widgets if w.task_instance.instance_id == instance_id), None)
+                if widget_to_restore:
+                    widget_to_restore.set_marked_for_removal(False)
 
-        self.logger.info(f"任务 '{removed_task.task_name}' (ID: {instance_id}) 已被标记为移除。")
+        self.pending_removal_ids.clear()
 
     def on_task_order_changed(self, new_order_ids: list):
         """处理任务顺序改变，更新数据模型并保存"""

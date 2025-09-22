@@ -139,7 +139,6 @@ class TaskExecutor(QObject):
                 # 设置连接中状态
                 self.device_manager.set_state(DeviceState.CONNECTING)
 
-                # 初始化Toolkit
                 current_dir = os.getcwd()
                 await self._run_in_executor(
                     Toolkit.init_option, os.path.join(current_dir, "assets")
@@ -263,8 +262,6 @@ class TaskExecutor(QObject):
         加载资源。
         会根据 resource_pack 的 path 列表，依次加载资源路径，实现覆盖效果。
         """
-        print(f"传入的 resource_pack: {resource_pack}")
-        print(f"传入的 resource_path: {resource_path}")
 
         # 缓存检查逻辑保持不变
         if self._current_resource_path == resource_path and self._current_resource:

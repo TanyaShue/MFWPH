@@ -720,3 +720,32 @@ QSplitter::handle:pressed {
 #selectableTaskWidget[selected="true"] QLabel {
     color: #1a73e8; /* 选中时文字颜色也可以改变 */
 }
+
+TaskItemWidget[markedForRemoval="true"] {
+    /* 给被标记的控件一个半透明或者不同的背景色来区分 */
+    background-color: rgba(255, 80, 80, 0.2); /* 示例：淡红色背景 */
+    border: 1px solid #993333;
+}
+
+TaskItemWidget[markedForRemoval="true"] QLabel#name_label {
+    /* 可以给文字添加删除线 */
+    text-decoration: line-through;
+    color: #888888;
+}
+#taskSettingsFrame QPushButton#dangerButton {
+    background-color: #D32F2F; /* 红色背景 */
+    color: #FFFFFF; /* 白色文字 */
+    border: 1px solid #B71C1C;
+    border-radius: 4px;
+    padding: 5px 15px;
+}
+
+#taskSettingsFrame QPushButton#dangerButton:hover {
+    background-color: #E53935; /* 悬停时颜色变亮 */
+    border-color: #C62828;
+}
+
+#taskSettingsFrame QPushButton#dangerButton:pressed {
+    background-color: #B71C1C; /* 按下时颜色变暗 */
+    border-color: #B71C1C;
+}

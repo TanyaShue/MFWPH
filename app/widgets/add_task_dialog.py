@@ -1,3 +1,5 @@
+# --- START OF FILE app/widgets/add_task_dialog.py ---
+
 from PySide6.QtCore import Qt, Signal
 from PySide6.QtGui import QIcon, QPixmap
 from PySide6.QtWidgets import (
@@ -30,6 +32,7 @@ class SelectableTaskWidget(QFrame):
         self._update_style()
 
     def init_ui(self):
+        """初始化控件UI"""
         layout = QHBoxLayout(self)
         layout.setContentsMargins(10, 5, 10, 5)
 
@@ -61,7 +64,7 @@ class SelectableTaskWidget(QFrame):
 
 
 class AddTaskDialog(QDialog):
-    """一个用于向资源重复添加任务的对话框（优化版）。"""
+    """一个用于向资源重复添加任务的对话框。"""
 
     def __init__(self, resource_name, device_config, parent=None):
         super().__init__(parent)
@@ -77,6 +80,7 @@ class AddTaskDialog(QDialog):
         self.populate_tasks()
 
     def init_ui(self):
+        """初始化对话框UI"""
         self.layout = QVBoxLayout(self)
         self.layout.setSpacing(10)
 
@@ -102,9 +106,23 @@ class AddTaskDialog(QDialog):
         self.feedback_label.setAlignment(Qt.AlignCenter)
         self.layout.addWidget(self.feedback_label)
 
+        # 创建标准按钮盒
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
         self.button_box.accepted.connect(self.accept)
         self.button_box.rejected.connect(self.reject)
+
+        # --- 核心改动：获取并设置按钮样式 ---
+        ok_button = self.button_box.button(QDialogButtonBox.Ok)
+        cancel_button = self.button_box.button(QDialogButtonBox.Cancel)
+
+        # 为按钮设置 objectName 以便应用 QSS 样式
+        if ok_button:
+            ok_button.setObjectName("primaryButton")  # 设置为主要按钮样式
+            ok_button.setText("确定添加")  # 可以自定义文本
+        if cancel_button:
+            cancel_button.setObjectName("secondaryButton")  # 设置为次要按钮样式
+            cancel_button.setText("取消")
+
         self.layout.addWidget(self.button_box)
 
     def populate_tasks(self):
@@ -131,8 +149,13 @@ class AddTaskDialog(QDialog):
         else:
             self.selected_tasks.discard(task_name)  # discard 不会在元素不存在时报错
 
-        self.feedback_label.setText(f"已选择 {len(self.selected_tasks)} 个任务")
+        count = len(self.selected_tasks)
+        self.feedback_label.setText(f"已选择 {count} 个任务")
 
+        # 当没有选择任何任务时，禁用“确定”按钮
+        ok_button = self.button_box.button(QDialogButtonBox.Ok)
+        if ok_button:
+            ok_button.setEnabled(count > 0)
 
     def get_selected_tasks(self) -> list[str]:
         """
@@ -140,4 +163,3 @@ class AddTaskDialog(QDialog):
         """
         # 将集合转换为列表返回
         return list(self.selected_tasks)
-
