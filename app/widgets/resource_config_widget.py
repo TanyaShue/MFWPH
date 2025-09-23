@@ -267,21 +267,26 @@ class ResourceConfigWidget(QFrame):
             btn.style().polish(btn)
 
     def show_for_resource(self, device_config, resource_name):
-        """外部调用的主方法，用于显示指定资源的配置界面"""
+        """
+        外部调用的主方法，用于显示指定资源的配置界面。
+        """
         self.device_config = device_config
         self.selected_resource_name = resource_name
         self.logger = log_manager.get_device_logger(device_config.device_name)
 
-        self.stack.setCurrentWidget(self.main_content_widget)
-        self._reset_ui_state()
-
-        self.resource_name_label.setText(resource_name)
         device_resource = next((r for r in self.device_config.resources if r.resource_name == resource_name), None)
         if device_resource:
-            self.update_resource_status(resource_name, device_resource.enable)
             self.selected_settings_name = device_resource.settings_name
+            self.update_resource_status(resource_name, device_resource.enable)
+        else:
+            self.selected_settings_name = None
 
-        self.update_settings_selector()
+        self.stack.setCurrentWidget(self.main_content_widget)
+        self.resource_name_label.setText(resource_name)
+
+        self._reset_ui_state()
+
+        # 更新资源包选择器
         self.update_pack_selector()
 
     def update_settings_selector(self):
@@ -329,7 +334,6 @@ class ResourceConfigWidget(QFrame):
             global_config.save_all_configs()
             self.logger.info(
                 f"设备 {self.device_config.device_name} 的资源 {self.selected_resource_name} 现在使用设置 {new_settings_name}")
-
         self.settings_changed.emit(self.selected_resource_name, new_settings_name)
         self._update_ui_state()
 
