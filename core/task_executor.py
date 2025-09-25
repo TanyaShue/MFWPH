@@ -614,6 +614,7 @@ class TaskExecutor(QObject):
         cmd = [python_exe, "-u", str(agent_full_path)]
         if agent_config.agent_params:
             cmd.extend(agent_config.agent_params.split())
+        cmd.extend(["-device", self.device_name])
         cmd.extend(["-id", self._agent.identifier])
 
         self.logger.debug(f"Agent启动命令: {' '.join(cmd)}")
