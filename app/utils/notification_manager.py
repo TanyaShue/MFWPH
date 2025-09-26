@@ -125,7 +125,7 @@ class NotificationWidget(QWidget):
         self.duration = duration
         self._is_closing = False
         self._is_hovered = False
-        self._opacity = 1.0  # (新增) 初始化内部opacity变量
+        self._opacity = 1.0
 
         flags = (Qt.Window | Qt.FramelessWindowHint | Qt.Tool | Qt.WindowDoesNotAcceptFocus)
         if always_on_top: flags |= Qt.WindowStaysOnTopHint
@@ -147,7 +147,6 @@ class NotificationWidget(QWidget):
 
         if self.duration > 0: self.startTimer()
 
-    # (新增) 使用 QProperty 和 setWindowOpacity 控制整体透明度
     @Property(float)
     def opacity(self):
         return self._opacity
@@ -208,24 +207,18 @@ class NotificationWidget(QWidget):
 
     def setupAnimations(self):
         self.show_animation = QParallelAnimationGroup()
-
-        # (优化) 动画目标改回 self, 作用于新的 opacity 属性
         fade_in = QPropertyAnimation(self, b"opacity")
         fade_in.setDuration(600)
         fade_in.setStartValue(0.0)
         fade_in.setEndValue(1.0)
         fade_in.setEasingCurve(QEasingCurve.OutCubic)
         self.show_animation.addAnimation(fade_in)
-
         self.slide_in_animation = QPropertyAnimation(self, b"pos")
         self.slide_in_animation.setDuration(800)
         self.slide_in_animation.setEasingCurve(QEasingCurve.OutExpo)
         self.show_animation.addAnimation(self.slide_in_animation)
-
-        # (优化) 动画目标改回 self
         self.fade_out_animation = QPropertyAnimation(self, b"opacity")
         self.fade_out_animation.setDuration(400)
-        # (优化) 不再设置StartValue, 动画会从当前透明度平滑过渡
         self.fade_out_animation.setEndValue(0.0)
         self.fade_out_animation.setEasingCurve(QEasingCurve.InCubic)
         self.fade_out_animation.finished.connect(self.onFadeOutFinished)
@@ -325,6 +318,57 @@ class ProgressNotificationWidget(NotificationWidget):
 
     def startTimer(self):
         pass
+
+
+class ActionNotificationWidget(NotificationWidget):
+    """支持回调操作的通知组件"""
+
+    def __init__(self, title, message, action_text, action_callback, level=NotificationLevel.INFO, always_on_top=False,
+                 parent=None):
+        # 强制 duration=0, 此类通知不应自动关闭
+        super().__init__(title, message, level, 0, always_on_top, parent)
+        self.action_text = action_text
+        self.action_callback = action_callback
+
+    def setupUI(self, title, message):
+        """在基础UI上添加一个操作按钮"""
+        content_layout = self._setup_base_ui(title, message)
+        content_layout.addSpacing(12)
+
+        self.action_button = QPushButton(self.action_text)
+        self.action_button.setCursor(Qt.PointingHandCursor)
+        self.action_button.setStyleSheet(f"""
+            QPushButton {{
+                background-color: {self.main_color.name()};
+                color: white;
+                border: none;
+                border-radius: 8px;
+                padding: 8px 12px;
+                font-size: 13px;
+                font-weight: 500;
+            }}
+            QPushButton:hover {{
+                background-color: {self.dark_color.name()};
+            }}
+        """)
+        self.action_button.clicked.connect(self.on_action_clicked)
+
+        # 将按钮添加到右下角
+        button_layout = QHBoxLayout()
+        button_layout.addStretch()
+        button_layout.addWidget(self.action_button)
+        content_layout.addLayout(button_layout)
+
+    def on_action_clicked(self):
+        """执行回调并关闭通知"""
+        if self.action_callback:
+            try:
+                self.action_callback()
+            except Exception as e:
+                print(f"Error in notification action callback: {e}")
+
+        # 执行完回调后关闭通知
+        self.close()
 
 
 class NotificationManager(QObject):
@@ -436,6 +480,30 @@ class NotificationManager(QObject):
             notification.raise_()
         return notification
 
+    # (新增) 显示带操作按钮的通知
+    def show_action(self, message, title, action_text, action_callback, level=NotificationLevel.INFO):
+        """
+        显示一个带回调按钮的通知。
+        :param message: 通知消息
+        :param title: 通知标题
+        :param action_text: 按钮上显示的文字
+        :param action_callback: 点击按钮时要执行的函数
+        :param level: 通知级别
+        """
+        notification = self._create_notification(
+            ActionNotificationWidget,
+            title,
+            message,
+            action_text,
+            action_callback,
+            level=level
+        )
+        notification.closed.connect(self.onNotificationClosed)
+        self.positionNotification(notification, len(self.notifications) - 1)
+        if self.reference_window and self.reference_window.isActiveWindow():
+            notification.raise_()
+        return notification
+
     def update_progress(self, notification_id, progress, message=None):
         if notification_id in self.progress_notifications:
             self.progress_notifications[notification_id].updateProgress(progress, message)
@@ -468,24 +536,17 @@ class NotificationManager(QObject):
 
     def repositionNotifications(self):
         rect = self.get_position_reference()
-
-        # (优化) 在重新定位时，只处理那些没有正在关闭的通知
         valid_notifications = [n for n in self.notifications if n and not n._is_closing]
-
         y = rect.bottom() - self.margin
         for i, notification in enumerate(valid_notifications):
             try:
                 y -= notification.height() + self.spacing
                 x = rect.right() - notification.width() - self.margin
-
-                # 如果通知当前位置和目标位置不同，则启动移动画
                 target_pos = QPoint(x, y)
                 if notification.pos() != target_pos:
-                    # 停止任何正在进行的移动动画，避免冲突
                     if hasattr(notification,
                                '_move_animation') and notification._move_animation.state() == QPropertyAnimation.Running:
                         notification._move_animation.stop()
-
                     move_animation = QPropertyAnimation(notification, b"pos")
                     move_animation.setDuration(500)
                     move_animation.setEasingCurve(QEasingCurve.InOutCubic)
