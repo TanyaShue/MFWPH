@@ -185,6 +185,7 @@ class DeviceConfig:
     controller_config: Union[AdbDevice, Win32Device]
     resources: List[Resource] = field(default_factory=list)
     start_command: str = ""
+    end_command: str = ""
 
 
 @dataclass

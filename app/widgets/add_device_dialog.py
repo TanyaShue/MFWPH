@@ -459,8 +459,10 @@ class AddDeviceDialog(QDialog):
         # 填充命令
         if hasattr(self.device_config, 'start_command'):
             self.pre_command_edit.setText(self.device_config.start_command)
-        if hasattr(self.device_config, 'stop_command'):
-            self.post_command_edit.setText(self.device_config.stop_command)
+        # --- FIX START ---
+        if hasattr(self.device_config, 'end_command'):
+            self.post_command_edit.setText(self.device_config.end_command)
+        # --- FIX END ---
 
     def _find_combo_index_by_value(self, combo, value):
         """根据值查找下拉框中的索引位置"""
@@ -545,8 +547,6 @@ class AddDeviceDialog(QDialog):
             return
 
         try:
-            import json
-
             # 获取设备名称并进行处理
             device_name = self.name_edit.text()
             sanitized_device_name = self._sanitize_device_name(device_name)
@@ -565,15 +565,9 @@ class AddDeviceDialog(QDialog):
                     QMessageBox.warning(self, "输入错误", "ADB地址不能为空")
                     return
 
-                # if self.adb_address_exists(adb_address):
-                #     QMessageBox.warning(self, "设备已存在", "该设备已被加入，请勿重复添加")
-                #     return
-
-                # 尝试解析配置文本为字典，如果解析失败则使用空字典
                 try:
                     config_text = self.config_edit.text()
-                    config_dict = ast.literal_eval(config_text)
-                    # config_dict = json.loads(config_text) if config_text.strip() != "" else {}
+                    config_dict = ast.literal_eval(config_text) if config_text.strip() else {}
                 except Exception as e:
                     print("配置数据格式错误，无法解析为字典。", e)
                     config_dict = {}
@@ -611,19 +605,19 @@ class AddDeviceDialog(QDialog):
 
             if self.edit_mode and self.device_config:
                 # 更新设备配置
-                self.device_config.device_name = sanitized_device_name  # 使用处理过的设备名称
+                self.device_config.device_name = sanitized_device_name
                 self.device_config.device_type = controller_type
                 self.device_config.controller_config = controller_config
                 self.device_config.start_command = self.pre_command_edit.text()
-                if hasattr(self.device_config, 'stop_command'):
-                    self.device_config.stop_command = self.post_command_edit.text()
+                if hasattr(self.device_config, 'end_command'):
+                    self.device_config.end_command = self.post_command_edit.text()
             else:
-                # 创建新设备配置
                 new_config = DeviceConfig(
-                    device_name=sanitized_device_name,  # 使用处理过的设备名称
+                    device_name=sanitized_device_name,
                     device_type=controller_type,
                     controller_config=controller_config,
-                    start_command=self.pre_command_edit.text()
+                    start_command=self.pre_command_edit.text(),
+                    end_command=self.post_command_edit.text()  # 添加 end_command
                 )
                 self.global_config.app_config.devices.append(new_config)
 
