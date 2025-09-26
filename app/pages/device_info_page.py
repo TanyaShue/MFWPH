@@ -5,12 +5,12 @@ from PySide6.QtWidgets import (
 
 from app.components.log_display import LogDisplay
 from app.models.config.global_config import global_config
-from app.widgets.basic_info_widget import BasicInfoWidget
+from app.widgets.device_info.basic_info_widget import BasicInfoWidget
 # 新增导入
-from app.widgets.resource_config_widget import ResourceConfigWidget
-from app.widgets.resource_widget import ResourceWidget
-from app.widgets.task_settings_widget import TaskSettingsWidget
-from app.widgets.task_options_widget import TaskOptionsWidget
+from app.widgets.device_info.resource_config_widget import ResourceConfigWidget
+from app.widgets.device_info.resource_widget import ResourceWidget
+from app.widgets.device_info.task_settings_widget import TaskSettingsWidget
+from app.widgets.device_info.task_options_widget import TaskOptionsWidget
 
 
 class DeviceInfoPage(QWidget):

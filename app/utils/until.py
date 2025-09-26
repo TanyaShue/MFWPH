@@ -76,7 +76,6 @@ def load_light_palette() -> QPalette:
 def kill_processes():
     app_logger = log_manager.get_app_logger()
 
-    # ---------- 1. 杀掉 agent 进程组 ----------
     try:
         if hasattr(global_config, "agent_process") and global_config.agent_process:
             proc = global_config.agent_process

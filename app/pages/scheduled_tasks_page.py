@@ -9,7 +9,7 @@ from PySide6.QtWidgets import (
 from qasync import asyncSlot
 
 from app.utils.notification_manager import notification_manager
-from app.widgets.create_task_dialog import CreateTaskDialog
+from app.widgets.scheduled.create_task_dialog import CreateTaskDialog
 
 
 class TaskPlanTableWidget(QWidget):

@@ -10,8 +10,7 @@ from PySide6.QtGui import QIcon, QPainter, QColor, QPen, QPixmap
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QFrame, QPushButton,
                                QHBoxLayout, QMessageBox, QSizePolicy,
                                QDialog, QStackedWidget,
-                               QScrollArea, QGraphicsDropShadowEffect,
-                               QStyleOption, QStyle, QComboBox, QProgressBar)  # 新增导入 QProgressBar
+                               QScrollArea, QComboBox, QProgressBar)  # 新增导入 QProgressBar
 # from git import InvalidGitRepositoryError
 
 from app.models.config.app_config import ResourceUpdateConfig
@@ -22,7 +21,7 @@ from app.utils.update.checker import UpdateChecker
 from app.utils.update.downloader import UpdateDownloader
 from app.utils.update.installer.factory import UpdateInstallerFactory
 from app.utils.update.models import UpdateInfo, UpdateSource  # 导入 UpdateSource
-from app.widgets.add_resource_dialog import AddResourceDialog
+from app.widgets.download.add_resource_dialog import AddResourceDialog
 
 # 用于更新频道的显示文本和内部值的映射
 CHANNEL_MAP = {

@@ -2,14 +2,14 @@
 
 from PySide6.QtCore import Signal
 from PySide6.QtWidgets import (
-    QWidget, QVBoxLayout, QHBoxLayout, QFrame, QMessageBox, QPushButton, QStackedWidget
+    QWidget, QVBoxLayout, QHBoxLayout, QFrame, QPushButton, QStackedWidget
 )
 
 from app.models.config.app_config import TaskInstance
 from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager
-from app.widgets.add_task_dialog import AddTaskDialog
-from app.widgets.basic_settings_page import BasicSettingsPage
+from app.widgets.device_info.add_task_dialog import AddTaskDialog
+from app.widgets.device_info.basic_settings_page import BasicSettingsPage
 
 
 class TaskSettingsWidget(QFrame):

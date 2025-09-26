@@ -515,5 +515,5 @@ def get_version_info():
                 if line.strip().startswith('version='):
                     return line.split('=', 1)[1].strip()
     except Exception as e:
-        logger.error(f"读取版本信息失败: {e}")
-    return "未知版本"
+        logger.warning(f"读取版本信息失败: {e}, 使用默认版本v1.0.0")
+    return "v1.0.0"
