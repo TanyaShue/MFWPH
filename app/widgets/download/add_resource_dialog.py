@@ -6,7 +6,7 @@ from PySide6.QtCore import QSize
 from PySide6.QtGui import QFont, Qt
 
 from app.models.config.global_config import global_config
-from app.utils.resource_manager import get_github_repo_refs
+from app.utils.resource_check import get_github_repo_refs
 
 class AddResourceDialog(QDialog):
     """
