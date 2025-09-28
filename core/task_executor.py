@@ -584,7 +584,7 @@ class TaskExecutor(QObject):
             if task_manager.get_state() == DeviceState.CANCELED:
                 raise asyncio.CancelledError()
 
-            self.logger.info(f"执行子任务 {i + 1}/{len(task_list)}: {sub_task.task_entry}")
+            self.logger.info(f"执行子任务 {i + 1}/{len(task_list)}: {sub_task.task_name}")
 
             # 异步执行子任务
             def run_sub_task():
@@ -594,7 +594,7 @@ class TaskExecutor(QObject):
                 )
                 job.wait()
                 if job.status == 4:  # Failed
-                    raise Exception(f"子任务 {sub_task.task_entry} 执行失败")
+                    raise Exception(f"子任务 {sub_task.task_name} 执行失败")
                 return job.get()
 
             # 在线程池中执行
