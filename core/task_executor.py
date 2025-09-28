@@ -8,6 +8,7 @@ import asyncio
 import os
 import subprocess
 import threading
+import time
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List, Union, Any
@@ -246,6 +247,18 @@ class TaskExecutor(QObject):
             # 异步连接
             await self._run_in_executor(self._controller.post_connection().wait)
 
+            # 记录开始时间
+            start_time = time.perf_counter()
+
+            # 执行目标操作
+            self._controller.post_screencap().wait().get()
+
+            # 记录结束时间
+            end_time = time.perf_counter()
+
+            # 计算耗时
+            elapsed_time = end_time - start_time
+            self.logger.info(f"截图测试耗时: {elapsed_time:.4f} 秒")
             if self._controller.connected:
                 self.logger.info("控制器连接成功")
                 return True
@@ -566,8 +579,8 @@ class TaskExecutor(QObject):
         if self.device_manager.get_state() != DeviceState.RUNNING:
             self.logger.warning(f"执行任务时设备状态异常: {self.device_manager.get_state()}")
 
+
         for i, sub_task in enumerate(task_list):
-            # 检查取消状态
             if task_manager.get_state() == DeviceState.CANCELED:
                 raise asyncio.CancelledError()
 
