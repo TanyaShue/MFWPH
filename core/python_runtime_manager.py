@@ -256,6 +256,7 @@ class GlobalPythonRuntimeManager:
                 "https://pypi.org/simple/"
             ],
             "get_pip_sources": [
+                "https://mirrors.aliyun.com/pypi/get-pip.py",
                 "https://bootstrap.pypa.io/get-pip.py",
                 "https://pypi.tuna.tsinghua.edu.cn/mirrors/pypi/get-pip.py"
             ]
