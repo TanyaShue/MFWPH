@@ -29,7 +29,13 @@ class UpdateInstallerFactory(QObject):
         """
         【已修改】主安装方法。resource 参数现在是可选的。
         """
-        logger.info(f"安装器工厂正在为更新源 {update_info.source.name} 创建安装器")
+
+        effective_source = update_info.source
+        if update_info.resource_name == "MFWPH 主程序":
+            logger.debug(f"检测到主程序更新。将更新源从 {update_info.source.name} 强制更正为 APP。")
+            effective_source = UpdateSource.APP
+
+        logger.info(f"安装器工厂正在为更新源 {effective_source.name} 创建安装器")
 
         if self.thread and self.thread.isRunning():
             logger.warning("一个安装任务已在进行中。")
@@ -37,19 +43,20 @@ class UpdateInstallerFactory(QObject):
             return
 
         installer_class = None
-        if update_info.source == UpdateSource.GITHUB:
+        if effective_source == UpdateSource.GITHUB:
             if not resource:
+                # 理论上修复后不会进入此分支，但保留作为安全校验
                 self.install_failed.emit(update_info.resource_name, "GitHub 资源更新需要 resource 对象")
                 return
             self.installer = GithubInstaller(resource, update_info, file_path)
             installer_class = "GithubInstaller"
-        elif update_info.source == UpdateSource.MIRROR:
+        elif effective_source == UpdateSource.MIRROR:
             if not resource:
                 self.install_failed.emit(update_info.resource_name, "Mirror酱资源更新需要 resource 对象")
                 return
             self.installer = MirrorInstaller(resource, update_info, file_path)
             installer_class = "MirrorInstaller"
-        elif update_info.source == UpdateSource.APP:
+        elif effective_source == UpdateSource.APP:
             self.installer = AppInstaller(update_info, file_path)
             installer_class = "AppInstaller"
         else:
