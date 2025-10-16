@@ -21,3 +21,4 @@ class UpdateInfo:
     download_url: str
     update_type: str
     source: UpdateSource
+    release_note: str = "" # 新增：用于存储更新日志

@@ -128,6 +128,7 @@ class UpdateChecker(QThread):
             latest_version = data.get("version_name", "")
             download_url = data.get("url", "")
             update_type = data.get("update_type", "full")
+            release_note = data.get("release_note", "")  # <-- 修改: 获取更新日志
             logger.debug(
                 f"解析的 MirrorChyan 数据: 版本='{latest_version}', 下载链接='{download_url}', 类型='{update_type}'。")
 
@@ -142,7 +143,8 @@ class UpdateChecker(QThread):
                     resource_name=resource.resource_name, current_version=resource.resource_version,
                     new_version=latest_version,
                     download_url=download_url,
-                    update_type=update_type, source=UpdateSource.MIRROR
+                    update_type=update_type, source=UpdateSource.MIRROR,
+                    release_note=release_note  # <-- 修改: 传递更新日志
                 )
                 self.update_found.emit(update_info)
                 return True
@@ -228,10 +230,28 @@ class UpdateChecker(QThread):
             if semver.compare(latest_version_str, current_version_str) > 0:
                 logger.info(
                     f"为 '{resource.resource_name}' 发现了新的 GitHub 版本: {latest_version_str} (当前: {current_version_str})。")
+
+                # --- 修改开始: 获取 Release Note ---
+                release_note = "无法获取更新日志。"
+                tag_name = latest_tag_data.get("name")
+                if tag_name:
+                    release_api_url = f"{self.github_api_url}/repos/{owner_repo}/releases/tags/{tag_name}"
+                    try:
+                        logger.debug(f"正在从 {release_api_url} 获取发布信息。")
+                        release_response = requests.get(release_api_url, headers=headers)
+                        if release_response.status_code == 200:
+                            release_note = release_response.json().get("body", "此版本没有提供更新日志。")
+                        else:
+                            logger.warning(f"获取 {tag_name} 的发布信息失败，状态码: {release_response.status_code}")
+                    except requests.exceptions.RequestException as re:
+                        logger.error(f"请求发布信息时出错: {re}")
+                # --- 修改结束 ---
+
                 update_info = UpdateInfo(
                     resource_name=resource.resource_name, current_version=resource.resource_version,
                     new_version=latest_version_str, download_url=latest_tag_data.get("zipball_url", ""),
-                    update_type="full", source=UpdateSource.GITHUB
+                    update_type="full", source=UpdateSource.GITHUB,
+                    release_note=release_note  # <-- 修改: 传递更新日志
                 )
                 self.update_found.emit(update_info)
                 return True
