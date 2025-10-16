@@ -322,7 +322,13 @@ class GlobalConfig:
                 group_enabled = self._parse_bool_value(option_value)
                 if group_enabled:
                     if option_definition.pipeline_override:
-                        merge_dicts(final_pipeline_override, option_definition.pipeline_override)
+                        # 关键修改：处理 settings_group 自身的 pipeline_override，并替换占位符
+                        processed_override = self._replace_placeholder(
+                            option_definition.pipeline_override,
+                            str(group_enabled),
+                            group_enabled
+                        )
+                        merge_dicts(final_pipeline_override, processed_override)
 
                     for sub_option in option_definition.settings:
                         sub_option_name = f"{option_name}.{sub_option.name}"

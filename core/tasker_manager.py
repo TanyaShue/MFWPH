@@ -424,6 +424,7 @@ class TaskerManager(QObject):
             return result
 
         runtime_configs = await asyncio.to_thread(get_all_runtime_configs)
+        self.logger.debug(f"为设备创建运行时配置:{runtime_configs} ")
 
         if not runtime_configs:
             self.logger.warning(
@@ -516,7 +517,7 @@ class TaskerManager(QObject):
                 self.logger.error(error_msg)
                 self.error_occurred.emit(device_config_name, error_msg)
                 return
-
+            self.logger.debug(f"为设备创建运行时配置:{runtime_config} ")
             # 提交任务
             result = await self.submit_task(device_config.device_name, runtime_config)
 
