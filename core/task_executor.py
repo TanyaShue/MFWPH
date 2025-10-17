@@ -6,6 +6,7 @@
 
 import asyncio
 import os
+import shlex
 import subprocess
 import threading
 import time
@@ -15,6 +16,7 @@ from typing import Optional, Dict, List, Union, Any
 from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 
+import psutil
 from PySide6.QtCore import QObject, Signal, Slot
 from qasync import asyncSlot
 from maa.controller import AdbController, Win32Controller
@@ -27,6 +29,7 @@ from maa.agent_client import AgentClient
 from app.models.config.app_config import DeviceConfig, DeviceType
 from app.models.config.global_config import RunTimeConfigs, global_config
 from app.models.logging.log_manager import log_manager
+from app.utils.device_untils import find_emulator_pid
 from core.python_runtime_manager import python_runtime_manager  # 使用全局实例
 from core.device_state_machine import SimpleStateManager, DeviceState
 from core.device_status_manager import device_status_manager
@@ -129,6 +132,72 @@ class TaskExecutor(QObject):
 
     # === 生命周期管理 ===
 
+    async def _kill_emulator_process(self, pid: int):
+        """安全地终止指定PID的进程"""
+        self.logger.info(f"正在尝试终止模拟器进程，PID: {pid}")
+        try:
+            def kill_sync(p_id):
+                if not psutil.pid_exists(p_id):
+                    self.logger.info(f"进程 {p_id} 不存在，可能已被关闭。")
+                    return
+                try:
+                    proc = psutil.Process(p_id)
+                    proc.terminate()  # 尝试友好终止
+                    proc.wait(timeout=3)  # 等待3秒
+                    self.logger.info(f"进程 {p_id} 已成功终止。")
+                except psutil.TimeoutExpired:
+                    self.logger.warning(f"进程 {p_id} 未能友好退出，将强制终止。")
+                    proc.kill()
+                    self.logger.info(f"进程 {p_id} 已被强制终止。")
+                except psutil.NoSuchProcess:
+                    self.logger.info(f"在尝试终止时，进程 {p_id} 已消失。")
+
+            await self._run_in_executor(kill_sync, pid)
+        except Exception as e:
+            self.logger.error(f"终止进程 {pid} 时发生错误: {e}", exc_info=True)
+
+    async def _start_emulator_and_wait_for_pid(self, start_command: str, timeout: int = 60) -> Optional[int]:
+        """
+        在后台通过CMD启动模拟器，并等待其进程出现。
+        """
+        self.logger.info(f"执行启动命令: {start_command}")
+
+        def _launch():
+            creationflags = 0
+            if os.name == 'nt':
+                creationflags = subprocess.DETACHED_PROCESS
+            subprocess.Popen(start_command, shell=True, creationflags=creationflags)
+
+        try:
+            await self._run_in_executor(_launch)
+        except Exception as e:
+            self.logger.error(f"执行模拟器启动命令失败: {e}", exc_info=True)
+            return None
+
+        self.logger.info("命令已执行，开始轮询等待进程 PID...")
+        start_time = time.time()
+        while time.time() - start_time < timeout:
+            pid = await self._run_in_executor(find_emulator_pid, start_command)
+            if pid:
+                self.logger.info(f"成功找到模拟器进程，PID: {pid}")
+                return pid
+            await asyncio.sleep(1)
+
+        self.logger.error(f"等待模拟器启动超时（{timeout}秒）")
+        return None
+
+    async def _wait_for_emulator_startup(self, wait_time: int = 20):
+        """
+        等待固定的时间以确保模拟器完全启动，并提供倒计时日志。
+        """
+        self.logger.info(f"模拟器已启动，将等待 {wait_time} 秒以确保其服务完全可用...")
+        countdown_points = {10, 5, 3}
+        for i in range(wait_time, 0, -1):
+            if i in countdown_points:
+                self.logger.info(f"等待模拟器初始化... 剩余 {i} 秒")
+            await asyncio.sleep(1)
+        self.logger.info("等待结束，继续执行任务。")
+
     @asyncSlot()
     async def start(self) -> bool:
         """启动任务执行器"""
@@ -137,7 +206,6 @@ class TaskExecutor(QObject):
                 return True
 
             try:
-                # 设置连接中状态
                 self.device_manager.set_state(DeviceState.CONNECTING)
 
                 current_dir = os.getcwd()
@@ -148,30 +216,66 @@ class TaskExecutor(QObject):
                 if global_config.app_config.debug_model:
                     Tasker.set_debug_mode(True)
 
-                # 初始化控制器
-                if not await self._initialize_controller():
-                    self.device_manager.set_state(
-                        DeviceState.ERROR,
-                        error_message="控制器初始化失败"
-                    )
+                self.logger.info(f"正在为设备 '{self.device_name}' 检查模拟器状态...")
+                pid = await self._run_in_executor(find_emulator_pid, self.device_config.start_command)
+                is_newly_started = False
+
+                if pid:
+                    self.logger.info(f"检测到模拟器已在运行。PID: {pid}")
+                else:
+                    if getattr(self.device_config, 'auto_start_emulator', False):
+                        self.logger.info("模拟器未运行，将根据配置尝试启动...")
+                        pid = await self._start_emulator_and_wait_for_pid(self.device_config.start_command)
+                        if pid:
+                            is_newly_started = True
+                    else:
+                        self.logger.warning("模拟器未运行，且自动启动选项未开启。")
+
+                if not pid:
+                    error_msg = "启动或查找模拟器进程失败。"
+                    self.logger.error(error_msg)
+                    self.device_manager.set_state(DeviceState.ERROR, error_message=error_msg)
                     return False
 
-                # 连接成功
-                self.device_manager.set_state(DeviceState.CONNECTED)
+                self.logger.info(f"模拟器准备就绪，PID: {pid}")
 
+                if is_newly_started:
+                    await self._wait_for_emulator_startup(20)
+
+                # --- 控制器初始化重试逻辑 ---
+                max_retries = 3
+                controller_initialized = False
+                for attempt in range(1, max_retries + 1):
+                    self.logger.info(f"正在进行第 {attempt}/{max_retries} 次控制器初始化尝试...")
+                    if await self._initialize_controller():
+                        controller_initialized = True
+                        break  # 初始化成功，跳出循环
+
+                    self.logger.warning(f"第 {attempt} 次控制器初始化失败。")
+                    if attempt < max_retries:
+                        self.logger.info("将尝试重启模拟器后重试...")
+                        await self._kill_emulator_process(pid)
+                        pid = await self._start_emulator_and_wait_for_pid(self.device_config.start_command)
+                        if not pid:
+                            self.logger.error("重启模拟器失败，无法继续。")
+                            break
+                        await self._wait_for_emulator_startup(20)
+
+                if not controller_initialized:
+                    self.logger.error(f"控制器初始化在 {max_retries} 次尝试后仍然失败。你的模拟器正在发神经。")
+                    self.device_manager.set_state(DeviceState.ERROR, error_message="控制器初始化失败")
+                    return False
+
+                self.device_manager.set_state(DeviceState.CONNECTED)
                 self._active = True
                 self._processing_task = asyncio.create_task(self._process_tasks())
-
                 self.logger.info(f"任务执行器 {self.device_name} 已启动")
                 self.executor_started.emit()
                 return True
 
             except Exception as e:
                 self.logger.error(f"启动失败: {e}", exc_info=True)
-                self.device_manager.set_state(
-                    DeviceState.ERROR,
-                    error_message=str(e)
-                )
+                self.device_manager.set_state(DeviceState.ERROR, error_message=str(e))
                 self._active = False
                 return False
 
@@ -185,21 +289,15 @@ class TaskExecutor(QObject):
             self.logger.info(f"停止任务执行器 {self.device_name}")
             self._active = False
 
-            # 取消所有排队任务
             for task in self._task_queue:
                 task.state_manager.set_state(DeviceState.CANCELED)
-
-            # 取消当前任务
             if self._current_task:
                 self._current_task.state_manager.set_state(DeviceState.CANCELED)
-
             self._task_queue.clear()
 
-        # 停止任务器
         if self._tasker:
             await self._run_in_executor(self._tasker.post_stop().wait)
 
-        # 取消处理循环
         if self._processing_task:
             self._processing_task.cancel()
             try:
@@ -207,13 +305,9 @@ class TaskExecutor(QObject):
             except asyncio.CancelledError:
                 pass
 
-        # 清理Agent
         await self._cleanup_agent()
-
-        # 关闭线程池
         self._executor.shutdown(wait=False)
 
-        # 断开设备
         if not self.device_manager.is_running_task():
             self.device_manager.set_state(DeviceState.DISCONNECTED)
 
@@ -224,11 +318,8 @@ class TaskExecutor(QObject):
 
     async def _initialize_controller(self):
         """初始化控制器"""
-        if self._controller and self._controller.connected:
-            return True
-
+        # 每次都重新创建控制器实例，避免状态污染
         try:
-            # 创建控制器
             if self.device_config.device_type == DeviceType.ADB:
                 cfg = self.device_config.controller_config
                 self._controller = AdbController(
@@ -244,30 +335,19 @@ class TaskExecutor(QObject):
             else:
                 raise ValueError(f"不支持的设备类型: {self.device_config.device_type}")
 
-            # 异步连接
             await self._run_in_executor(self._controller.post_connection().wait)
 
-            # 记录开始时间
-            start_time = time.perf_counter()
-
-            # 执行目标操作
-            self._controller.post_screencap().wait().get()
-
-            # 记录结束时间
-            end_time = time.perf_counter()
-
-            # 计算耗时
-            elapsed_time = end_time - start_time
-            self.logger.info(f"截图测试耗时: {elapsed_time:.4f} 秒")
-            if self._controller.connected:
-                self.logger.info("控制器连接成功")
-                return True
-            else:
+            if not self._controller.connected:
                 self.logger.error("控制器连接失败")
                 return False
 
+            # 简单测试截图功能
+            await self._run_in_executor(lambda: self._controller.post_screencap().wait().get())
+            self.logger.info("控制器连接和截图测试成功")
+            return True
+
         except Exception as e:
-            self.logger.error(f"控制器初始化失败: {e}")
+            self.logger.error(f"控制器初始化过程中发生异常: {e}", exc_info=True)
             return False
 
     async def _load_resource(self, resource_pack: Dict[str, Any], resource_path: str) -> Resource:
@@ -329,9 +409,9 @@ class TaskExecutor(QObject):
             self.logger.error(f"资源加载过程中发生严重错误: {e}")
             raise
 
-    async def _create_tasker(self, resource_pack,resource_path: str):
+    async def _create_tasker(self, resource_pack, resource_path: str):
         """创建任务器"""
-        resource = await self._load_resource(resource_pack,resource_path)
+        resource = await self._load_resource(resource_pack, resource_path)
 
         resource.clear_custom_action()
         resource.clear_custom_recognition()
@@ -391,7 +471,7 @@ class TaskExecutor(QObject):
             task_manager.set_state(DeviceState.PREPARING)
 
             # 创建任务器
-            await self._create_tasker(task.data.resource_pack,task.data.resource_path)
+            await self._create_tasker(task.data.resource_pack, task.data.resource_path)
             self.logger.info("开始初始化agent")
             # 设置Agent（如果需要）
             agent_success = await self._setup_agent(task)
@@ -422,6 +502,14 @@ class TaskExecutor(QObject):
             task_manager.set_state(DeviceState.COMPLETED, progress=100)
 
             self.logger.info(f"任务 {task.id} 执行成功")
+            # --- 自动关闭模拟器逻辑 ---
+            if getattr(self.device_config, 'auto_close_emulator', False):
+                self.logger.info("配置了自动关闭模拟器，正在执行...")
+                pid_to_close = await self._run_in_executor(find_emulator_pid, self.device_config.start_command)
+                if pid_to_close:
+                    await self._kill_emulator_process(pid_to_close)
+                else:
+                    self.logger.info("未找到模拟器进程，可能已经关闭。")
 
         except asyncio.CancelledError:
             task_manager.set_state(DeviceState.CANCELED)
@@ -578,7 +666,6 @@ class TaskExecutor(QObject):
 
         if self.device_manager.get_state() != DeviceState.RUNNING:
             self.logger.warning(f"执行任务时设备状态异常: {self.device_manager.get_state()}")
-
 
         for i, sub_task in enumerate(task_list):
             if task_manager.get_state() == DeviceState.CANCELED:

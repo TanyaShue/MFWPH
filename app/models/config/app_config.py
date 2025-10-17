@@ -185,7 +185,8 @@ class DeviceConfig:
     controller_config: Union[AdbDevice, Win32Device]
     resources: List[Resource] = field(default_factory=list)
     start_command: str = ""
-    end_command: str = ""
+    auto_start_emulator: bool = False  # 是否自动启动模拟器
+    auto_close_emulator: bool = False  # 是否自动关闭模拟器
 
 
 @dataclass

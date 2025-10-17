@@ -3,7 +3,7 @@ from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import (QDialog, QVBoxLayout, QHBoxLayout, QFormLayout,
                                QLabel, QLineEdit, QPushButton,
                                QWidget, QGroupBox, QScrollArea,
-                               QMessageBox, QStackedWidget)
+                               QMessageBox, QStackedWidget, QCheckBox)
 from maa.define import (MaaAdbScreencapMethodEnum, MaaAdbInputMethodEnum,
                         MaaWin32ScreencapMethodEnum)
 from maa.toolkit import Toolkit
@@ -304,16 +304,21 @@ class AddDeviceDialog(QDialog):
         self.pre_command_edit = QLineEdit()
         self.pre_command_edit.setFixedWidth(FIELD_WIDTH)
 
-        # 创建启动后命令标签和输入框
-        post_command_label = QLabel("启动后命令:")
-        post_command_label.setFixedWidth(LABEL_WIDTH)
-        self.post_command_edit = QLineEdit()
-        self.post_command_edit.setFixedWidth(FIELD_WIDTH)
-
         # 添加表单行，使用显式标签确保对齐
         command_layout.addRow(pre_command_label, self.pre_command_edit)
-        command_layout.addRow(post_command_label, self.post_command_edit)
         advanced_layout.addLayout(command_layout)
+
+        # 新增：为ADB设备添加的自动启停复选框
+        self.adb_advanced_options_widget = QWidget()
+        adb_options_layout = QHBoxLayout(self.adb_advanced_options_widget)
+        adb_options_layout.setContentsMargins(0, 5, 0, 5)  # 设置边距
+        self.auto_start_checkbox = QCheckBox("自动启动模拟器")
+        self.auto_close_checkbox = QCheckBox("自动关闭模拟器")
+        adb_options_layout.addWidget(self.auto_start_checkbox)
+        adb_options_layout.addWidget(self.auto_close_checkbox)
+        adb_options_layout.addStretch()
+
+        advanced_layout.addWidget(self.adb_advanced_options_widget)
 
         scroll_layout.addWidget(advanced_group)
         scroll_layout.addStretch()
@@ -348,6 +353,9 @@ class AddDeviceDialog(QDialog):
         buttons_layout.addWidget(save_btn)
 
         main_layout.addLayout(buttons_layout)
+
+        # 初始化复选框的可见性
+        self.controller_type_changed(self.controller_type_combo.currentIndex())
 
     def _populate_adb_screencap_combo(self):
         """填充ADB截图方法下拉框"""
@@ -403,6 +411,9 @@ class AddDeviceDialog(QDialog):
     def controller_type_changed(self, index):
         """当控制器类型变更时的处理函数"""
         self.controller_stack.setCurrentIndex(index)
+        selected_type = self.controller_type_combo.itemData(index)
+        is_adb = (selected_type == DeviceType.ADB)
+        self.adb_advanced_options_widget.setVisible(is_adb)
 
     def fill_device_data(self):
         """将已有设备数据填充到表单中"""
@@ -456,13 +467,16 @@ class AddDeviceDialog(QDialog):
             index = self._find_combo_index_by_value(self.win32_input_method_combo, input_method)
             self.win32_input_method_combo.setCurrentIndex(index)
 
-        # 填充命令
+        # 填充命令和复选框状态
         if hasattr(self.device_config, 'start_command'):
             self.pre_command_edit.setText(self.device_config.start_command)
-        # --- FIX START ---
-        if hasattr(self.device_config, 'end_command'):
-            self.post_command_edit.setText(self.device_config.end_command)
-        # --- FIX END ---
+        if hasattr(self.device_config, 'auto_start_emulator'):
+            self.auto_start_checkbox.setChecked(self.device_config.auto_start_emulator)
+        if hasattr(self.device_config, 'auto_close_emulator'):
+            self.auto_close_checkbox.setChecked(self.device_config.auto_close_emulator)
+
+        # 根据设备类型更新UI可见性
+        self.controller_type_changed(self.controller_type_combo.currentIndex())
 
     def _find_combo_index_by_value(self, combo, value):
         """根据值查找下拉框中的索引位置"""
@@ -558,6 +572,10 @@ class AddDeviceDialog(QDialog):
             # 获取当前选择的控制器类型
             controller_type = self.controller_type_combo.currentData()
 
+            # 获取复选框状态
+            auto_start = self.auto_start_checkbox.isChecked()
+            auto_close = self.auto_close_checkbox.isChecked()
+
             # 根据控制器类型获取和验证输入
             if controller_type == DeviceType.ADB:
                 adb_address = self.adb_address_edit.text()
@@ -609,15 +627,16 @@ class AddDeviceDialog(QDialog):
                 self.device_config.device_type = controller_type
                 self.device_config.controller_config = controller_config
                 self.device_config.start_command = self.pre_command_edit.text()
-                if hasattr(self.device_config, 'end_command'):
-                    self.device_config.end_command = self.post_command_edit.text()
+                self.device_config.auto_start_emulator = auto_start
+                self.device_config.auto_close_emulator = auto_close
             else:
                 new_config = DeviceConfig(
                     device_name=sanitized_device_name,
                     device_type=controller_type,
                     controller_config=controller_config,
                     start_command=self.pre_command_edit.text(),
-                    end_command=self.post_command_edit.text()  # 添加 end_command
+                    auto_start_emulator=auto_start,
+                    auto_close_emulator=auto_close
                 )
                 self.global_config.app_config.devices.append(new_config)
 
