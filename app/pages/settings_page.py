@@ -414,25 +414,34 @@ class SettingsPage(QWidget):
         )
 
     def handle_download_completed(self, update_info: UpdateInfo, file_path: str):
+        # 关闭下载进度通知
         notification_manager.close_progress(self.download_notification_id)
         self.update_button.setEnabled(True)
         self.update_button.setText("立即更新")
-        notification_manager.show_success("更新文件下载完成", "下载成功")
 
-        reply = QMessageBox.question(
-            self, "下载完成",
-            "更新已下载完成。\n\n安装更新将需要重启应用程序。\n是否立即安装？",
-            QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes
-        )
+        # 提示下载成功
+        notification_manager.show_success("更新文件下载完成，正在准备安装更新……", "下载成功")
 
-        if reply == QMessageBox.Yes:
-            try:
-                self.installer_factory.install_update(update_info, file_path, resource=None)
-                notification_manager.show_info("更新程序已启动，应用程序将自动重启以完成更新", "正在更新")
-            except Exception as e:
-                notification_manager.show_error(f"无法启动更新程序：{str(e)}", "更新失败")
-        else:
-            notification_manager.show_info("更新已下载但未安装，您可以稍后再次点击“立即更新”进行安装。", "更新已推迟")
+        try:
+            # 执行安装
+            self.installer_factory.install_update(update_info, file_path, resource=None)
+
+            # 通知用户即将重启
+            notification_manager.show_info(
+                "更新程序已启动，应用程序将在 5 秒后自动重启以完成更新。",
+                "正在更新"
+            )
+
+            # 5 秒后重启（可选：退出或重新启动）
+            def restart_app():
+                import sys, os
+                python = sys.executable
+                os.execl(python, python, *sys.argv)  # 自动重启当前应用
+
+            QTimer.singleShot(5000, restart_app)
+
+        except Exception as e:
+            notification_manager.show_error(f"无法启动更新程序：{str(e)}", "更新失败")
 
     def handle_download_failed(self, resource_name, error):
         notification_manager.close_progress(self.download_notification_id)

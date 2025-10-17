@@ -917,10 +917,11 @@ class DownloadPage(QWidget):
             self.detail_view.set_error(f"安装失败: {error_message}")
 
     def _handle_restart_required(self):
-        reply = QMessageBox.question(self, "需要重启",
-                                     "本次更新需要重启应用程序才能生效。\n\n是否立即重启？",
-                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.Yes)
-        if reply == QMessageBox.Yes:
-            QTimer.singleShot(100, QCoreApplication.quit)
-        else:
-            notification_manager.show_info("更新文件已下载但尚未应用，请稍后手动重启程序。", "等待重启")
+        # 直接显示通知
+        notification_manager.show_info(
+            "本次更新需要重启应用程序才能生效，程序将在 5 秒后自动重启。",
+            "即将重启"
+        )
+
+        # 5 秒后自动退出（重启逻辑可以在外层启动器或脚本中检测并重新启动）
+        QTimer.singleShot(5000, QCoreApplication.quit)
