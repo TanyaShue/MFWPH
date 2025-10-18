@@ -246,16 +246,19 @@ class ResourceDetailView(QWidget):
         self.action_stack = QStackedWidget()
         self.action_layout.addWidget(self.action_stack, 1)
 
+        # 状态 0: 检查更新按钮
         self.check_button = QPushButton("检查更新")
         self.check_button.setObjectName("checkButton")
         self.check_button.setFixedHeight(40)
         self.check_button.clicked.connect(self._on_check_clicked)
         self.action_stack.addWidget(self.check_button)
 
+        # 状态 1: 可用更新
         update_widget = QWidget()
         update_layout = QHBoxLayout(update_widget)
         self.update_version_label = QLabel()
         self.update_version_label.setObjectName("updateVersionInfo")
+        self.update_version_label.setWordWrap(True)  # <-- 修复: 允许版本信息换行
         self.update_button = QPushButton("立即更新")
         self.update_button.setObjectName("updateButton")
         self.update_button.setFixedHeight(40)
@@ -264,6 +267,7 @@ class ResourceDetailView(QWidget):
         update_layout.addWidget(self.update_button)
         self.action_stack.addWidget(update_widget)
 
+        # 状态 2: 下载中
         progress_widget = QWidget()
         progress_layout = QHBoxLayout(progress_widget)
         progress_layout.setSpacing(12)
@@ -282,13 +286,32 @@ class ResourceDetailView(QWidget):
         progress_layout.addWidget(self.cancel_button)
         self.action_stack.addWidget(progress_widget)
 
+        # 状态 3: 最新版本 (成功状态)
         self.status_label = QLabel()
         self.status_label.setObjectName("statusLabel")
         self.status_label.setAlignment(Qt.AlignCenter)
         self.action_stack.addWidget(self.status_label)
+
+        # --- 修改开始: 新增状态 4, 用于显示错误信息和重试按钮 ---
+        error_widget = QWidget()
+        error_layout = QHBoxLayout(error_widget)
+        error_layout.setContentsMargins(0, 0, 0, 0)
+        error_layout.setSpacing(12)
+        self.error_label = QLabel()
+        self.error_label.setObjectName("statusLabel")
+        self.error_label.setWordWrap(True)  # <-- 修复: 允许错误信息换行, 避免撑大窗口
+        self.error_label.setAlignment(Qt.AlignCenter)
+        self.retry_button = QPushButton("重试")
+        self.retry_button.setObjectName("cancelButton")  # 复用一个比较中性的样式
+        self.retry_button.setFixedHeight(32)
+        self.retry_button.clicked.connect(self._on_check_clicked)  # 点击重试就重新检查
+        error_layout.addWidget(self.error_label, 1)
+        error_layout.addWidget(self.retry_button)
+        self.action_stack.addWidget(error_widget)
+        # --- 修改结束 ---
+
         return bar
 
-    # --- 修改开始: 使用 QTextBrowser 替换 QLabel ---
     def _create_changelog_card(self):
         card = QFrame()
         card.setObjectName("detailCard")
@@ -308,8 +331,6 @@ class ResourceDetailView(QWidget):
         layout.addWidget(title)
         layout.addWidget(self.changelog_browser)
         return card
-
-    # --- 修改结束 ---
 
     def _create_description_card(self):
         card = QFrame()
@@ -431,15 +452,12 @@ class ResourceDetailView(QWidget):
         self.check_button.setEnabled(False)
         self.action_stack.setCurrentIndex(0)
 
-    # --- 修改开始: 使用 setMarkdown 更新内容 ---
     def set_update_available(self, new_version, release_note):
         self.update_version_label.setText(f"发现新版本: <b>{new_version}</b>")
         self.update_button.setText("立即更新")
         self.changelog_browser.setMarkdown(release_note or "此版本没有提供更新日志。")
         self.changelog_card.show()
         self.action_stack.setCurrentIndex(1)
-
-    # --- 修改结束 ---
 
     def set_downloading(self, progress, speed):
         self.action_stack.setCurrentIndex(2)
@@ -455,10 +473,10 @@ class ResourceDetailView(QWidget):
 
     def set_error(self, error_msg):
         self.changelog_card.hide()
-        self.status_label.setText(f"错误: {error_msg}")
-        self.status_label.setProperty("status", "error")
-        self.status_label.style().polish(self.status_label)
-        self.action_stack.setCurrentIndex(3)
+        self.error_label.setText(f"错误: {error_msg}")
+        self.error_label.setProperty("status", "error")
+        self.error_label.style().polish(self.error_label)
+        self.action_stack.setCurrentIndex(4)  # 切换到包含重试按钮的错误界面
 
     def reset_action_bar(self):
         self.changelog_card.hide()
@@ -642,7 +660,6 @@ class DownloadPage(QWidget):
         layout.addWidget(hint_label)
         return widget
 
-    # --- 修改开始: 为 #changelogContent 添加样式 ---
     def _apply_stylesheet(self):
         self.setStyleSheet("""
             #downloadPage { background-color: #f8fafc; }
@@ -687,8 +704,6 @@ class DownloadPage(QWidget):
             #cancelButton { background-color: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px; font-weight: 500; padding: 0 12px; }
             #cancelButton:hover { background-color: #e2e8f0; border-color: #d1d5db; }
         """)
-
-    # --- 修改结束 ---
 
     def load_resources(self):
         for item in self.resource_items.values(): item.deleteLater()
@@ -790,7 +805,10 @@ class DownloadPage(QWidget):
         if resource:
             self.installer.install_update(update_info, file_path, resource)
         else:
-            self._handle_install_failed(update_info.resource_name, "找不到本地资源配置")
+            if update_info.resource_name == "MFWPH 主程序":
+                self.installer.install_update(update_info, file_path, None)
+            else:
+                self._handle_install_failed(update_info.resource_name, "找不到本地资源配置")
 
     def _cancel_download(self, resource):
         thread = self.active_downloaders.get(resource.resource_name)
@@ -916,12 +934,11 @@ class DownloadPage(QWidget):
         if self.selected_resource and self.selected_resource.resource_name == resource_name:
             self.detail_view.set_error(f"安装失败: {error_message}")
 
+    # --- 修改开始: 优化重启流程 ---
     def _handle_restart_required(self):
-        # 直接显示通知
+        # 直接显示通知, 不再弹窗让用户确认
         notification_manager.show_info(
             "本次更新需要重启应用程序才能生效，程序将在 5 秒后自动重启。",
             "即将重启"
         )
-
-        # 5 秒后自动退出（重启逻辑可以在外层启动器或脚本中检测并重新启动）
         QTimer.singleShot(5000, QCoreApplication.quit)
