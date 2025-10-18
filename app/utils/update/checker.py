@@ -18,15 +18,16 @@ class UpdateChecker(QThread):
     check_failed = Signal(str, str)
     check_completed = Signal(int, int)
 
-    def __init__(self, resources, single_mode=False, channel=None, source=None):
+    def __init__(self, resources, single_mode=False, channel=None, source=None, target_asset_name=None):
         """
-        【已修改】构造函数现在接受一个可选的 'source' 参数来强制指定更新源。
+        【已修改】构造函数现在接受一个可选的 'target_asset_name' 参数来查找特定的发布包。
         """
         super().__init__()
         self.resources = [resources] if single_mode else resources
         self.single_mode = single_mode
         self.channel = channel
         self.source = source  # 保存从外部传入的强制更新源
+        self.target_asset_name = target_asset_name  # <-- 新增：保存目标资源文件名
         self.mirror_base_url = "https://mirrorchyan.com/api"
         self.github_api_url = "https://api.github.com"
         self.is_cancelled = False
@@ -44,8 +45,6 @@ class UpdateChecker(QThread):
                 logger.debug(f"正在为资源 '{resource.resource_name}' 检查更新。")
                 app_config = global_config.get_app_config()
 
-                # --- 修改开始 ---
-                # 优先使用构造时传入的 source，其次才从配置中获取
                 update_method = self.source
                 if not update_method:
                     update_method = app_config.get_resource_update_method(resource.resource_name)
@@ -128,7 +127,7 @@ class UpdateChecker(QThread):
             latest_version = data.get("version_name", "")
             download_url = data.get("url", "")
             update_type = data.get("update_type", "full")
-            release_note = data.get("release_note", "")  # <-- 修改: 获取更新日志
+            release_note = data.get("release_note", "")
             logger.debug(
                 f"解析的 MirrorChyan 数据: 版本='{latest_version}', 下载链接='{download_url}', 类型='{update_type}'。")
 
@@ -144,7 +143,7 @@ class UpdateChecker(QThread):
                     new_version=latest_version,
                     download_url=download_url,
                     update_type=update_type, source=UpdateSource.MIRROR,
-                    release_note=release_note  # <-- 修改: 传递更新日志
+                    release_note=release_note
                 )
                 self.update_found.emit(update_info)
                 return True
@@ -231,27 +230,70 @@ class UpdateChecker(QThread):
                 logger.info(
                     f"为 '{resource.resource_name}' 发现了新的 GitHub 版本: {latest_version_str} (当前: {current_version_str})。")
 
-                # --- 修改开始: 获取 Release Note ---
+                # --- 修改开始: 获取 Release Note 和特定资源下载链接 ---
+                download_url = ""
                 release_note = "无法获取更新日志。"
                 tag_name = latest_tag_data.get("name")
-                if tag_name:
-                    release_api_url = f"{self.github_api_url}/repos/{owner_repo}/releases/tags/{tag_name}"
-                    try:
-                        logger.debug(f"正在从 {release_api_url} 获取发布信息。")
-                        release_response = requests.get(release_api_url, headers=headers)
-                        if release_response.status_code == 200:
-                            release_note = release_response.json().get("body", "此版本没有提供更新日志。")
+                if not tag_name:
+                    self.check_failed.emit(resource.resource_name, "最新的标签名称无效。")
+                    return False
+
+                release_api_url = f"{self.github_api_url}/repos/{owner_repo}/releases/tags/{tag_name}"
+                try:
+                    logger.debug(f"正在从 {release_api_url} 获取发布信息。")
+                    release_response = requests.get(release_api_url, headers=headers)
+
+                    if release_response.status_code == 200:
+                        release_data = release_response.json()
+                        release_note = release_data.get("body", "此版本没有提供更新日志。")
+
+                        # 根据是否需要特定资源来决定下载链接
+                        if self.target_asset_name:
+                            logger.debug(f"正在查找名为 '{self.target_asset_name}' 的特定资源。")
+                            assets = release_data.get("assets", [])
+                            found_asset = False
+                            for asset in assets:
+                                if asset.get("name") == self.target_asset_name:
+                                    download_url = asset.get("browser_download_url")
+                                    logger.info(f"已找到匹配的资源: '{self.target_asset_name}', URL: {download_url}")
+                                    found_asset = True
+                                    break
+                            if not found_asset:
+                                msg = f"版本 {latest_version_str} 中缺少必需的更新包 ({self.target_asset_name})。"
+                                logger.error(msg)
+                                self.check_failed.emit(resource.resource_name, msg)
+                                return False
                         else:
-                            logger.warning(f"获取 {tag_name} 的发布信息失败，状态码: {release_response.status_code}")
-                    except requests.exceptions.RequestException as re:
-                        logger.error(f"请求发布信息时出错: {re}")
+                            # 默认行为：获取源码包
+                            download_url = latest_tag_data.get("zipball_url", "")
+                            logger.debug(f"未指定目标资源，使用默认的 zipball URL: {download_url}")
+                    else:
+                        logger.warning(f"获取 {tag_name} 的发布信息失败，状态码: {release_response.status_code}")
+                        # 如果是普通资源，即使没有Release，也可以下载源码包
+                        if not self.target_asset_name:
+                            download_url = latest_tag_data.get("zipball_url", "")
+                        else: # 主程序更新必须要有Release信息
+                            msg = f"无法获取版本 {latest_version_str} 的发布详情。"
+                            self.check_failed.emit(resource.resource_name, msg)
+                            return False
+
+                except requests.exceptions.RequestException as re:
+                    logger.error(f"请求发布信息时出错: {re}")
+                    self.check_failed.emit(resource.resource_name, f"网络请求失败: {str(re)}")
+                    return False
+
+                if not download_url:
+                    msg = f"为版本 {latest_version_str} 找到了更新，但无法确定下载链接。"
+                    logger.error(msg)
+                    self.check_failed.emit(resource.resource_name, msg)
+                    return False
                 # --- 修改结束 ---
 
                 update_info = UpdateInfo(
                     resource_name=resource.resource_name, current_version=resource.resource_version,
-                    new_version=latest_version_str, download_url=latest_tag_data.get("zipball_url", ""),
+                    new_version=latest_version_str, download_url=download_url,
                     update_type="full", source=UpdateSource.GITHUB,
-                    release_note=release_note  # <-- 修改: 传递更新日志
+                    release_note=release_note
                 )
                 self.update_found.emit(update_info)
                 return True

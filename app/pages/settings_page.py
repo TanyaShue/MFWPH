@@ -177,9 +177,10 @@ class SettingsPage(QWidget):
             logger.error(f"保存测试版更新设置失败: {e}")
             notification_manager.show_error("保存设置失败", "错误")
 
+    # --- 修改开始: 更新主程序检查逻辑 ---
     def check_app_update(self):
         """
-        【已修改】检查主程序更新。如果当前版本未知，则假定版本为 "0.0.0" 以获取最新版本。
+        【已修改】检查主程序更新。此方法现在会检测用户平台并查找对应的Release包。
         """
         if self.update_checker_thread and self.update_checker_thread.isRunning(): return
         if self.download_thread and self.download_thread.isRunning(): return
@@ -195,6 +196,34 @@ class SettingsPage(QWidget):
         self.check_button.setText("检查中...")
         self.update_button.hide()
 
+        # 1. 检测平台并构建目标资源文件名
+        try:
+            system = platform.system().lower()
+            machine = platform.machine().lower()
+
+            if system == "windows":
+                os_name, ext = "windows", "zip"
+            elif system == "linux":
+                os_name, ext = "linux", "tar.gz"
+            elif system == "darwin":
+                os_name, ext = "macos", "tar.gz"
+            else:
+                raise ValueError(f"不支持的操作系统: {platform.system()}")
+
+            if machine in ["amd64", "x86_64"]:
+                arch_name = "x64"
+            elif machine in ["arm64", "aarch64"]:
+                arch_name = "arm64"
+            else:
+                raise ValueError(f"不支持的CPU架构: {platform.machine()}")
+
+            target_asset_name = f"MFWPH_{os_name}-{arch_name}.{ext}"
+            logger.info(f"正在查找主程序更新包, 目标文件: '{target_asset_name}'")
+
+        except ValueError as e:
+            self.handle_check_failed("MFWPH 主程序", str(e))
+            return
+
         channel = 'beta' if self.beta_checkbox.isChecked() else 'stable'
         notification_manager.show_info(f"正在从 GitHub ({channel}频道) 检查最新版本...", "检查更新")
 
@@ -205,18 +234,20 @@ class SettingsPage(QWidget):
             resource_rep_url="https://github.com/TanyaShue/MFWPH"
         )
 
-        # 【已修改】将 source='github' 作为参数传递给检查器，以强制使用 GitHub 源
+        # 2. 将目标文件名传递给更新检查器
         self.update_checker_thread = UpdateChecker(
             app_resource_mock,
             single_mode=True,
             channel=channel,
-            source='github'
+            source='github',
+            target_asset_name=target_asset_name  # <-- 将目标文件名传递给检查器
         )
         self.update_checker_thread.update_found.connect(self.handle_update_found)
         self.update_checker_thread.update_not_found.connect(self.handle_update_not_found)
         self.update_checker_thread.check_failed.connect(self.handle_check_failed)
         self.update_checker_thread.start()
-    # --- 其他所有方法（create_*, handle_*, 等）保持不变 ---
+    # --- 修改结束 ---
+
     def create_section(self, title):
         section = QWidget()
         section.setObjectName(f"section_{title}")
