@@ -76,43 +76,40 @@ def load_light_palette() -> QPalette:
 def kill_processes():
     app_logger = log_manager.get_app_logger()
 
+    # ---------- 1. 杀掉所有 Agent 进程 ----------
     try:
-        if hasattr(global_config, "agent_process") and global_config.agent_process:
-            proc = global_config.agent_process
-            try:
-                # 获取进程组成员（Windows只能通过children递归）
-                if os.name == 'nt':
-                    ps_proc = psutil.Process(proc.pid)
-                    group_members = [ps_proc] + ps_proc.children(recursive=True)
-                else:
-                    pgid = os.getpgid(proc.pid)
-                    group_members = [p for p in psutil.process_iter(['pid', 'name'])
-                                     if os.getpgid(p.pid) == pgid]
+        # 修改：检查复数形式的 agent_processes 列表
+        if hasattr(global_config, "agent_processes") and global_config.agent_processes:
+            app_logger.info(f"正在清理 {len(global_config.agent_processes)} 个 Agent 进程...")
+            # 遍历列表中的每一个 agent 进程
+            for proc in list(global_config.agent_processes):
+                try:
+                    # 获取进程组成员（Windows只能通过children递归）
+                    if os.name == 'nt':
+                        ps_proc = psutil.Process(proc.pid)
+                        group_members = [ps_proc] + ps_proc.children(recursive=True)
+                    else:
+                        pgid = os.getpgid(proc.pid)
+                        group_members = [p for p in psutil.process_iter(['pid', 'name'])
+                                         if os.getpgid(p.pid) == pgid]
 
-                app_logger.debug("Agent process group before kill:")
-                for p in group_members:
-                    app_logger.debug(f"    PID={p.pid}, Name={p.name()}, PPID={p.ppid()}")
+                    app_logger.debug(f"准备清理 Agent 进程组 (父进程 PID: {proc.pid})...")
 
-                # 直接 kill 组内所有进程
-                for p in group_members:
-                    try:
-                        p.kill()
-                        app_logger.info(f"Killed agent process PID={p.pid}, Name={p.name()}")
-                    except psutil.NoSuchProcess:
-                        pass
-                    except Exception as e:
-                        app_logger.error(f"Failed to kill agent process PID={p.pid}: {e}")
-                still_alive = [p.info for p in psutil.process_iter(['pid', 'name', 'ppid'])
-                               if p.ppid() == proc.pid or p.pid == proc.pid]
-                if still_alive:
-                    app_logger.warning(f"Some agent processes still alive after force kill: {still_alive}")
-                else:
-                    app_logger.debug("No agent processes alive after force kill.")
+                    # 直接 kill 组内所有进程
+                    for p in group_members:
+                        try:
+                            p.kill()
+                            app_logger.info(f"已终止 agent 进程: PID={p.pid}, 名称={p.name()}")
+                        except psutil.NoSuchProcess:
+                            pass # 进程已不存在，忽略
+                        except Exception as e:
+                            app_logger.error(f"终止 agent 进程 PID={p.pid} 失败: {e}")
 
-            except Exception as e:
-                app_logger.error(f"Failed to kill agent process group {proc.pid}: {e}")
+                except Exception as e:
+                    app_logger.error(f"清理 agent 进程组 {proc.pid} 失败: {e}")
     except Exception as e:
-        app_logger.error(f"Error handling agent process group termination: {e}")
+        app_logger.error(f"处理 agent 进程组终止时发生错误: {e}")
+
 
     # ---------- 2. 杀掉 adb ----------
     current_process = psutil.Process(os.getpid())
@@ -122,9 +119,9 @@ def kill_processes():
         if proc.info.get('name', '').lower() == "adb.exe":
             try:
                 proc.kill()
-                app_logger.info(f"Killed adb.exe process with pid {proc.pid}")
+                app_logger.info(f"已终止 adb.exe 进程，PID: {proc.pid}")
             except Exception as e:
-                app_logger.error(f"Failed to kill adb.exe process with pid {proc.pid}: {e}")
+                app_logger.error(f"终止 adb.exe 进程 (PID: {proc.pid}) 失败: {e}")
 
     # ---------- 3. 杀掉同名程序 ----------
     for proc in psutil.process_iter(['name', 'pid']):
@@ -133,15 +130,15 @@ def kill_processes():
                 for child in proc.children(recursive=True):
                     try:
                         child.kill()
-                        app_logger.info(f"Killed child process {child.name()} with pid {child.pid}")
+                        app_logger.info(f"已终止子进程 {child.name()}，PID: {child.pid}")
                     except Exception as e:
-                        app_logger.error(f"Failed to kill child process with pid {child.pid}: {e}")
+                        app_logger.error(f"终止子进程 (PID: {child.pid}) 失败: {e}")
                 proc.kill()
-                app_logger.info(f"Killed process {current_process_name} with pid {proc.pid}")
+                app_logger.info(f"已终止同名进程 {current_process_name}，PID: {proc.pid}")
         except Exception as e:
-            app_logger.error(f"Error handling process: {e}")
+            app_logger.error(f"处理进程时发生错误: {e}")
 
-    app_logger.info("Process cleanup completed")
+    app_logger.info("进程清理完成")
 
 
 logger = log_manager.get_app_logger()
@@ -250,4 +247,3 @@ class StartupResourceUpdateChecker:
                 self.main_window.set_resource_updates_available(True, self.resources_with_updates)
         else:
             logger.info("所有资源均为最新版本")
-

@@ -216,28 +216,33 @@ class TaskExecutor(QObject):
                 if global_config.app_config.debug_model:
                     Tasker.set_debug_mode(True)
 
-                self.logger.info(f"正在为设备 '{self.device_name}' 检查模拟器状态...")
-                pid = await self._run_in_executor(find_emulator_pid, self.device_config.start_command)
+                pid = None
                 is_newly_started = False
 
-                if pid:
-                    self.logger.info(f"检测到模拟器已在运行。PID: {pid}")
-                else:
-                    if getattr(self.device_config, 'auto_start_emulator', False):
-                        self.logger.info("模拟器未运行，将根据配置尝试启动...")
-                        pid = await self._start_emulator_and_wait_for_pid(self.device_config.start_command)
-                        if pid:
-                            is_newly_started = True
+                if self.device_config.start_command:
+                    self.logger.info(f"正在为设备 '{self.device_name}' 检查模拟器状态...")
+                    pid = await self._run_in_executor(find_emulator_pid, self.device_config.start_command)
+
+                    if pid:
+                        self.logger.info(f"检测到模拟器已在运行。PID: {pid}")
                     else:
-                        self.logger.warning("模拟器未运行，且自动启动选项未开启。")
+                        if getattr(self.device_config, 'auto_start_emulator', False):
+                            self.logger.info("模拟器未运行，将根据配置尝试启动...")
+                            pid = await self._start_emulator_and_wait_for_pid(self.device_config.start_command)
+                            if pid:
+                                is_newly_started = True
+                        else:
+                            self.logger.warning("模拟器未运行，且自动启动选项未开启。")
 
-                if not pid:
-                    error_msg = "启动或查找模拟器进程失败。"
-                    self.logger.error(error_msg)
-                    self.device_manager.set_state(DeviceState.ERROR, error_message=error_msg)
-                    return False
+                    if not pid:
+                        error_msg = "启动或查找模拟器进程失败。"
+                        self.logger.error(error_msg)
+                        self.device_manager.set_state(DeviceState.ERROR, error_message=error_msg)
+                        return False
 
-                self.logger.info(f"模拟器准备就绪，PID: {pid}")
+                    self.logger.info(f"模拟器准备就绪，PID: {pid}")
+                else:
+                    self.logger.info("未配置启动命令，跳过模拟器状态检查。")
 
                 if is_newly_started:
                     await self._wait_for_emulator_startup(20)
@@ -253,16 +258,21 @@ class TaskExecutor(QObject):
 
                     self.logger.warning(f"第 {attempt} 次控制器初始化失败。")
                     if attempt < max_retries:
-                        self.logger.info("将尝试重启模拟器后重试...")
-                        await self._kill_emulator_process(pid)
-                        pid = await self._start_emulator_and_wait_for_pid(self.device_config.start_command)
-                        if not pid:
-                            self.logger.error("重启模拟器失败，无法继续。")
-                            break
-                        await self._wait_for_emulator_startup(20)
+                        if pid and self.device_config.start_command:
+                            self.logger.info("将尝试重启模拟器后重试...")
+                            await self._kill_emulator_process(pid)
+                            pid = await self._start_emulator_and_wait_for_pid(self.device_config.start_command)
+                            if not pid:
+                                self.logger.error("重启模拟器失败，无法继续。")
+                                break
+                            await self._wait_for_emulator_startup(20)
+                        else:
+                            self.logger.warning("无法重启模拟器（因未配置启动命令），将直接重试连接。")
+                            await asyncio.sleep(5)
 
                 if not controller_initialized:
-                    self.logger.error(f"控制器初始化在 {max_retries} 次尝试后仍然失败。你的模拟器正在发神经。")
+                    # 【问题3 修复】修改日志信息
+                    self.logger.error(f"控制器在 {max_retries} 次尝试后仍初始化失败。请检查模拟器状态或ADB连接是否稳定。")
                     self.device_manager.set_state(DeviceState.ERROR, error_message="控制器初始化失败")
                     return False
 
@@ -751,8 +761,9 @@ class TaskExecutor(QObject):
         self._agent_process = await self._run_in_executor(start_process)
         self.logger.info(f"Agent进程已启动，PID: {self._agent_process.pid}")
 
-        # 保存进程对象，方便退出时直接杀进程组
-        global_config.agent_process = self._agent_process
+        if not hasattr(global_config, "agent_processes"):
+            global_config.agent_processes = []
+        global_config.agent_processes.append(self._agent_process)
 
         # 启动日志线程
         self._start_log_threads()
@@ -795,6 +806,11 @@ class TaskExecutor(QObject):
                     self._agent_process.kill()
             except Exception:
                 pass
+
+            # 【问题1 修复】从全局列表中移除已处理的 agent 进程
+            if hasattr(global_config, "agent_processes") and self._agent_process in global_config.agent_processes:
+                global_config.agent_processes.remove(self._agent_process)
+
             self._agent_process = None
 
         if self._agent:
