@@ -580,7 +580,8 @@ class TaskExecutor(QObject):
                 raise asyncio.CancelledError()
             self.logger.info(f"执行子任务 {i + 1}/{len(task_list)}: {sub_task.task_name}")
             def run_sub_task():
-                job = self._tasker.post_task(sub_task.task_entry, sub_task.pipeline_override)
+                self._tasker.resource.override_pipeline(sub_task.pipeline_override)
+                job = self._tasker.post_task(sub_task.task_entry)
                 job.wait()
                 if job.status == 4: raise Exception(f"子任务 {sub_task.task_name} 执行失败")
                 return job.get()
