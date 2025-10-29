@@ -156,6 +156,20 @@ class MirrorInstaller(BaseInstaller):
         logger.info("完整更新应用成功。")
 
     def launch_updater(self, update_type):
+        # --- 修改开始 ---
+        try:
+            logger.debug(f"检查安装包 '{self.file_path}' 中是否存在更新版的更新器...")
+            with zipfile.ZipFile(self.file_path, 'r') as zip_ref:
+                if self.updater_name in zip_ref.namelist():
+                    logger.info("安装包中发现新版更新器，将先更新更新器本身。")
+                    with tempfile.TemporaryDirectory() as temp_dir:
+                        zip_ref.extract(self.updater_name, temp_dir)
+                        new_updater_path = Path(temp_dir) / self.updater_name
+                        shutil.move(str(new_updater_path), str(self.updater_path))
+                        logger.info(f"更新器已成功更新到路径: {self.updater_path}")
+        except Exception as e:
+            logger.warning(f"更新更新器时发生错误: {e}。将尝试使用现有更新器。", exc_info=True)
+
         if not self.updater_path.exists():
             raise FileNotFoundError(f"独立更新程序不存在: {self.updater_path}")
         current_pid = os.getpid()
