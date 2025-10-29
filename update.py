@@ -244,20 +244,25 @@ class StandaloneUpdater:
                 if (self.target_dir / relative_path).exists():
                     files_to_backup.append(str(relative_path))
 
-            # ==================== 新增逻辑：特殊处理 resource 目录 ====================
-            resource_dir_name = 'resource'
-            source_resource_dir = self.temp_dir / resource_dir_name
-            target_resource_dir = self.target_dir / resource_dir_name
-            # 仅当更新包和目标目录中都存在resource目录时，才触发特殊逻辑
+            # ==================== 核心修正部分 ====================
+            # 修正1：定义正确的相对路径
+            resource_dir_relative_path = Path('assets') / 'resource'
+
+            source_resource_dir = self.temp_dir / resource_dir_relative_path
+            target_resource_dir = self.target_dir / resource_dir_relative_path
+
+            # 仅当更新包和目标目录中都存在 'assets/resource' 目录时，才触发特殊逻辑
             is_resource_update = source_resource_dir.is_dir() and target_resource_dir.is_dir()
 
             if is_resource_update:
-                logger.info(f"检测到 '{resource_dir_name}' 目录更新，将执行先删除后复制的策略。")
-                # 1. 从备份列表中移除 resource 内的单个文件，避免重复备份
-                files_to_backup = [p for p in files_to_backup if not p.startswith(resource_dir_name + os.sep)]
-                # 2. 将整个 resource 目录添加到备份列表，确保完整备份
-                if resource_dir_name not in files_to_backup:
-                    files_to_backup.append(resource_dir_name)
+                logger.info(f"检测到 '{resource_dir_relative_path}' 目录更新，将执行先删除后复制的策略。")
+                # 修正2：使用正确的相对路径字符串来过滤备份列表
+                resource_path_str = str(resource_dir_relative_path)
+                files_to_backup = [p for p in files_to_backup if not p.startswith(resource_path_str + os.sep)]
+
+                # 2. 将整个 'assets/resource' 目录作为一个整体添加到备份列表
+                if resource_path_str not in files_to_backup:
+                    files_to_backup.append(resource_path_str)
             # =======================================================================
 
             if files_to_backup:
