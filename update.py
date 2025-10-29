@@ -244,8 +244,32 @@ class StandaloneUpdater:
                 if (self.target_dir / relative_path).exists():
                     files_to_backup.append(str(relative_path))
 
+            # ==================== 新增逻辑：特殊处理 resource 目录 ====================
+            resource_dir_name = 'resource'
+            source_resource_dir = self.temp_dir / resource_dir_name
+            target_resource_dir = self.target_dir / resource_dir_name
+            # 仅当更新包和目标目录中都存在resource目录时，才触发特殊逻辑
+            is_resource_update = source_resource_dir.is_dir() and target_resource_dir.is_dir()
+
+            if is_resource_update:
+                logger.info(f"检测到 '{resource_dir_name}' 目录更新，将执行先删除后复制的策略。")
+                # 1. 从备份列表中移除 resource 内的单个文件，避免重复备份
+                files_to_backup = [p for p in files_to_backup if not p.startswith(resource_dir_name + os.sep)]
+                # 2. 将整个 resource 目录添加到备份列表，确保完整备份
+                if resource_dir_name not in files_to_backup:
+                    files_to_backup.append(resource_dir_name)
+            # =======================================================================
+
             if files_to_backup:
-                self.create_backup(files_to_backup)
+                self.create_backup(list(set(files_to_backup))) # 使用 set 确保唯一性
+
+            # ==================== 新增逻辑：在复制前删除旧的 resource 目录 ====================
+            if is_resource_update:
+                logger.info(f"正在移除旧的 '{target_resource_dir}' 目录...")
+                if not self._retry_operation(lambda: shutil.rmtree(target_resource_dir)):
+                    logger.error(f"移除 '{target_resource_dir}' 失败，更新中止。")
+                    return False # 返回失败会触发备份恢复
+            # ===========================================================================
 
             # 执行更新
             success = True

@@ -125,7 +125,6 @@ class MirrorInstaller(BaseInstaller):
         self.install_completed.emit(self.resource.resource_name, self.new_version, [])
 
     def _apply_incremental_changes(self, extract_dir, changes_file):
-        # ... (此部分代码无需修改)
         logger.info("正在应用增量变更...")
         with open(changes_file, 'r', encoding='utf-8') as f:
             changes = json.load(f)
