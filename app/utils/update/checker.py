@@ -18,9 +18,11 @@ class UpdateChecker(QThread):
     check_failed = Signal(str, str)
     check_completed = Signal(int, int)
 
-    def __init__(self, resources, single_mode=False, channel=None, source=None, target_asset_name=None):
+    def __init__(self, resources, single_mode=False, channel=None, source=None, target_asset_name=None,
+                 force_check=False):
         """
         【已修改】构造函数现在接受一个可选的 'target_asset_name' 参数来查找特定的发布包。
+        【已修改】新增 'force_check' 参数，用于强制获取最新版本信息，即使当前版本号相同。
         """
         super().__init__()
         self.resources = [resources] if single_mode else resources
@@ -28,11 +30,12 @@ class UpdateChecker(QThread):
         self.channel = channel
         self.source = source  # 保存从外部传入的强制更新源
         self.target_asset_name = target_asset_name  # <-- 新增：保存目标资源文件名
+        self.force_check = force_check  # <-- 新增：强制检查标志
         self.mirror_base_url = "https://mirrorchyan.com/api"
         self.github_api_url = "https://api.github.com"
         self.is_cancelled = False
         logger.debug(
-            f"UpdateChecker 已初始化。单模式: {single_mode}。待检查资源数: {len(self.resources)}。")
+            f"UpdateChecker 已初始化。单模式: {single_mode}。强制检查: {self.force_check}。待检查资源数: {len(self.resources)}。")
 
     def run(self):
         updates_found = 0
@@ -87,8 +90,14 @@ class UpdateChecker(QThread):
         cdk = global_config.get_app_config().CDK if hasattr(global_config.get_app_config(), 'CDK') else ""
 
         api_url = f"{self.mirror_base_url}/resources/{rid}/latest"
-        params = {"current_version": resource.resource_version, "cdk": cdk, "user_agent": "MaaYYsGUI",
+        params = {"cdk": cdk, "user_agent": "MaaYYsGUI",
                   "channel": channel, "os": platform.system().lower(), "arch": platform.machine().lower()}
+
+        # --- 修改开始: 如果不是强制检查，则传递当前版本号 ---
+        if not self.force_check:
+            params["current_version"] = resource.resource_version
+        # --- 修改结束 ---
+
         log_params = params.copy()
         log_params["cdk"] = "***" if cdk else ""
         logger.debug(f"检查资源: {resource.resource_name}, API_URL: {api_url}, PARAMS: {log_params}")
@@ -135,9 +144,10 @@ class UpdateChecker(QThread):
             current_version_str = resource.resource_version.lstrip('v')
             logger.debug(f"正在比较版本 - 最新: '{latest_version_str}', 当前: '{current_version_str}'。")
 
-            if latest_version_str and semver.compare(latest_version_str, current_version_str) > 0:
+            if latest_version_str and (self.force_check or semver.compare(latest_version_str, current_version_str) > 0):
+                log_action = "强制获取" if self.force_check else "发现新的"
                 logger.info(
-                    f"为 '{resource.resource_name}' 发现了新的 MirrorChyan 版本: {latest_version} (当前: {resource.resource_version})。")
+                    f"为 '{resource.resource_name}' {log_action} MirrorChyan 版本: {latest_version} (当前: {resource.resource_version})。")
                 update_info = UpdateInfo(
                     resource_name=resource.resource_name, current_version=resource.resource_version,
                     new_version=latest_version,
@@ -226,9 +236,12 @@ class UpdateChecker(QThread):
             current_version_str = resource.resource_version.lstrip("v")
             logger.debug(f"正在比较版本 - 最新: '{latest_version_str}', 当前: '{current_version_str}'。")
 
-            if semver.compare(latest_version_str, current_version_str) > 0:
+            # --- 修改开始: 在强制检查模式下，即使版本号相同也视为更新 ---
+            if self.force_check or semver.compare(latest_version_str, current_version_str) > 0:
+                # --- 修改结束 ---
+                log_action = "强制获取" if self.force_check else "发现新的"
                 logger.info(
-                    f"为 '{resource.resource_name}' 发现了新的 GitHub 版本: {latest_version_str} (当前: {current_version_str})。")
+                    f"为 '{resource.resource_name}' {log_action} GitHub 版本: {latest_version_str} (当前: {current_version_str})。")
 
                 # --- 修改开始: 获取 Release Note 和特定资源下载链接 ---
                 download_url = ""
@@ -272,7 +285,7 @@ class UpdateChecker(QThread):
                         # 如果是普通资源，即使没有Release，也可以下载源码包
                         if not self.target_asset_name:
                             download_url = latest_tag_data.get("zipball_url", "")
-                        else: # 主程序更新必须要有Release信息
+                        else:  # 主程序更新必须要有Release信息
                             msg = f"无法获取版本 {latest_version_str} 的发布详情。"
                             self.check_failed.emit(resource.resource_name, msg)
                             return False

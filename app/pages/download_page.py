@@ -151,7 +151,8 @@ class ResourceListItem(QFrame):
 class ResourceDetailView(QWidget):
     """资源详情视图（集成操作按钮）"""
     check_update_clicked = Signal(object)
-    start_update_clicked = Signal(object)  # 只发送 resource
+    force_check_update_clicked = Signal(object)  # <-- 新增: 强制检查信号
+    start_update_clicked = Signal(object)
     cancel_download_clicked = Signal(object)
     source_changed_recheck = Signal(object)
 
@@ -258,7 +259,7 @@ class ResourceDetailView(QWidget):
         update_layout = QHBoxLayout(update_widget)
         self.update_version_label = QLabel()
         self.update_version_label.setObjectName("updateVersionInfo")
-        self.update_version_label.setWordWrap(True)  # <-- 修复: 允许版本信息换行
+        self.update_version_label.setWordWrap(True)
         self.update_button = QPushButton("立即更新")
         self.update_button.setObjectName("updateButton")
         self.update_button.setFixedHeight(40)
@@ -286,25 +287,35 @@ class ResourceDetailView(QWidget):
         progress_layout.addWidget(self.cancel_button)
         self.action_stack.addWidget(progress_widget)
 
-        # 状态 3: 最新版本 (成功状态)
+        # --- 修改开始: 状态 3, 最新版本 (新增强制更新按钮) ---
+        latest_widget = QWidget()
+        latest_layout = QHBoxLayout(latest_widget)
+        latest_layout.setContentsMargins(0, 0, 0, 0)
+        latest_layout.setSpacing(12)
         self.status_label = QLabel()
         self.status_label.setObjectName("statusLabel")
-        self.status_label.setAlignment(Qt.AlignCenter)
-        self.action_stack.addWidget(self.status_label)
+        self.force_update_button = QPushButton("强制更新")
+        self.force_update_button.setObjectName("cancelButton")  # 复用样式
+        self.force_update_button.setFixedHeight(32)
+        self.force_update_button.clicked.connect(self._on_force_update_clicked)
+        latest_layout.addWidget(self.status_label, 1, Qt.AlignCenter)
+        latest_layout.addWidget(self.force_update_button)
+        self.action_stack.addWidget(latest_widget)
+        # --- 修改结束 ---
 
-        # --- 修改开始: 新增状态 4, 用于显示错误信息和重试按钮 ---
+        # --- 修改开始: 状态 4, 显示错误信息和重试按钮 ---
         error_widget = QWidget()
         error_layout = QHBoxLayout(error_widget)
         error_layout.setContentsMargins(0, 0, 0, 0)
         error_layout.setSpacing(12)
         self.error_label = QLabel()
         self.error_label.setObjectName("statusLabel")
-        self.error_label.setWordWrap(True)  # <-- 修复: 允许错误信息换行, 避免撑大窗口
+        self.error_label.setWordWrap(True)
         self.error_label.setAlignment(Qt.AlignCenter)
         self.retry_button = QPushButton("重试")
-        self.retry_button.setObjectName("cancelButton")  # 复用一个比较中性的样式
+        self.retry_button.setObjectName("cancelButton")
         self.retry_button.setFixedHeight(32)
-        self.retry_button.clicked.connect(self._on_check_clicked)  # 点击重试就重新检查
+        self.retry_button.clicked.connect(self._on_check_clicked)
         error_layout.addWidget(self.error_label, 1)
         error_layout.addWidget(self.retry_button)
         self.action_stack.addWidget(error_widget)
@@ -324,9 +335,9 @@ class ResourceDetailView(QWidget):
         self.changelog_browser = QTextBrowser()
         self.changelog_browser.setObjectName("changelogContent")
         self.changelog_browser.setReadOnly(True)
-        self.changelog_browser.setOpenExternalLinks(True)  # 自动打开链接
+        self.changelog_browser.setOpenExternalLinks(True)
         self.changelog_browser.setFrameShape(QFrame.NoFrame)
-        self.changelog_browser.setMinimumHeight(150)  # 设置一个最小高度
+        self.changelog_browser.setMinimumHeight(150)
 
         layout.addWidget(title)
         layout.addWidget(self.changelog_browser)
@@ -438,6 +449,11 @@ class ResourceDetailView(QWidget):
             self.set_checking()
             self.check_update_clicked.emit(self.current_resource)
 
+    def _on_force_update_clicked(self):
+        if self.current_resource:
+            self.set_checking()
+            self.force_check_update_clicked.emit(self.current_resource)
+
     def _on_update_clicked(self):
         if self.current_resource:
             self.start_update_clicked.emit(self.current_resource)
@@ -476,7 +492,7 @@ class ResourceDetailView(QWidget):
         self.error_label.setText(f"错误: {error_msg}")
         self.error_label.setProperty("status", "error")
         self.error_label.style().polish(self.error_label)
-        self.action_stack.setCurrentIndex(4)  # 切换到包含重试按钮的错误界面
+        self.action_stack.setCurrentIndex(4)
 
     def reset_action_bar(self):
         self.changelog_card.hide()
@@ -741,21 +757,25 @@ class DownloadPage(QWidget):
         self.installer.restart_required.connect(self._handle_restart_required)
 
         self.detail_view.check_update_clicked.connect(self._check_resource_update)
+        self.detail_view.force_check_update_clicked.connect(self._force_check_resource_update)  # <-- 新增: 连接强制检查信号
         self.detail_view.start_update_clicked.connect(self._start_update)
         self.detail_view.cancel_download_clicked.connect(self._cancel_download)
         self.detail_view.source_changed_recheck.connect(self._check_resource_update)
 
-    def _check_resource_update(self, resource):
+    def _check_resource_update(self, resource, force=False):
         if resource.resource_name in self.active_checkers: return
 
         self.update_status_cache[resource.resource_name] = {'status': 'checking'}
-        thread = UpdateChecker(resource, single_mode=True)
+        thread = UpdateChecker(resource, single_mode=True, force_check=force)  # <-- 修改: 传递 force 参数
         thread.update_found.connect(self._handle_update_found)
         thread.update_not_found.connect(self._handle_update_not_found)
         thread.check_failed.connect(self._handle_check_failed)
         thread.finished.connect(lambda: self.active_checkers.pop(resource.resource_name, None))
         self.active_checkers[resource.resource_name] = thread
         thread.start()
+
+    def _force_check_resource_update(self, resource):
+        self._check_resource_update(resource, force=True)  # <-- 新增: 强制检查的入口
 
     def _start_update(self, resource):
         update_info = self.current_update_info.get(resource.resource_name)
@@ -936,7 +956,6 @@ class DownloadPage(QWidget):
 
     # --- 修改开始: 优化重启流程 ---
     def _handle_restart_required(self):
-        # 直接显示通知, 不再弹窗让用户确认
         notification_manager.show_info(
             "本次更新需要重启应用程序才能生效，程序将在 5 秒后自动重启。",
             "即将重启"
