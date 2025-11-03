@@ -25,6 +25,7 @@ if sys.platform == "win32":
     ctypes.windll.kernel32.SetThreadExecutionState(
         ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED
     )
+    ctypes.windll.kernel32.SetErrorMode(0x8003)
 
 # 获取应用程序日志记录器
 logger = log_manager.get_app_logger()
@@ -45,30 +46,26 @@ def get_base_path():
 
 def main():
     """
-    修复后的主函数
+    主函数
     """
     # 1. 获取可靠的程序根目录
     base_path = get_base_path()
     clean_up_old_pyinstaller_temps()
 
     os.chdir(base_path)
-    
-    # Create the argument parser
+
     parser = argparse.ArgumentParser(description="MFWPH Application")
     parser.add_argument('-auto', action='store_true', help='Automatically start tasks 5 seconds after launch.')
     parser.add_argument('-s', nargs='+', default=['all'], help='Specify device names to auto-start. Default is "all".')
     parser.add_argument('-exit_on_complete', action='store_true', help='Exit after auto-started tasks are complete.')
     args = parser.parse_args()
 
-    # ---------- 强制浅色主题设置开始 ----------
     app = QApplication(sys.argv)
     app.setStyle(QStyleFactory.create("Fusion"))
 
-    # 2. 应用自定义浅色调 Palette
     app.setPalette(load_light_palette())
 
-    # --- 修改开始: 添加系统托盘图标 ---
-    # 构造图标文件的绝对路径
+    # --- 添加系统托盘图标 ---
     icon_path = os.path.join(base_path, 'assets', 'icons', 'app', 'logo.png')
 
     if os.path.exists(icon_path):
@@ -77,7 +74,6 @@ def main():
 
         # 设置应用程序的窗口图标（对所有窗口生效）
         app.setWindowIcon(app_icon)
-    # --- 修改结束 ---
 
     # 设置异步事件循环
     loop = qasync.QEventLoop(app)
