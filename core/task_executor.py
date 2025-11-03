@@ -218,7 +218,7 @@ class TaskExecutor(QObject):
             if not await self._initialize_controller_with_retries(pid):
                 return False
 
-            self.device_manager.set_state(DeviceState.CONNECTED)
+            # self.device_manager.set_state(DeviceState.CONNECTED)
             self.logger.info("设备连接成功并准备就绪。")
             return True
 
