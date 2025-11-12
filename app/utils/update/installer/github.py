@@ -9,9 +9,7 @@ from app.utils.update.installer.base import BaseInstaller
 from app.models.config.global_config import global_config
 from app.utils import update_utils
 from app.models.logging.log_manager import log_manager
-# --- 修改开始: 导入 AppInstaller 用于委托 ---
 from app.utils.update.installer.app import AppInstaller
-# --- 修改结束 ---
 
 
 logger = log_manager.get_app_logger()
