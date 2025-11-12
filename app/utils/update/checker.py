@@ -1,4 +1,7 @@
+# --- START OF FILE checker.py ---
+
 import platform
+import re  # <-- 新增: 导入正则表达式模块
 import requests
 import semver
 from PySide6.QtCore import (Signal, QThread)
@@ -236,20 +239,29 @@ class UpdateChecker(QThread):
             current_version_str = resource.resource_version.lstrip("v")
             logger.debug(f"正在比较版本 - 最新: '{latest_version_str}', 当前: '{current_version_str}'。")
 
-            # --- 修改开始: 在强制检查模式下，即使版本号相同也视为更新 ---
+            # 在强制检查模式下，即使版本号相同也视为更新
             if self.force_check or semver.compare(latest_version_str, current_version_str) > 0:
-                # --- 修改结束 ---
                 log_action = "强制获取" if self.force_check else "发现新的"
                 logger.info(
                     f"为 '{resource.resource_name}' {log_action} GitHub 版本: {latest_version_str} (当前: {current_version_str})。")
 
-                # --- 修改开始: 获取 Release Note 和特定资源下载链接 ---
                 download_url = ""
                 release_note = "无法获取更新日志。"
                 tag_name = latest_tag_data.get("name")
                 if not tag_name:
                     self.check_failed.emit(resource.resource_name, "最新的标签名称无效。")
                     return False
+
+                asset_pattern = self.target_asset_name
+                is_regex_search = False
+                # 如果没有直接指定 asset, 则尝试从 platform_release_names 获取正则
+                if not asset_pattern and hasattr(resource, 'platform_release_names') and resource.platform_release_names:
+                    current_platform = platform.system().lower()
+                    pattern = resource.platform_release_names.get(current_platform)
+                    if pattern:
+                        asset_pattern = pattern
+                        is_regex_search = True  # 来自 platform_release_names 的总是被当作正则处理
+                        logger.debug(f"将使用平台 '{current_platform}' 的正则模式 '{asset_pattern}' 查找资源。")
 
                 release_api_url = f"{self.github_api_url}/repos/{owner_repo}/releases/tags/{tag_name}"
                 try:
@@ -260,39 +272,60 @@ class UpdateChecker(QThread):
                         release_data = release_response.json()
                         release_note = release_data.get("body", "此版本没有提供更新日志。")
 
-                        # 根据是否需要特定资源来决定下载链接
-                        if self.target_asset_name:
-                            logger.debug(f"正在查找名为 '{self.target_asset_name}' 的特定资源。")
+                        # --- 修改开始: 根据 asset_pattern (精确名称或正则) 查找资源 ---
+                        if asset_pattern:
+                            search_type = "正则" if is_regex_search else "精确名称"
+                            logger.debug(f"正在查找名为 '{asset_pattern}' 的特定资源 (通过{search_type})。")
                             assets = release_data.get("assets", [])
                             found_asset = False
                             for asset in assets:
-                                if asset.get("name") == self.target_asset_name:
+                                asset_name = asset.get("name")
+                                if not asset_name:
+                                    continue
+
+                                match = False
+                                # 如果是正则搜索
+                                if is_regex_search:
+                                    try:
+                                        if re.search(asset_pattern, asset_name):
+                                            match = True
+                                    except re.error as e:
+                                        logger.error(f"资源名称模式 '{asset_pattern}' 是一个无效的正则表达式: {e}")
+                                        break  # 如果正则无效，则终止本次查找
+                                # 否则，进行精确匹配
+                                else:
+                                    if asset_name == asset_pattern:
+                                        match = True
+
+                                if match:
                                     download_url = asset.get("browser_download_url")
-                                    logger.info(f"已找到匹配的资源: '{self.target_asset_name}', URL: {download_url}")
+                                    logger.info(f"已找到匹配的资源: '{asset_name}', URL: {download_url}")
                                     found_asset = True
                                     break
+
                             if not found_asset:
-                                msg = f"版本 {latest_version_str} 中缺少必需的更新包 ({self.target_asset_name})。"
+                                msg = f"版本 {latest_version_str} 中缺少必需的更新包 (匹配模式: '{asset_pattern}')。"
                                 logger.error(msg)
                                 self.check_failed.emit(resource.resource_name, msg)
                                 return False
                         else:
                             # 默认行为：获取源码包
                             download_url = latest_tag_data.get("zipball_url", "")
-                            logger.debug(f"未指定目标资源，使用默认的 zipball URL: {download_url}")
+                            logger.debug(f"未指定目标资源且无平台配置，使用默认的 zipball URL: {download_url}")
+                        # --- 修改结束 ---
                     else:
                         logger.warning(f"获取 {tag_name} 的发布信息失败，状态码: {release_response.status_code}")
-                        # 如果是普通资源，即使没有Release，也可以下载源码包
-                        if not self.target_asset_name:
-                            download_url = latest_tag_data.get("zipball_url", "")
-                        else:  # 主程序更新必须要有Release信息
-                            msg = f"无法获取版本 {latest_version_str} 的发布详情。"
+                        # 如果需要特定的 asset 但无法获取 release 列表，则失败
+                        if asset_pattern:
+                            msg = f"无法获取版本 {latest_version_str} 的发布详情，因此无法查找更新包 '{asset_pattern}'。"
                             self.check_failed.emit(resource.resource_name, msg)
                             return False
+                        else:  # Fallback to source code if no specific asset is needed
+                            download_url = latest_tag_data.get("zipball_url", "")
 
-                except requests.exceptions.RequestException as re:
-                    logger.error(f"请求发布信息时出错: {re}")
-                    self.check_failed.emit(resource.resource_name, f"网络请求失败: {str(re)}")
+                except requests.exceptions.RequestException as re_exc:
+                    logger.error(f"请求发布信息时出错: {re_exc}")
+                    self.check_failed.emit(resource.resource_name, f"网络请求失败: {str(re_exc)}")
                     return False
 
                 if not download_url:
@@ -300,7 +333,6 @@ class UpdateChecker(QThread):
                     logger.error(msg)
                     self.check_failed.emit(resource.resource_name, msg)
                     return False
-                # --- 修改结束 ---
 
                 update_info = UpdateInfo(
                     resource_name=resource.resource_name, current_version=resource.resource_version,

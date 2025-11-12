@@ -85,6 +85,7 @@ class ResourceConfig:
     resource_rep_url: str
     resource_icon: str
     agent: Agent
+    platform_release_names: Dict[str, str] = field(default_factory=dict)
     resource_pack: List[Dict[str, Any]] = field(default_factory=list)
     resource_tasks: List[Task] = field(default_factory=list)
     options: List[Option] = field(default_factory=list)
@@ -175,6 +176,7 @@ class ResourceConfig:
             resource_rep_url=data.get('resource_rep_url', ''),
             resource_description=data.get('resource_description', ''),
             resource_icon=data.get('resource_icon', ''),
+            platform_release_names=data.get('platform_release_names', {}),  # 读取新增的配置
             resource_pack=data.get('resource_pack', []),
             agent=agent,
             resource_tasks=tasks,
@@ -192,6 +194,7 @@ class ResourceConfig:
             "resource_rep_url": self.resource_rep_url,
             "resource_description": self.resource_description,
             "resource_icon": self.resource_icon,
+            "platform_release_names": self.platform_release_names,  # 导出新增的配置
             # 在序列化时写入 resource_pack
             "resource_pack": self.resource_pack,
             "agent": {
