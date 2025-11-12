@@ -1,7 +1,7 @@
 # --- START OF FILE checker.py ---
 
 import platform
-import re  # <-- 新增: 导入正则表达式模块
+import re
 import requests
 import semver
 from PySide6.QtCore import (Signal, QThread)
@@ -96,10 +96,9 @@ class UpdateChecker(QThread):
         params = {"cdk": cdk, "user_agent": "MaaYYsGUI",
                   "channel": channel, "os": platform.system().lower(), "arch": platform.machine().lower()}
 
-        # --- 修改开始: 如果不是强制检查，则传递当前版本号 ---
+        # 如果不是强制检查，则传递当前版本号
         if not self.force_check:
             params["current_version"] = resource.resource_version
-        # --- 修改结束 ---
 
         log_params = params.copy()
         log_params["cdk"] = "***" if cdk else ""
@@ -247,6 +246,7 @@ class UpdateChecker(QThread):
 
                 download_url = ""
                 release_note = "无法获取更新日志。"
+                update_type = "source"
                 tag_name = latest_tag_data.get("name")
                 if not tag_name:
                     self.check_failed.emit(resource.resource_name, "最新的标签名称无效。")
@@ -272,7 +272,6 @@ class UpdateChecker(QThread):
                         release_data = release_response.json()
                         release_note = release_data.get("body", "此版本没有提供更新日志。")
 
-                        # --- 修改开始: 根据 asset_pattern (精确名称或正则) 查找资源 ---
                         if asset_pattern:
                             search_type = "正则" if is_regex_search else "精确名称"
                             logger.debug(f"正在查找名为 '{asset_pattern}' 的特定资源 (通过{search_type})。")
@@ -299,6 +298,7 @@ class UpdateChecker(QThread):
 
                                 if match:
                                     download_url = asset.get("browser_download_url")
+                                    update_type = "full"
                                     logger.info(f"已找到匹配的资源: '{asset_name}', URL: {download_url}")
                                     found_asset = True
                                     break
@@ -309,10 +309,9 @@ class UpdateChecker(QThread):
                                 self.check_failed.emit(resource.resource_name, msg)
                                 return False
                         else:
-                            # 默认行为：获取源码包
+                            # 默认行为：获取源码包 (update_type 保持 'source')
                             download_url = latest_tag_data.get("zipball_url", "")
                             logger.debug(f"未指定目标资源且无平台配置，使用默认的 zipball URL: {download_url}")
-                        # --- 修改结束 ---
                     else:
                         logger.warning(f"获取 {tag_name} 的发布信息失败，状态码: {release_response.status_code}")
                         # 如果需要特定的 asset 但无法获取 release 列表，则失败
@@ -337,7 +336,8 @@ class UpdateChecker(QThread):
                 update_info = UpdateInfo(
                     resource_name=resource.resource_name, current_version=resource.resource_version,
                     new_version=latest_version_str, download_url=download_url,
-                    update_type="full", source=UpdateSource.GITHUB,
+                    update_type=update_type,
+                    source=UpdateSource.GITHUB,
                     release_note=release_note
                 )
                 self.update_found.emit(update_info)
