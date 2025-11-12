@@ -16,11 +16,9 @@ from app.utils.until import clean_up_old_pyinstaller_temps, load_light_palette, 
 
 if sys.platform == "win32":
     import ctypes
-
-    # 设置系统状态，防止进入休眠
     ES_CONTINUOUS = 0x80000000
     ES_SYSTEM_REQUIRED = 0x00000001
-    ES_AWAYMODE_REQUIRED = 0x00000040  # Windows Vista+ 支持 Away Mode
+    ES_AWAYMODE_REQUIRED = 0x00000040
 
     ctypes.windll.kernel32.SetThreadExecutionState(
         ES_CONTINUOUS | ES_SYSTEM_REQUIRED | ES_AWAYMODE_REQUIRED

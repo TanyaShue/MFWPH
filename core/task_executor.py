@@ -559,7 +559,7 @@ class TaskExecutor(QObject):
         await asyncio.sleep(1)
         if self._agent_process.poll() is not None:
             stderr = self._agent_process.stderr.read()
-            raise Exception(f"Agent启动失败: {stderr}")
+            self.logger.error(f"Agent进程已启动，PID: {stderr}")
 
     def _start_log_threads(self):
         """启动日志捕获线程"""
