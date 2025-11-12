@@ -1,13 +1,18 @@
+# --- START OF FILE github.py ---
+
 import shutil
 import tempfile
 import zipfile
-# import git
 from pathlib import Path
 
 from app.utils.update.installer.base import BaseInstaller
 from app.models.config.global_config import global_config
 from app.utils import update_utils
 from app.models.logging.log_manager import log_manager
+# --- 修改开始: 导入 AppInstaller 用于委托 ---
+from app.utils.update.installer.app import AppInstaller
+# --- 修改结束 ---
+
 
 logger = log_manager.get_app_logger()
 
@@ -18,14 +23,36 @@ class GithubInstaller(BaseInstaller):
     def install(self):
         """
         安装器的主入口。
-        根据构造时 file_path 是否为 None 来决定更新策略。
+        首先检查更新类型，如果是 'full'，则委托给 AppInstaller。
+        否则，执行常规的资源更新逻辑。
         """
         self.install_started.emit(self.resource.resource_name)
-        resource_path = Path(self.resource.source_file).parent
 
+        # --- 修改开始: 核心逻辑判断与委托 ---
+        # 如果更新类型是 'full'，意味着这是一个完整的主程序包
+        if self.update_info.update_type == 'full':
+            logger.info(f"更新 '{self.resource.resource_name}' 是一个完整包 (update_type='full')。将委托给 AppInstaller 处理。")
+            try:
+                # 创建 AppInstaller 实例，并把 resource 传给它，以便它知道要清理哪个目录
+                app_installer = AppInstaller(self.update_info, self.file_path, self.resource)
+
+                # 关键：将我们的信号连接到 app_installer 的信号，这样UI才能收到正确的状态更新
+                app_installer.install_completed.connect(self.install_completed)
+                app_installer.install_failed.connect(self.install_failed)
+                app_installer.restart_required.connect(self.restart_required)
+
+                # 启动 AppInstaller 的安装流程
+                app_installer.install()
+                return  # 委托后，当前安装器的任务结束
+            except Exception as e:
+                logger.error(f"委托给 AppInstaller 失败: {e}", exc_info=True)
+                self.install_failed.emit(self.resource.resource_name, f"委托给主程序安装器失败: {str(e)}")
+                return
+        # --- 修改结束 ---
+
+        # --- 以下是原有的资源更新逻辑，仅在非 'full' 更新时执行 ---
+        resource_path = Path(self.resource.source_file).parent
         try:
-            # --- 修改开始 ---
-            # 检查是否应该尝试Git更新 (file_path为None) 并且 Git环境是否存在
             should_try_git = self.file_path is None
             git_is_available = shutil.which('git') is not None
 
@@ -34,19 +61,15 @@ class GithubInstaller(BaseInstaller):
                 import git
                 repo = git.Repo(resource_path)
                 self._update_via_git(repo)
-
-            # 如果不满足Git更新条件，或者UI决策了下载，则统一走ZIP路径
             else:
                 if should_try_git and not git_is_available:
                     logger.warning(f"'{self.resource.resource_name}' 是一个Git仓库，但未检测到Git环境，将尝试ZIP包更新。")
-                    # 如果没有ZIP包，这里需要报错
                     if not self.file_path:
                         raise FileNotFoundError("需要Git更新但环境不存在，且没有提供备用的ZIP文件路径。")
                 else:
                     logger.info(f"'{self.resource.resource_name}' 不是 Git 仓库或UI决策下载，将使用 ZIP 包覆盖更新。")
 
                 self._update_via_zip(resource_path)
-            # --- 修改结束 ---
 
         except Exception as e:
             logger.error(f"安装 GitHub 资源 {self.resource.resource_name} 失败: {e}", exc_info=True)
@@ -105,13 +128,11 @@ class GithubInstaller(BaseInstaller):
             unzipped_folder = next(extract_path.iterdir(), None)
             source_content_dir = unzipped_folder if unzipped_folder and unzipped_folder.is_dir() else extract_path
 
-            # --- 修改开始 ---
-            # 不再直接删除整个目标目录，而是清理其中的内容，但保留 .git 文件夹
             logger.info(f"正在清理目标目录 '{target_dir}' (保留 .git)...")
             if target_dir.exists():
                 for item in target_dir.iterdir():
                     if item.name == '.git':
-                        continue  # 跳过 .git 目录
+                        continue
                     if item.is_dir():
                         shutil.rmtree(item)
                     else:
