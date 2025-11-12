@@ -10,7 +10,6 @@
 
 import asyncio
 import os
-import shlex
 import subprocess
 import threading
 import time
@@ -22,7 +21,6 @@ from concurrent.futures import ThreadPoolExecutor
 
 import psutil
 from PySide6.QtCore import QObject, Signal
-from qasync import asyncSlot
 from maa.controller import AdbController, Win32Controller
 from maa.notification_handler import NotificationHandler, NotificationType
 from maa.resource import Resource

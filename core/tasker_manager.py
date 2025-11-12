@@ -9,16 +9,14 @@
 from typing import Dict, Optional, List, Union, DefaultDict
 import asyncio
 from collections import defaultdict
-from dataclasses import dataclass
-from datetime import datetime
 
-from PySide6.QtCore import QObject, Signal, Slot, QMutex, QMutexLocker
+from PySide6.QtCore import QObject, Signal, Slot
 from qasync import asyncSlot
 
 from app.models.config.app_config import DeviceConfig, Resource
 from app.models.config.global_config import RunTimeConfigs, global_config
 from app.models.logging.log_manager import log_manager
-from core.task_executor import TaskExecutor  # 导入重构后的执行器
+from core.task_executor import TaskExecutor
 from core.device_state_machine import DeviceState
 from core.device_status_manager import device_status_manager
 
@@ -265,8 +263,6 @@ class TaskerManager(QObject):
 
         self.logger.warning(f"无法恢复设备 {device_name}，任务队列为空。")
         return False
-
-    # ... [其他辅助方法，如 get_statistics, is_device_active, run_device_all_resource_task 等需要相应调整] ...
 
     def is_device_active(self, device_name: str) -> bool:
         """检查设备处理器是否处于活跃状态"""
