@@ -55,8 +55,6 @@ class TaskExecutor(QObject):
     # 信号定义
     task_state_changed = Signal(str, DeviceState, dict)
 
-    # executor_started 和 executor_stopped 信号已无必要，因为其生命周期与单个任务绑定
-
     def __init__(self, device_config: DeviceConfig, parent=None):
         super().__init__(parent)
         self.device_config = device_config
@@ -100,37 +98,39 @@ class TaskExecutor(QObject):
             # 2. 连接阶段：确保设备已连接
             is_ready = await self._ensure_connection()
             if not is_ready:
-                error_msg = "为任务准备设备连接失败，任务将标记为失败。"
-                raise RuntimeError(error_msg)
+                raise RuntimeError("为任务准备设备连接失败，任务将标记为失败。")
 
             # 3. 执行阶段：依次执行所有任务
             for task in tasks_to_run:
+                # 【重要】_execute_task 现在会将 CancelledError 向上抛出
                 await self._execute_task(task)
 
         except asyncio.CancelledError:
             self.logger.warning(f"任务执行被取消 (Device: {self.device_name})")
+            # 这里是最高层的处理器，确保所有受影响的任务都被标记为 CANCELED
             for task in tasks_to_run:
                 if task.state_manager.get_state() not in [DeviceState.COMPLETED, DeviceState.FAILED]:
                     task.state_manager.set_state(DeviceState.CANCELED)
-                    self.task_state_changed.emit(task.id, DeviceState.CANCELED, {})
+                    self.task_state_changed.emit(task.id, DeviceState.CANCELED, task.state_manager.get_context())
         except Exception as e:
             self.logger.error(f"任务生命周期中发生严重错误: {e}", exc_info=True)
             for task in tasks_to_run:
-                # 只标记未完成的任务为失败
                 if task.state_manager.get_state() not in [DeviceState.COMPLETED, DeviceState.FAILED,
                                                           DeviceState.CANCELED]:
                     task.state_manager.set_state(DeviceState.FAILED, error_message=str(e))
-                    self.task_state_changed.emit(task.id, DeviceState.FAILED, {'error_message': str(e)})
+                    self.task_state_changed.emit(task.id, DeviceState.FAILED, task.state_manager.get_context())
         finally:
             # 4. 清理阶段：无论成功与否，都销毁所有资源
             self.logger.info("任务生命周期结束，开始清理执行器资源...")
             await self._cleanup()
-            # 从状态管理器中移除所有相关的任务
             for task in tasks_to_run:
                 device_status_manager.remove_task_manager(task.id)
 
     async def _execute_task(self, task: Task):
-        """执行单个任务"""
+        """
+        执行单个任务。
+        【修改】移除了此处的 CancelledError 处理，让它向上冒泡到 run_task_lifecycle。
+        """
         task_manager = task.state_manager
         try:
             task_manager.set_state(DeviceState.PREPARING)
@@ -140,6 +140,7 @@ class TaskExecutor(QObject):
                 task_manager.set_state(DeviceState.RUNNING)
                 self.device_manager.set_state(DeviceState.RUNNING, task_id=task.id, task_name=task.data.resource_name,
                                               progress=0)
+                # 如果 _run_tasks 抛出 CancelledError，这里不会捕获，将直接中断并冒泡到 run_task_lifecycle
                 result = await self._run_tasks(task)
                 task.result = result
                 task_manager.set_state(DeviceState.COMPLETED, progress=100)
@@ -153,18 +154,14 @@ class TaskExecutor(QObject):
             else:
                 raise Exception("Agent设置失败，任务无法继续")
 
-        except asyncio.CancelledError:
-            task_manager.set_state(DeviceState.CANCELED)
-            self.logger.info(f"任务 {task.id} 被取消")
-            raise  # 重新抛出以确保外层循环知道发生了取消
         except Exception as e:
+            # 这个 except 不会捕获 CancelledError，因为它继承自 BaseException
             error_msg = str(e)
             task_manager.set_state(DeviceState.FAILED, error_message=error_msg)
             self.logger.error(f"任务 {task.id} 失败: {error_msg}", exc_info=True)
         finally:
-            # 发送最终状态信号
+            # 发送最终状态信号（无论成功、失败还是取消后的状态）
             self.task_state_changed.emit(task.id, task_manager.get_state(), task_manager.get_context())
-            # 任务执行后断开连接，为下一个任务（如果有）或清理做准备
             await self._disconnect()
 
     async def _cleanup(self):
@@ -188,7 +185,6 @@ class TaskExecutor(QObject):
         self._controller = None
         self.device_manager.set_state(DeviceState.DISCONNECTED)
         self.logger.info("执行器资源已完全清理")
-
 
     def _create_notification_handler(self):
         """创建通知处理器"""
@@ -303,8 +299,6 @@ class TaskExecutor(QObject):
     async def _disconnect(self):
         """断开控制器连接并清理"""
         self.logger.debug("正在断开控制器...")
-        self._controller.__del__()
-        self.logger.debug("控制器已销毁")
         self._controller = None
 
     async def _kill_emulator_process(self, pid: int):
@@ -502,11 +496,9 @@ class TaskExecutor(QObject):
         task_manager = task.state_manager
         self.logger.info(f"执行任务列表，共 {len(task_list)} 个子任务")
         for i, sub_task in enumerate(task_list):
-            # 在执行每个子任务前检查是否被取消
             if task_manager.get_state() == DeviceState.CANCELED:
                 raise asyncio.CancelledError()
-            # 外部取消也会在这里通过CancelledError中断
-            await asyncio.sleep(0)  # 允许事件循环处理取消等操作
+            await asyncio.sleep(0)
 
             self.logger.info(f"执行子任务 {i + 1}/{len(task_list)}: {sub_task.task_name}")
 
@@ -517,13 +509,12 @@ class TaskExecutor(QObject):
                 if job.status == 4: raise Exception(f"子任务 {sub_task.task_name} 执行失败")
                 return job.get()
 
-            # 使用asyncio.shield来防止run_in_executor被直接取消，但依然允许外层取消逻辑生效
             try:
                 await self._run_in_executor(run_sub_task)
             except asyncio.CancelledError:
                 self.logger.warning(f"子任务 {sub_task.task_name} 在执行中被中断")
                 await self._run_in_executor(self._tasker.post_stop)
-                raise  # 重新抛出以确保整个任务停止
+                raise  # 将异常抛给 _execute_task 的上层 run_task_lifecycle 处理
 
             progress = int((i + 1) / len(task_list) * 100)
             task_manager.set_progress(progress)

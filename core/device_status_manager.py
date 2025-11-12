@@ -205,7 +205,6 @@ class DeviceStatusManager(QObject):
                         count += 1
             return count
 
-    # === 回调处理 ===
 
     def _on_device_state_changed(self, name: str, old_state: str, new_state: str, context: dict):
         """设备状态变化回调"""
