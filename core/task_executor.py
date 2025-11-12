@@ -191,7 +191,6 @@ class TaskExecutor(QObject):
         self.device_manager.set_state(DeviceState.DISCONNECTED)
         self.logger.info("执行器资源已完全清理")
 
-    # === 以下方法与原版基本一致，仅作微调以适应新生命周期 ===
 
     def _create_notification_handler(self):
         """创建通知处理器"""
@@ -306,6 +305,8 @@ class TaskExecutor(QObject):
     async def _disconnect(self):
         """断开控制器连接并清理"""
         self.logger.debug("正在断开控制器...")
+        self._controller.__del__()
+        self.logger.debug("控制器已销毁")
         self._controller = None
 
     async def _kill_emulator_process(self, pid: int):
