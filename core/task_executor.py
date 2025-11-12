@@ -1,7 +1,11 @@
 # task_executor.py
 # -*- coding: UTF-8 -*-
 """
-任务执行器 - 使用全局Python运行时管理器
+任务执行器 - 使用全局Python运行时管理器 (重构版)
+特点:
+- 短生命周期: 为每个任务批次创建和销毁。
+- 无状态: 不维护内部任务队列或长期后台循环。
+- 单一入口: 通过 run_task_lifecycle 方法驱动。
 """
 
 import asyncio
@@ -17,7 +21,7 @@ from dataclasses import dataclass, field
 from concurrent.futures import ThreadPoolExecutor
 
 import psutil
-from PySide6.QtCore import QObject, Signal, Slot
+from PySide6.QtCore import QObject, Signal
 from qasync import asyncSlot
 from maa.controller import AdbController, Win32Controller
 from maa.notification_handler import NotificationHandler, NotificationType
@@ -30,7 +34,7 @@ from app.models.config.app_config import DeviceConfig, DeviceType
 from app.models.config.global_config import RunTimeConfigs, global_config
 from app.models.logging.log_manager import log_manager
 from app.utils.device_untils import find_emulator_pid
-from core.python_runtime_manager import python_runtime_manager  # 使用全局实例
+from core.python_runtime_manager import python_runtime_manager
 from core.device_state_machine import SimpleStateManager, DeviceState
 from core.device_status_manager import device_status_manager
 
@@ -46,12 +50,14 @@ class Task:
 
 
 class TaskExecutor(QObject):
-    """重构后的任务执行器 - 使用全局Python运行时管理器"""
+    """
+    重构后的任务执行器 - 具有短生命周期，为单次任务执行而创建和销毁。
+    """
 
     # 信号定义
     task_state_changed = Signal(str, DeviceState, dict)
-    executor_started = Signal()
-    executor_stopped = Signal()
+
+    # executor_started 和 executor_stopped 信号已无必要，因为其生命周期与单个任务绑定
 
     def __init__(self, device_config: DeviceConfig, parent=None):
         super().__init__(parent)
@@ -62,7 +68,7 @@ class TaskExecutor(QObject):
         # 状态管理器
         self.device_manager = device_status_manager.get_or_create_device_manager(self.device_name)
 
-        # 核心组件
+        # 核心组件 (在任务执行期间初始化)
         self._controller: Optional[Union[AdbController, Win32Controller]] = None
         self._tasker: Optional[Tasker] = None
         self._current_resource: Optional[Resource] = None
@@ -70,20 +76,122 @@ class TaskExecutor(QObject):
         self._agent: Optional[AgentClient] = None
         self._agent_process: Optional[subprocess.Popen] = None
 
-        # 任务管理
-        self._active = False
-        self._task_queue: List[Task] = []
-        self._current_task: Optional[Task] = None
-        self._processing_task: Optional[asyncio.Task] = None
-
-        # 锁管理
-        self._lock = asyncio.Lock()
-
         # 线程池
         self._executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix=f"TaskExec_{self.device_name}")
-
         # 通知处理器
         self._notification_handler = self._create_notification_handler()
+
+        self.logger.info(f"任务执行器实例 {id(self)} 已创建")
+
+    async def run_task_lifecycle(self, task_data: Union[RunTimeConfigs, List[RunTimeConfigs]]) -> None:
+        """
+        【核心方法】执行一个完整的任务生命周期：连接 -> 执行 -> 清理。
+        这个方法完成后，执行器实例即可被销毁。
+        """
+        tasks_to_run: List[Task] = []
+        try:
+            # 1. 准备阶段：将任务数据转换为内部Task对象
+            configs = task_data if isinstance(task_data, list) else [task_data]
+            for config in configs:
+                task_id = f"task_{datetime.now().timestamp()}_{id(config)}"
+                task_manager = device_status_manager.create_task_manager(task_id, self.device_name)
+                task_manager.set_task_info(task_id, config.resource_name)
+                tasks_to_run.append(Task(id=task_id, data=config, state_manager=task_manager))
+                self.logger.debug(f"任务 {task_id} 已准备好执行")
+
+            # 2. 连接阶段：确保设备已连接
+            is_ready = await self._ensure_connection()
+            if not is_ready:
+                error_msg = "为任务准备设备连接失败，任务将标记为失败。"
+                raise RuntimeError(error_msg)
+
+            # 3. 执行阶段：依次执行所有任务
+            for task in tasks_to_run:
+                await self._execute_task(task)
+
+        except asyncio.CancelledError:
+            self.logger.warning(f"任务执行被取消 (Device: {self.device_name})")
+            for task in tasks_to_run:
+                if task.state_manager.get_state() not in [DeviceState.COMPLETED, DeviceState.FAILED]:
+                    task.state_manager.set_state(DeviceState.CANCELED)
+                    self.task_state_changed.emit(task.id, DeviceState.CANCELED, {})
+        except Exception as e:
+            self.logger.error(f"任务生命周期中发生严重错误: {e}", exc_info=True)
+            for task in tasks_to_run:
+                # 只标记未完成的任务为失败
+                if task.state_manager.get_state() not in [DeviceState.COMPLETED, DeviceState.FAILED,
+                                                          DeviceState.CANCELED]:
+                    task.state_manager.set_state(DeviceState.FAILED, error_message=str(e))
+                    self.task_state_changed.emit(task.id, DeviceState.FAILED, {'error_message': str(e)})
+        finally:
+            # 4. 清理阶段：无论成功与否，都销毁所有资源
+            self.logger.info("任务生命周期结束，开始清理执行器资源...")
+            await self._cleanup()
+            # 从状态管理器中移除所有相关的任务
+            for task in tasks_to_run:
+                device_status_manager.remove_task_manager(task.id)
+
+    async def _execute_task(self, task: Task):
+        """执行单个任务"""
+        task_manager = task.state_manager
+        try:
+            task_manager.set_state(DeviceState.PREPARING)
+            await self._create_tasker(task.data.resource_pack, task.data.resource_path)
+
+            if await self._setup_agent(task):
+                task_manager.set_state(DeviceState.RUNNING)
+                self.device_manager.set_state(DeviceState.RUNNING, task_id=task.id, task_name=task.data.resource_name,
+                                              progress=0)
+                result = await self._run_tasks(task)
+                task.result = result
+                task_manager.set_state(DeviceState.COMPLETED, progress=100)
+                self.logger.info(f"任务 {task.id} 执行成功")
+
+                if getattr(self.device_config, 'auto_close_emulator', False):
+                    self.logger.info("配置了自动关闭模拟器，正在执行...")
+                    pid_to_close = await self._run_in_executor(find_emulator_pid, self.device_config.start_command)
+                    if pid_to_close:
+                        await self._kill_emulator_process(pid_to_close)
+            else:
+                raise Exception("Agent设置失败，任务无法继续")
+
+        except asyncio.CancelledError:
+            task_manager.set_state(DeviceState.CANCELED)
+            self.logger.info(f"任务 {task.id} 被取消")
+            raise  # 重新抛出以确保外层循环知道发生了取消
+        except Exception as e:
+            error_msg = str(e)
+            task_manager.set_state(DeviceState.FAILED, error_message=error_msg)
+            self.logger.error(f"任务 {task.id} 失败: {error_msg}", exc_info=True)
+        finally:
+            # 发送最终状态信号
+            self.task_state_changed.emit(task.id, task_manager.get_state(), task_manager.get_context())
+            # 任务执行后断开连接，为下一个任务（如果有）或清理做准备
+            await self._disconnect()
+
+    async def _cleanup(self):
+        """停止所有活动并清理资源，用于执行器销毁前"""
+        self.logger.info(f"正在为执行器实例 {id(self)} 执行全面清理")
+
+        # 停止MAA任务
+        if self._tasker and self._tasker.running:
+            try:
+                await self._run_in_executor(self._tasker.post_stop().wait)
+            except Exception as e:
+                self.logger.warning(f"停止 MAA tasker 时出错: {e}")
+
+        # 清理Agent
+        await self._cleanup_agent()
+
+        # 关闭线程池
+        self._executor.shutdown(wait=False)
+
+        # 断开控制器
+        self._controller = None
+        self.device_manager.set_state(DeviceState.DISCONNECTED)
+        self.logger.info("执行器资源已完全清理")
+
+    # === 以下方法与原版基本一致，仅作微调以适应新生命周期 ===
 
     def _create_notification_handler(self):
         """创建通知处理器"""
@@ -97,29 +205,22 @@ class TaskExecutor(QObject):
                                     detail: NotificationHandler.NodeRecognitionDetail):
                 if noti_type in (NotificationType.Succeeded, NotificationType.Failed):
                     self.executor.logger.debug(
-                        f"识别: {detail.name} - {'成功' if noti_type == NotificationType.Succeeded else '失败'}"
-                    )
+                        f"识别: {detail.name} - {'成功' if noti_type == NotificationType.Succeeded else '失败'}")
 
             def on_node_action(self, noti_type: NotificationType, detail: NotificationHandler.NodeActionDetail):
-                if not detail or not hasattr(detail, "focus") or not detail.focus:
-                    return
-
+                if not detail or not hasattr(detail, "focus") or not detail.focus: return
                 focus = detail.focus
-
-                # 映射每种通知类型到 focus key 和日志函数
                 type_to_log = {
                     NotificationType.Succeeded: ("succeeded", self.executor.logger.info),
                     NotificationType.Failed: ("failed", self.executor.logger.error),
                     NotificationType.Starting: ("start", self.executor.logger.info),
                 }
-
                 if noti_type in type_to_log:
                     key, log_func = type_to_log[noti_type]
                     if key in focus:
                         values = focus[key]
                         if isinstance(values, list):
-                            for v in values:
-                                log_func(str(v))
+                            for v in values: log_func(str(v))
                         else:
                             log_func(str(values))
 
@@ -130,98 +231,28 @@ class TaskExecutor(QObject):
         loop = asyncio.get_event_loop()
         return await loop.run_in_executor(self._executor, func, *args)
 
-    # === 生命周期管理 ===
-    @asyncSlot()
-    async def start(self) -> bool:
-        """启动任务执行器，只初始化后台循环"""
-        async with self._lock:
-            if self._active:
-                return True
-
-            try:
-                self._active = True
-                # 设置初始状态为断开，等待任务触发连接
-                self.device_manager.set_state(DeviceState.DISCONNECTED)
-                self._processing_task = asyncio.create_task(self._process_tasks())
-                self.logger.info(f"任务执行器 {self.device_name} 已启动，等待任务...")
-                self.executor_started.emit()
-                return True
-            except Exception as e:
-                self.logger.error(f"启动任务执行器失败: {e}", exc_info=True)
-                self.device_manager.set_state(DeviceState.ERROR, error_message=str(e))
-                self._active = False
-                return False
-
-    @asyncSlot()
-    async def stop(self):
-        """停止任务执行器"""
-        async with self._lock:
-            if not self._active:
-                return
-
-            self.logger.info(f"停止任务执行器 {self.device_name}")
-            self._active = False
-
-            # 取消队列中和进行中的所有任务
-            for task in self._task_queue:
-                task.state_manager.set_state(DeviceState.CANCELED)
-            if self._current_task:
-                self._current_task.state_manager.set_state(DeviceState.CANCELED)
-            self._task_queue.clear()
-
-        # 停止MAA任务
-        if self._tasker and self._tasker.running:
-            await self._run_in_executor(self._tasker.post_stop().wait)
-
-        # 取消后台处理循环
-        if self._processing_task:
-            self._processing_task.cancel()
-            try:
-                await self._processing_task
-            except asyncio.CancelledError:
-                pass
-
-        await self._cleanup_agent()
-        self._executor.shutdown(wait=False)
-
-        self._controller = None
-        self.device_manager.set_state(DeviceState.DISCONNECTED)
-        self.logger.info("任务执行器已完全停止")
-        self.executor_stopped.emit()
-
     async def _ensure_connection(self) -> bool:
-        """【重构核心】确保设备连接就绪，如果未连接则尝试连接"""
-        # 如果已连接，直接返回成功
+        """确保设备连接就绪，如果未连接则尝试连接"""
         if self._controller and self._controller.connected:
             self.logger.debug("控制器已连接，跳过连接步骤。")
             return True
-
         self.logger.info("开始确保设备连接...")
         self.device_manager.set_state(DeviceState.CONNECTING)
-
         try:
-            # 初始化MAA Toolkit
             current_dir = os.getcwd()
             await self._run_in_executor(Toolkit.init_option, os.path.join(current_dir, "assets"))
             if global_config.app_config.debug_model:
                 Tasker.set_debug_mode(True)
-
-            # 检查和启动模拟器
             pid = await self._manage_emulator_process()
             if not pid and self.device_config.start_command:
                 error_msg = "启动或查找模拟器进程失败。"
                 self.logger.error(error_msg)
                 self.device_manager.set_state(DeviceState.ERROR, error_message=error_msg)
                 return False
-
-            # 初始化控制器
             if not await self._initialize_controller_with_retries(pid):
                 return False
-
-            # self.device_manager.set_state(DeviceState.CONNECTED)
             self.logger.info("设备连接成功并准备就绪。")
             return True
-
         except Exception as e:
             self.logger.error(f"确保设备连接失败: {e}", exc_info=True)
             self.device_manager.set_state(DeviceState.ERROR, error_message=str(e))
@@ -232,14 +263,11 @@ class TaskExecutor(QObject):
         if not self.device_config.start_command:
             self.logger.info("未配置启动命令，跳过模拟器状态检查。")
             return None
-
         self.logger.info(f"正在为设备 '{self.device_name}' 检查模拟器状态...")
         pid = await self._run_in_executor(find_emulator_pid, self.device_config.start_command)
-
         if pid:
             self.logger.info(f"检测到模拟器已在运行。PID: {pid}")
             return pid
-
         if getattr(self.device_config, 'auto_start_emulator', False):
             self.logger.info("模拟器未运行，将根据配置尝试启动...")
             pid = await self._start_emulator_and_wait_for_pid(self.device_config.start_command)
@@ -248,7 +276,6 @@ class TaskExecutor(QObject):
                 return pid
         else:
             self.logger.warning("模拟器未运行，且自动启动选项未开启。")
-
         return None
 
     async def _initialize_controller_with_retries(self, pid: Optional[int]) -> bool:
@@ -257,8 +284,7 @@ class TaskExecutor(QObject):
         for attempt in range(1, max_retries + 1):
             self.logger.info(f"正在进行第 {attempt}/{max_retries} 次控制器初始化尝试...")
             if await self._initialize_controller():
-                return True  # 初始化成功
-
+                return True
             self.logger.warning(f"第 {attempt} 次控制器初始化失败。")
             if attempt < max_retries:
                 if pid and self.device_config.start_command:
@@ -268,23 +294,20 @@ class TaskExecutor(QObject):
                     if not new_pid:
                         self.logger.error("重启模拟器失败，无法继续。")
                         break
-                    pid = new_pid  # 更新PID
+                    pid = new_pid
                     await self._wait_for_emulator_startup(20)
                 else:
                     self.logger.warning("无法重启模拟器，将直接重试连接。")
                     await asyncio.sleep(5)
-
         self.logger.error(f"控制器在 {max_retries} 次尝试后仍初始化失败。请检查模拟器状态或ADB连接是否稳定。")
         self.device_manager.set_state(DeviceState.ERROR, error_message="控制器初始化失败")
         return False
 
     async def _disconnect(self):
-        """【新增】断开控制器连接并清理"""
+        """断开控制器连接并清理"""
         self.logger.debug("正在断开控制器...")
         self._controller = None
-        # Agent和Tasker等资源在每个任务开始时都会重新创建，所以这里只需清理控制器
 
-    # === 模拟器进程管理 (辅助方法) ===
     async def _kill_emulator_process(self, pid: int):
         """安全地终止指定PID的进程"""
         self.logger.info(f"正在尝试终止模拟器进程，PID: {pid}")
@@ -312,15 +335,16 @@ class TaskExecutor(QObject):
     async def _start_emulator_and_wait_for_pid(self, start_command: str, timeout: int = 60) -> Optional[int]:
         """在后台启动模拟器并等待其进程出现"""
         self.logger.info(f"执行启动命令: {start_command}")
+
         def _launch():
             creationflags = subprocess.DETACHED_PROCESS if os.name == 'nt' else 0
             subprocess.Popen(start_command, shell=True, creationflags=creationflags)
+
         try:
             await self._run_in_executor(_launch)
         except Exception as e:
             self.logger.error(f"执行模拟器启动命令失败: {e}", exc_info=True)
             return None
-
         self.logger.info("命令已执行，开始轮询等待进程 PID...")
         start_time = time.time()
         while time.time() - start_time < timeout:
@@ -329,7 +353,6 @@ class TaskExecutor(QObject):
                 self.logger.info(f"成功找到模拟器进程，PID: {pid}")
                 return pid
             await asyncio.sleep(1)
-
         self.logger.error(f"等待模拟器启动超时（{timeout}秒）")
         return None
 
@@ -343,24 +366,22 @@ class TaskExecutor(QObject):
             await asyncio.sleep(1)
         self.logger.info("等待结束，继续执行任务。")
 
-    # === 控制器和资源管理 ===
     async def _initialize_controller(self) -> bool:
         """初始化控制器"""
         try:
             if self.device_config.device_type == DeviceType.ADB:
                 cfg = self.device_config.controller_config
-                self._controller = AdbController(cfg.adb_path, cfg.address, cfg.screencap_methods, input_methods=cfg.input_methods, config=cfg.config)
+                self._controller = AdbController(cfg.adb_path, cfg.address, cfg.screencap_methods,
+                                                 input_methods=cfg.input_methods, config=cfg.config)
             elif self.device_config.device_type == DeviceType.WIN32:
                 cfg = self.device_config.controller_config
                 self._controller = Win32Controller(cfg.hWnd)
             else:
                 raise ValueError(f"不支持的设备类型: {self.device_config.device_type}")
-
             await self._run_in_executor(self._controller.post_connection().wait)
             if not self._controller.connected:
                 self.logger.error("控制器连接失败")
                 return False
-
             await self._run_in_executor(lambda: self._controller.post_screencap().wait().get())
             self.logger.info("控制器连接和截图测试成功")
             return True
@@ -385,7 +406,6 @@ class TaskExecutor(QObject):
             else:
                 self.logger.info("未检测到有效资源包，仅加载资源根路径。")
                 paths_to_load = [resource_path]
-
             for i, path in enumerate(paths_to_load):
                 self.logger.debug(f"正在加载路径 ({i + 1}/{len(paths_to_load)}): {path}")
                 try:
@@ -393,7 +413,6 @@ class TaskExecutor(QObject):
                     self.logger.debug(f"成功加载路径: {path}")
                 except Exception as e:
                     self.logger.error(f"加载路径 {path} 时发生错误: {e}")
-
             self.logger.info("所有资源路径加载完成。")
             self._current_resource = resource
             self._current_resource_path = resource_path
@@ -413,102 +432,6 @@ class TaskExecutor(QObject):
             raise RuntimeError("任务执行器初始化失败")
         self.logger.info("任务执行器创建成功")
 
-    # === 任务处理 ===
-    async def _process_tasks(self):
-        """【重构】任务处理主循环，包含连接管理"""
-        self.logger.info("任务处理循环已启动")
-        while self._active:
-            try:
-                task = await self._get_next_task()
-                if not task:
-                    await asyncio.sleep(0.1)
-                    continue
-
-                # 步骤1: 确保为当前任务准备好连接
-                is_ready = await self._ensure_connection()
-                if not is_ready:
-                    error_msg = "为任务准备设备连接失败，任务将标记为失败。"
-                    self.logger.error(f"{error_msg} (Task ID: {task.id})")
-                    task.state_manager.set_state(DeviceState.FAILED, error_message=error_msg)
-                    # 发送失败信号并清理
-                    self.task_state_changed.emit(task.id, DeviceState.FAILED, task.state_manager.get_context())
-                    async with self._lock:
-                        self._current_task = None
-                    device_status_manager.remove_task_manager(task.id)
-                    await asyncio.sleep(5) # 等待一段时间再试下一个任务
-                    continue
-
-                # 步骤2: 执行任务
-                await self._execute_task(task)
-
-            except asyncio.CancelledError:
-                self.logger.info("任务处理循环被取消")
-                break
-            except Exception as e:
-                self.logger.error(f"任务处理循环发生未捕获的错误: {e}", exc_info=True)
-                await asyncio.sleep(1)
-
-    async def _get_next_task(self) -> Optional[Task]:
-        """获取下一个待处理任务"""
-        async with self._lock:
-            if self._current_task:
-                return None
-            while self._task_queue:
-                task = self._task_queue.pop(0)
-                if task.state_manager.get_state() not in (DeviceState.CANCELED, DeviceState.FAILED, DeviceState.COMPLETED):
-                    self._current_task = task
-                    return task
-                else: # 清理已取消的任务
-                    device_status_manager.remove_task_manager(task.id)
-            return None
-
-    async def _execute_task(self, task: Task):
-        """执行单个任务"""
-        task_manager = task.state_manager
-        try:
-            task_manager.set_state(DeviceState.PREPARING)
-            await self._create_tasker(task.data.resource_pack, task.data.resource_path)
-
-            if await self._setup_agent(task):
-                task_manager.set_state(DeviceState.RUNNING)
-                self.device_manager.set_state(DeviceState.RUNNING, task_id=task.id, task_name=task.data.resource_name, progress=0)
-                result = await self._run_tasks(task)
-                task.result = result
-                task_manager.set_state(DeviceState.COMPLETED, progress=100)
-                self.logger.info(f"任务 {task.id} 执行成功")
-
-                if getattr(self.device_config, 'auto_close_emulator', False):
-                    self.logger.info("配置了自动关闭模拟器，正在执行...")
-                    pid_to_close = await self._run_in_executor(find_emulator_pid, self.device_config.start_command)
-                    if pid_to_close:
-                        await self._kill_emulator_process(pid_to_close)
-            else:
-                raise Exception("Agent设置失败，任务无法继续")
-
-        except asyncio.CancelledError:
-            task_manager.set_state(DeviceState.CANCELED)
-            self.logger.info(f"任务 {task.id} 被取消")
-        except Exception as e:
-            error_msg = str(e)
-            task_manager.set_state(DeviceState.FAILED, error_message=error_msg)
-            self.logger.error(f"任务 {task.id} 失败: {error_msg}", exc_info=True)
-        finally:
-            self.task_state_changed.emit(task.id, task_manager.get_state(), task_manager.get_context())
-            async with self._lock:
-                self._current_task = None
-            device_status_manager.remove_task_manager(task.id)
-
-            # 【重构】任务结束后断开连接，为下一个任务做准备
-            await self._disconnect()
-
-            # 根据队列情况更新设备状态
-            if self.get_queue_length() == 0:
-                self.device_manager.set_state(DeviceState.DISCONNECTED)
-                self.logger.info("任务完成，队列为空，设备状态重置为 DISCONNECTED。")
-            else:
-                self.device_manager.set_state(DeviceState.CONNECTED)
-                self.logger.info(f"任务完成，队列中还有 {self.get_queue_length()} 个任务，准备处理下一个。")
-
     async def _setup_agent(self, task: Task) -> bool:
         """设置Agent - 使用全局Python运行时管理器"""
         resource_config = global_config.get_resource_config(task.data.resource_name)
@@ -520,7 +443,9 @@ class TaskExecutor(QObject):
                 self._agent = AgentClient()
                 self._agent.bind(self._current_resource)
             agent_config = resource_config.agent
-            python_exe = await self._prepare_python_environment_global(task.data.resource_name, task.data.resource_path, agent_config.version, agent_config.use_venv, agent_config.requirements_path)
+            python_exe = await self._prepare_python_environment_global(task.data.resource_name, task.data.resource_path,
+                                                                       agent_config.version, agent_config.use_venv,
+                                                                       agent_config.requirements_path)
             if not python_exe:
                 raise Exception("Python环境准备失败")
             await self._start_agent_process(task, agent_config, python_exe)
@@ -537,7 +462,8 @@ class TaskExecutor(QObject):
             await self._cleanup_agent()
             return False
 
-    async def _prepare_python_environment_global(self,resource_name: str,resource_path: str,python_version: str,use_venv: bool,requirements_path: str) -> Optional[str]:
+    async def _prepare_python_environment_global(self, resource_name: str, resource_path: str, python_version: str,
+                                                 use_venv: bool, requirements_path: str) -> Optional[str]:
         """使用全局管理器准备Python环境"""
         try:
             if not await python_runtime_manager.ensure_python_installed(python_version):
@@ -553,7 +479,8 @@ class TaskExecutor(QObject):
                     return None
                 if requirements_path:
                     req_file = Path(resource_path) / requirements_path
-                    success = await python_runtime_manager.install_requirements(python_version, resource_name, req_file, force_reinstall=False)
+                    success = await python_runtime_manager.install_requirements(python_version, resource_name, req_file,
+                                                                                force_reinstall=False)
                     if not success:
                         self.logger.error("安装依赖失败")
                         return None
@@ -576,22 +503,29 @@ class TaskExecutor(QObject):
         task_manager = task.state_manager
         self.logger.info(f"执行任务列表，共 {len(task_list)} 个子任务")
         for i, sub_task in enumerate(task_list):
+            # 在执行每个子任务前检查是否被取消
             if task_manager.get_state() == DeviceState.CANCELED:
                 raise asyncio.CancelledError()
+            # 外部取消也会在这里通过CancelledError中断
+            await asyncio.sleep(0)  # 允许事件循环处理取消等操作
+
             self.logger.info(f"执行子任务 {i + 1}/{len(task_list)}: {sub_task.task_name}")
+
             def run_sub_task():
                 self._tasker.resource.override_pipeline(sub_task.pipeline_override)
                 job = self._tasker.post_task(sub_task.task_entry)
                 job.wait()
                 if job.status == 4: raise Exception(f"子任务 {sub_task.task_name} 执行失败")
                 return job.get()
-            future = asyncio.create_task(self._run_in_executor(run_sub_task))
-            while not future.done():
-                if task_manager.get_state() == DeviceState.CANCELED:
-                    await self._run_in_executor(self._tasker.post_stop)
-                    raise asyncio.CancelledError()
-                await asyncio.sleep(0.1)
-            await future
+
+            # 使用asyncio.shield来防止run_in_executor被直接取消，但依然允许外层取消逻辑生效
+            try:
+                await self._run_in_executor(run_sub_task)
+            except asyncio.CancelledError:
+                self.logger.warning(f"子任务 {sub_task.task_name} 在执行中被中断")
+                await self._run_in_executor(self._tasker.post_stop)
+                raise  # 重新抛出以确保整个任务停止
+
             progress = int((i + 1) / len(task_list) * 100)
             task_manager.set_progress(progress)
             self.device_manager.set_progress(progress)
@@ -605,12 +539,19 @@ class TaskExecutor(QObject):
         if agent_config.agent_params: cmd.extend(agent_config.agent_params.split())
         cmd.extend(["-device", self.device_name, "-id", self._agent.identifier])
         self.logger.debug(f"Agent启动命令: {' '.join(cmd)}")
+
         def start_process():
             agent_env = os.environ.copy()
             agent_env["PYTHONUTF8"] = "1"
-            common_kwargs = dict(cwd=os.getcwd(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=agent_env, text=True, encoding="utf-8", errors="replace")
-            if os.name == 'nt': return subprocess.Popen(cmd, creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW, **common_kwargs)
-            else: return subprocess.Popen(cmd, preexec_fn=os.setsid, **common_kwargs)
+            common_kwargs = dict(cwd=os.getcwd(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=agent_env,
+                                 text=True, encoding="utf-8", errors="replace")
+            if os.name == 'nt':
+                return subprocess.Popen(cmd,
+                                        creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW,
+                                        **common_kwargs)
+            else:
+                return subprocess.Popen(cmd, preexec_fn=os.setsid, **common_kwargs)
+
         self._agent_process = await self._run_in_executor(start_process)
         self.logger.info(f"Agent进程已启动，PID: {self._agent_process.pid}")
         if not hasattr(global_config, "agent_processes"): global_config.agent_processes = []
@@ -623,12 +564,16 @@ class TaskExecutor(QObject):
 
     def _start_log_threads(self):
         """启动日志捕获线程"""
+
         def log_output(pipe, prefix):
             try:
                 for line in iter(pipe.readline, ''):
                     if line: self.logger.debug(f"[Agent {prefix}] {line.rstrip()}")
-            except Exception: pass
-            finally: pipe.close()
+            except Exception:
+                pass
+            finally:
+                pipe.close()
+
         for pipe, prefix in [(self._agent_process.stdout, 'stdout'), (self._agent_process.stderr, 'stderr')]:
             threading.Thread(target=log_output, args=(pipe, prefix), daemon=True).start()
 
@@ -639,48 +584,13 @@ class TaskExecutor(QObject):
                 self._agent_process.terminate()
                 await asyncio.sleep(0.5)
                 if self._agent_process.poll() is None: self._agent_process.kill()
-            except Exception: pass
+            except Exception:
+                pass
             if hasattr(global_config, "agent_processes") and self._agent_process in global_config.agent_processes:
                 global_config.agent_processes.remove(self._agent_process)
             self._agent_process = None
         if self._agent:
-            try: await self._run_in_executor(self._agent.disconnect)
-            except Exception: pass
-
-    # === 任务提交和管理 ===
-    @asyncSlot(object)
-    async def submit_task(self, task_data: Union[RunTimeConfigs, List[RunTimeConfigs]]) -> Union[str, List[str]]:
-        """提交任务"""
-        async with self._lock:
-            configs = task_data if isinstance(task_data, list) else [task_data]
-            task_ids = []
-            for config in configs:
-                task_id = f"task_{datetime.now().timestamp()}_{id(config)}"
-                task_manager = device_status_manager.create_task_manager(task_id, self.device_name)
-                task_manager.set_task_info(task_id, config.resource_name)
-                task = Task(id=task_id, data=config, state_manager=task_manager)
-                self._task_queue.append(task)
-                task_ids.append(task_id)
-                self.device_manager.update_context(queue_length=len(self._task_queue))
-                self.logger.debug(f"任务 {task_id} 已加入队列")
-            return task_ids[0] if len(task_ids) == 1 else task_ids
-
-    @asyncSlot(str)
-    async def cancel_task(self, task_id: str) -> bool:
-        """取消任务"""
-        async with self._lock:
-            if self._current_task and self._current_task.id == task_id:
-                self._current_task.state_manager.set_state(DeviceState.CANCELED)
-                # 触发任务循环中的取消逻辑
-                if self._tasker:
-                    await self._run_in_executor(self._tasker.post_stop)
-                return True
-            for task in self._task_queue:
-                if task.id == task_id:
-                    task.state_manager.set_state(DeviceState.CANCELED)
-                    return True
-        return False
-
-    def get_queue_length(self) -> int:
-        """获取队列长度"""
-        return len(self._task_queue)
+            try:
+                await self._run_in_executor(self._agent.disconnect)
+            except Exception:
+                pass

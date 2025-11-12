@@ -279,7 +279,7 @@ class BasicInfoWidget(QFrame):
             if self.device_config:
                 self.logger.info("停止设备任务")
                 self.run_btn.setEnabled(False)
-                success = await task_manager.stop_executor(self.device_name)
+                success = await task_manager.stop_device_processing(self.device_name)
                 if success: self.logger.info("设备任务已停止")
         except Exception as e:
             self.logger.error(f"停止任务时出错: {str(e)}")

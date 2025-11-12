@@ -15,6 +15,7 @@ class DeviceType(Enum):
     ADB = "adb"
     WIN32 = "win32"
 
+
 @dataclass
 class AdbDevice:
     """ADB设备配置的数据类。"""
@@ -69,8 +70,26 @@ class ResourceSettings:
     # 使用列表存储 instance_id，以定义和保持任务的执行顺序
     task_order: List[str] = field(default_factory=list)
 
+    @classmethod
+    def from_dict(cls, data: Dict[str, Any]) -> 'ResourceSettings':
+        """从字典创建 ResourceSettings 对象，封装解析逻辑。"""
+        task_instances_data = data.get('task_instances', {})
+        instances = {
+            inst_id: TaskInstance(
+                **{**inst_data, 'options': [OptionConfig(**opt) for opt in inst_data.get('options', [])]}
+            )
+            for inst_id, inst_data in task_instances_data.items()
+        }
 
-# app_config.py - 定时任务相关的数据类 (这部分未作修改)
+        settings_kwargs = {
+            'name': data.get('name', ''),
+            'resource_name': data.get('resource_name', ''),
+            'task_instances': instances,
+            'task_order': data.get('task_order', list(instances.keys()))
+        }
+        return cls(**settings_kwargs)
+
+
 @dataclass
 class ScheduleTask:
     """定时任务配置。"""
@@ -85,7 +104,6 @@ class ScheduleTask:
     schedule_id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
 
     def to_ui_format(self) -> dict:
-        """转换为UI所需的格式"""
         result = {
             'schedule_type': self.get_schedule_type_display(),
             'time': self.schedule_time,
@@ -127,10 +145,8 @@ class ScheduleTask:
             'settings_name': ui_data.get('config_scheme', '默认配置'),
             'notify': ui_data.get('notify', False),
         }
-
         if ui_data.get('id'):
             init_args['schedule_id'] = ui_data['id']
-
         return ScheduleTask(**init_args)
 
 
@@ -212,12 +228,58 @@ class AppConfig:
     debug_model: bool = False
     minimize_to_tray_on_close: Optional[bool] = False
 
+    def add_or_update_resource_setting(self, setting_data: Dict[str, Any]):
+        """
+        添加一个新的配置方案或更新一个现有的。
+        它接收一个字典，将其解析为 ResourceSettings 对象。
+        通过 (resource_name, name) 的组合来判断是更新还是添加。
+        """
+        if not isinstance(setting_data, dict):
+            return
+
+        new_setting = ResourceSettings.from_dict(setting_data)
+
+        # 如果关键信息缺失，则无法进行有效匹配，跳过此项
+        if not new_setting.resource_name or not new_setting.name:
+            return
+
+        # 遍历现有列表，查找匹配项
+        for i, existing_setting in enumerate(self.resource_settings):
+            if (existing_setting.resource_name == new_setting.resource_name and
+                    existing_setting.name == new_setting.name):
+                self.resource_settings[i] = new_setting  # 找到了，直接覆盖
+                return  # 完成操作，退出方法
+
+        # 如果循环结束都没有找到，说明是新的，添加到列表末尾
+        self.resource_settings.append(new_setting)
+
+    def add_or_update_schedule_task(self, task_data: Dict[str, Any]):
+        """
+        添加一个新的定时任务或更新一个现有的。
+        它接收一个字典，将其解析为 ScheduleTask 对象。
+        通过 schedule_id 来判断是更新还是添加。
+        """
+        if not isinstance(task_data, dict):
+            return
+
+        # 过滤掉无关字段，避免创建对象时出错
+        filtered_task_data = self._filter_kwargs_for_class(ScheduleTask, task_data)
+        new_task = ScheduleTask(**filtered_task_data)
+
+        # 确保任务有一个ID
+        if not new_task.schedule_id:
+            new_task.schedule_id = uuid.uuid4().hex[:8]
+
+        # 遍历现有列表，查找匹配项
+        for i, existing_task in enumerate(self.schedule_tasks):
+            if hasattr(existing_task, 'schedule_id') and existing_task.schedule_id == new_task.schedule_id:
+                self.schedule_tasks[i] = new_task  # 找到了，直接覆盖
+                return  # 完成操作，退出方法
+
+        # 如果循环结束都没有找到，说明是新的，添加到列表末尾
+        self.schedule_tasks.append(new_task)
+
     def get_resource_update_method(self, resource_name: str) -> str:
-        """
-        获取指定资源的更新方法。
-        如果为该资源设置了特定的更新方法，则返回它。
-        否则，返回全局默认的更新方法。
-        """
         specific_config = self.resource_update_methods.get(resource_name)
         if specific_config:
             return specific_config.method
@@ -295,7 +357,6 @@ class AppConfig:
 
     @classmethod
     def from_json_file(cls, file_path: str) -> 'AppConfig':
-        """从 JSON 文件加载 AppConfig 并记录来源文件路径。"""
         with open(file_path, 'r', encoding='utf-8') as f:
             json_data = json.load(f)
         config = cls.from_dict(json_data)
@@ -303,7 +364,6 @@ class AppConfig:
         return config
 
     def to_json_file(self, file_path: str = None, indent=4):
-        """将 AppConfig 导出为 JSON 文件。"""
         if file_path is None:
             if not self.source_file:
                 raise ValueError("未提供保存路径且未记录原始文件路径。")
@@ -313,7 +373,6 @@ class AppConfig:
 
     @staticmethod
     def _filter_kwargs_for_class(target_class: Type, data: Dict[str, Any]) -> Dict[str, Any]:
-        """过滤字典，仅保留目标 dataclass 中定义的字段。"""
         if not hasattr(target_class, '__dataclass_fields__'):
             return data
         valid_keys = target_class.__dataclass_fields__.keys()
@@ -321,37 +380,26 @@ class AppConfig:
 
     @classmethod
     def from_dict(cls, data: Dict[str, Any]) -> 'AppConfig':
-        """从字典创建 AppConfig 对象，并处理向后兼容的数据迁移。"""
-        # 检查配置版本，如果不存在则默认为1 (旧版本)
         config_version = data.get('config_version', 1)
-
-        # 加载资源设置，并根据版本进行迁移
         resource_settings_data = data.get('resource_settings', [])
         resource_settings = []
         for settings_data in resource_settings_data:
-            # **核心迁移逻辑**
-            # 如果是旧版本且包含 'selected_tasks'，则执行迁移
             if config_version < 2 and 'selected_tasks' in settings_data:
-                # 这是一个旧版 ResourceSettings，需要转换
                 migrated_instances = {}
                 migrated_order = []
-
-                # 旧版的 options 是共享的
                 options_data = settings_data.get('options', [])
                 shared_options = [OptionConfig(**cls._filter_kwargs_for_class(OptionConfig, opt_data)) for opt_data in
                                   options_data]
-
                 for task_name in settings_data.get('selected_tasks', []):
                     instance_id = uuid.uuid4().hex
                     new_instance = TaskInstance(
                         instance_id=instance_id,
                         task_name=task_name,
-                        enabled=True,  # 旧版任务默认启用
-                        options=shared_options  # 所有任务实例共享旧的options
+                        enabled=True,
+                        options=shared_options
                     )
                     migrated_instances[instance_id] = new_instance
                     migrated_order.append(instance_id)
-
                 settings_kwargs = {
                     'name': settings_data.get('name', ''),
                     'resource_name': settings_data.get('resource_name', ''),
@@ -359,25 +407,8 @@ class AppConfig:
                     'task_order': migrated_order
                 }
                 resource_settings.append(ResourceSettings(**settings_kwargs))
-
             else:
-                # 这是一个新版 ResourceSettings，正常加载
-                task_instances_data = settings_data.get('task_instances', {})
-                instances = {
-                    inst_id: TaskInstance(
-                        **{**inst_data, 'options': [OptionConfig(**opt) for opt in inst_data.get('options', [])]}
-                    )
-                    for inst_id, inst_data in task_instances_data.items()
-                }
-
-                settings_kwargs = {
-                    'name': settings_data.get('name', ''),
-                    'resource_name': settings_data.get('resource_name', ''),
-                    'task_instances': instances,
-                    'task_order': settings_data.get('task_order', list(instances.keys()))  # 兼容没有task_order的早期v2版本
-                }
-                resource_settings.append(ResourceSettings(**settings_kwargs))
-
+                resource_settings.append(ResourceSettings.from_dict(settings_data))
         devices_data = data.get('devices', [])
         device_configs = []
         for device_data in devices_data:
@@ -404,45 +435,33 @@ class AppConfig:
         schedule_tasks_data = data.get('schedule_tasks', [])
         schedule_tasks = [ScheduleTask(**cls._filter_kwargs_for_class(ScheduleTask, task_data)) for task_data in
                           schedule_tasks_data]
-
-        # 创建 AppConfig 实例
         config = AppConfig(
             devices=device_configs,
             resource_settings=resource_settings,
             schedule_tasks=schedule_tasks
         )
-
-        # 在内存中将版本号更新为最新版 (2)
         config.config_version = 2
-
         encrypted_cdk = data.get('encrypted_cdk', '')
         if encrypted_cdk:
             config.CDK = cls._decrypt_cdk(encrypted_cdk)
         else:
             config.CDK = data.get('CDK', '')
-
         encrypted_github_token = data.get('encrypted_github_token', '')
         if encrypted_github_token:
             config.github_token = cls._decrypt_github_token(encrypted_github_token)
         else:
             config.github_token = data.get('github_token', '')
-
-        # 修改：加载资源更新配置，并兼容旧格式
         raw_update_methods = data.get('resource_update_methods', {})
         migrated_update_methods = {}
         for name, value in raw_update_methods.items():
             if isinstance(value, str):
-                # 旧格式：value 是更新方式字符串
-                # 迁移到新结构，并使用默认频道 'stable'
                 migrated_update_methods[name] = ResourceUpdateConfig(method=value, channel="stable")
             elif isinstance(value, dict):
-                # 新格式：value 是一个字典
                 migrated_update_methods[name] = ResourceUpdateConfig(
                     method=value.get('method', ''),
                     channel=value.get('channel', 'stable')
                 )
         config.resource_update_methods = migrated_update_methods
-
         config.update_method = data.get('update_method', 'github')
         config.receive_beta_update = data.get('receive_beta_update', False)
         config.auto_check_update = data.get('auto_check_update', False)
@@ -455,16 +474,13 @@ class AppConfig:
         return config
 
     def to_dict(self) -> Dict[str, Any]:
-        """将 AppConfig 对象转换为字典，使用新的数据结构。"""
-        result = {"config_version": self.config_version}  # 写入最新的版本号
+        result = {"config_version": self.config_version}
         if self.CDK: result["encrypted_cdk"] = self._encrypt_cdk()
         if self.github_token: result["encrypted_github_token"] = self._encrypt_github_token()
-        # 修改：将 resource_update_methods 字典（包含ResourceUpdateConfig对象）保存到结果中
         result["resource_update_methods"] = {
             name: resource_update_config_to_dict(config)
             for name, config in self.resource_update_methods.items()
         }
-
         if self.update_method: result["update_method"] = self.update_method
         result["receive_beta_update"] = getattr(self, "receive_beta_update", False)
         result["auto_check_update"] = getattr(self, "auto_check_update", False)
@@ -496,32 +512,28 @@ def win32_device_to_dict(win32_device: Win32Device) -> Dict[str, Any]: return wi
 
 
 def resource_to_dict(resource: Resource) -> Dict[str, Any]:
-    result = {
+    return {
         'resource_name': resource.resource_name,
         'settings_name': resource.settings_name,
         'resource_pack': resource.resource_pack,
         'enable': resource.enable
     }
-    return result
 
 
 def option_config_to_dict(option: OptionConfig) -> Dict[str, Any]: return option.__dict__
 
 
 def task_instance_to_dict(instance: TaskInstance) -> Dict[str, Any]:
-    """辅助函数，将 TaskInstance 对象转换为字典。"""
     instance_dict = instance.__dict__.copy()
     instance_dict['options'] = [option_config_to_dict(opt) for opt in instance.options]
     return instance_dict
 
 
 def resource_update_config_to_dict(config: ResourceUpdateConfig) -> Dict[str, str]:
-    """辅助函数，将 ResourceUpdateConfig 对象转换为字典。"""
     return config.__dict__
 
 
 def resource_settings_to_dict(settings: ResourceSettings) -> Dict[str, Any]:
-    """辅助函数，将 ResourceSettings 对象转换为字典（新结构）。"""
     return {
         'name': settings.name,
         'resource_name': settings.resource_name,

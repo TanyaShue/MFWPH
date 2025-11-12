@@ -1,11 +1,14 @@
 # -*- coding: UTF-8 -*-
 """
-任务管理器
-集中管理所有设备的任务执行器，使用简化的状态管理
+任务管理器 (重构版)
+- 集中管理所有设备的任务队列。
+- 按需创建和销毁任务执行器 (TaskExecutor)。
+- 每个设备同时只运行一个任务处理器。
 """
 
-from typing import Dict, Optional, List, Union
+from typing import Dict, Optional, List, Union, DefaultDict
 import asyncio
+from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
 
@@ -15,53 +18,36 @@ from qasync import asyncSlot
 from app.models.config.app_config import DeviceConfig, Resource
 from app.models.config.global_config import RunTimeConfigs, global_config
 from app.models.logging.log_manager import log_manager
-from core.task_executor import TaskExecutor
+from core.task_executor import TaskExecutor  # 导入重构后的执行器
 from core.device_state_machine import DeviceState
 from core.device_status_manager import device_status_manager
 
 
-@dataclass
-class DeviceTaskInfo:
-    """设备任务信息"""
-    device_name: str
-    executor: TaskExecutor
-    created_at: datetime
-    task_count: int = 0
-    last_task_time: Optional[datetime] = None
-
-
 class TaskerManager(QObject):
     """
-    集中管理所有设备任务执行器的管理器
-    使用简化的状态管理器管理所有状态
+    集中管理所有设备任务的管理器（重构版）。
+    使用设备任务队列和按需生成的执行器。
     """
-    # 设备相关信号
-    device_added = Signal(str)  # 设备添加信号
-    device_removed = Signal(str)  # 设备移除信号
-    device_state_changed = Signal(str, DeviceState)  # 设备状态变化信号
-
-    # 任务相关信号
-    task_submitted = Signal(str, str)  # 任务提交信号 (device_name, task_id)
-    all_tasks_completed = Signal(str)  # 设备所有任务完成信号
-
-    # 错误信号
-    error_occurred = Signal(str, str)  # 错误发生信号
+    # ... [信号定义与原版一致] ...
+    device_added = Signal(str)
+    device_removed = Signal(str)
+    device_state_changed = Signal(str, DeviceState)
+    task_submitted = Signal(str, str)
+    all_tasks_completed = Signal(str)
+    error_occurred = Signal(str, str)
 
     def __init__(self, parent=None) -> None:
         super().__init__(parent)
-        self._executors: Dict[str, DeviceTaskInfo] = {}
-        self._mutex = QMutex()
-        self._lock = asyncio.Lock()
+        self._device_queues: DefaultDict[str, asyncio.Queue] = defaultdict(asyncio.Queue)
+        self._device_processors: Dict[str, asyncio.Task] = {}
+        self._lock = asyncio.Lock()  # 用于保护 _device_processors 字典
         self.logger = log_manager.get_app_logger()
 
-        # 任务统计
         self._total_tasks_submitted = 0
         self._total_tasks_completed = 0
 
-        # 连接状态管理器信号
         self._connect_status_manager_signals()
-
-        self.logger.info("TaskerManager 初始化完成")
+        self.logger.info("TaskerManager (重构版) 初始化完成")
 
     def _connect_status_manager_signals(self):
         """连接状态管理器的信号"""
@@ -71,523 +57,263 @@ class TaskerManager(QObject):
     def _on_device_state_changed(self, name: str, old_state: DeviceState, new_state: DeviceState, context: dict):
         """设备状态变化回调"""
         self.device_state_changed.emit(name, new_state)
-
-        # 记录重要状态变化
         if new_state == DeviceState.ERROR:
             error_msg = context.get('error_message', '未知错误')
             self.logger.error(f"设备 {name} 进入错误状态: {error_msg}")
             self.error_occurred.emit(name, error_msg)
 
-    @asyncSlot(DeviceConfig)
-    async def create_executor(self, device_config: DeviceConfig) -> bool:
+    async def _process_device_queue(self, device_name: str, device_config: DeviceConfig):
         """
-        异步创建并启动设备的任务执行器
+        【核心循环】为单个设备处理其任务队列。
+        该协程在有任务时运行，任务完成后自动退出。
         """
-        async with self._lock:
-            if device_config.device_name in self._executors:
-                self.logger.debug(f"设备 {device_config.device_name} 的任务执行器已存在")
-                return True
+        self.logger.info(f"设备 {device_name} 的任务处理器已启动。")
+        self.device_added.emit(device_name)
 
         try:
-            self.logger.info(f"正在为设备 {device_config.device_name} 创建任务执行器")
+            queue = self._device_queues[device_name]
+            while not queue.empty():
+                try:
+                    task_data = await queue.get()
+                    self.logger.info(f"设备 {device_name} 从队列中获取新任务，准备执行...")
 
-            # 创建执行器
-            executor = TaskExecutor(device_config, parent=self)
+                    # 每次都创建一个新的执行器实例
+                    executor = TaskExecutor(device_config, parent=self)
 
-            # 连接执行器信号
-            self._connect_executor_signals(executor, device_config.device_name)
+                    # 连接信号，处理任务状态变化
+                    executor.task_state_changed.connect(self._on_task_state_changed)
 
-            # 启动执行器
-            success = await executor.start()
+                    # 执行完整的任务生命周期
+                    await executor.run_task_lifecycle(task_data)
 
-            if success:
-                # 设置日志句柄
-                if hasattr(executor, '_tasker') and executor._tasker:
-                    log_manager.set_device_handle(
-                        device_config.device_name,
-                        executor._tasker._handle
-                    )
-                    self.logger.debug(
-                        f"已为设备 {device_config.device_name} "
-                        f"设置handle: {executor._tasker._handle}"
-                    )
+                    queue.task_done()
+                    self.logger.info(f"设备 {device_name} 的一批任务已处理完毕。")
 
-                # 保存执行器信息
-                async with self._lock:
-                    self._executors[device_config.device_name] = DeviceTaskInfo(
-                        device_name=device_config.device_name,
-                        executor=executor,
-                        created_at=datetime.now()
-                    )
+                except asyncio.CancelledError:
+                    self.logger.warning(f"设备 {device_name} 的任务处理器被取消。")
+                    # 将未处理的任务放回队列，以便恢复后继续
+                    # if 'task_data' in locals():
+                    #     await queue.put(task_data)
+                    break  # 退出循环
+                except Exception as e:
+                    self.logger.error(f"处理设备 {device_name} 队列时发生错误: {e}", exc_info=True)
+                    self.error_occurred.emit(device_name, f"任务处理循环错误: {e}")
+                    # 等待一会再继续，防止快速失败循环
+                    await asyncio.sleep(5)
 
-                self.device_added.emit(device_config.device_name)
-                self.logger.info(
-                    f"设备 {device_config.device_name} 的任务执行器创建并启动成功"
-                )
-                return True
-            else:
-                self.logger.error(
-                    f"设备 {device_config.device_name} 的任务执行器启动失败"
-                )
-                return False
+            if queue.empty():
+                self.logger.info(f"设备 {device_name} 的任务队列已空。")
+                self.all_tasks_completed.emit(device_name)
 
-        except Exception as e:
-            error_msg = f"为设备 {device_config.device_name} 创建任务执行器失败: {e}"
-            self.logger.error(error_msg, exc_info=True)
-
-            # 使用状态管理器设置错误
-            device_status_manager.set_device_error(device_config.device_name, str(e))
-            self.error_occurred.emit(device_config.device_name, str(e))
-            return False
-
-    def _connect_executor_signals(self, executor: TaskExecutor, device_name: str):
-        """连接执行器信号"""
-        # 任务状态变化时更新
-        executor.task_state_changed.connect(
-            lambda task_id, state, context: self._on_task_state_changed(
-                device_name, task_id, state, context
-            )
-        )
+        finally:
+            self.logger.info(f"设备 {device_name} 的任务处理器已停止。")
+            async with self._lock:
+                if device_name in self._device_processors:
+                    del self._device_processors[device_name]
+                # 如果队列为空，也删除队列对象以释放资源
+                if self._device_queues[device_name].empty():
+                    del self._device_queues[device_name]
+            self.device_removed.emit(device_name)
 
     @Slot(str, str, object, dict)
-    def _on_task_state_changed(self, device_name: str, task_id: str,
-                               state: DeviceState, context: dict):
+    def _on_task_state_changed(self, task_id: str, state: DeviceState, context: dict):
         """任务状态变化回调"""
-        self.logger.debug(f"任务 {task_id} 状态变为: {state.value}")
+        # 从状态管理器获取任务的详细信息
+        task_manager = device_status_manager.get_task_manager(task_id)
+        if not task_manager:
+            self.logger.warning(f"任务状态变化时未找到ID为 {task_id} 的管理器，可能已被清理。")
+            return
 
-        if state == DeviceState.RUNNING:
-            # 任务开始运行
-            self.logger.info(f"设备 {device_name} 的任务 {task_id} 已开始")
+        # 【错误修正】
+        # 错误的代码: device_name = task_manager.device_name
+        # 正确的代码: 从 context 字典中获取 device_name
+        task_context = task_manager.get_context()
+        device_name = task_context.get('device_name')
 
-        elif state == DeviceState.COMPLETED:
-            # 任务完成
+        if not device_name:
+            self.logger.error(f"无法从任务 {task_id} 的状态管理器中获取设备名称！")
+            return
+
+        self.logger.debug(f"任务 {task_id} (设备: {device_name}) 状态变为: {state.value}")
+
+        if state == DeviceState.COMPLETED:
             self._total_tasks_completed += 1
-
-            # 检查是否所有任务都完成了
-            with QMutexLocker(self._mutex):
-                executor_info = self._executors.get(device_name)
-                if executor_info and executor_info.executor.get_queue_length() == 0:
-                    self.all_tasks_completed.emit(device_name)
-
         elif state == DeviceState.FAILED:
-            # 任务失败
+            # 使用信号传递过来的 context，因为它包含了最新的错误信息
             error_msg = context.get('error_message', '未知错误')
             self.logger.error(f"设备 {device_name} 的任务 {task_id} 失败: {error_msg}")
             self.error_occurred.emit(device_name, f"任务 {task_id} 失败: {error_msg}")
 
-        elif state == DeviceState.CANCELED:
-            # 任务取消
-            self.logger.info(f"设备 {device_name} 的任务 {task_id} 已取消")
-
-        # 更新队列信息
-        self._update_queue_status(device_name)
-
-    def _update_queue_status(self, device_name: str):
-        """更新设备的队列状态"""
-        with QMutexLocker(self._mutex):
-            executor_info = self._executors.get(device_name)
-            if executor_info:
-                queue_length = executor_info.executor.get_queue_length()
-                # 更新设备状态管理器的队列信息
-                device_manager = device_status_manager.get_device_manager(device_name)
-                if device_manager:
-                    device_manager.update_context(queue_length=queue_length)
-
     @asyncSlot(str, object)
-    async def submit_task(
-            self,
-            device_name: str,
-            task_data: Union[RunTimeConfigs, List[RunTimeConfigs]]
-    ) -> Optional[Union[str, List[str]]]:
+    async def submit_task(self, device_name: str, task_data: Union[RunTimeConfigs, List[RunTimeConfigs]]):
         """
-        异步向特定设备的执行器提交任务
+        异步向特定设备的队列提交任务。如果设备空闲，则启动任务处理器。
         """
-        # 获取执行器
-        executor_info = await self._get_executor_info(device_name)
-        if not executor_info:
-            error_msg = f"提交任务失败: 设备 {device_name} 的执行器未找到"
+        device_config = global_config.get_device_config(device_name)
+        if not device_config:
+            error_msg = f"提交任务失败: 找不到设备配置 {device_name}"
             self.logger.error(error_msg)
             self.error_occurred.emit(device_name, error_msg)
-            return None
+            return
 
-        try:
-            # 记录任务信息
-            task_count = len(task_data) if isinstance(task_data, list) else 1
-            self.logger.info(
-                f"向设备 {device_name} 提交 {task_count} 个任务"
-            )
+        task_count = len(task_data) if isinstance(task_data, list) else 1
+        self.logger.info(f"向设备 {device_name} 提交 {task_count} 个任务到队列")
 
-            # 提交任务
-            result = await executor_info.executor.submit_task(task_data)
+        queue = self._device_queues[device_name]
+        await queue.put(task_data)
 
-            if result:
-                # 更新统计信息
-                async with self._lock:
-                    executor_info.task_count += task_count
-                    executor_info.last_task_time = datetime.now()
-                    self._total_tasks_submitted += task_count
+        self._total_tasks_submitted += task_count
+        # 注意: task_submitted 信号现在无法立即发出，因为 task_id 在执行器内部才生成。
+        # 可以在TaskExecutor.run_task_lifecycle开始时发出信号。
 
-                # 发送信号
-                if isinstance(result, list):
-                    for task_id in result:
-                        self.task_submitted.emit(device_name, task_id)
-                else:
-                    self.task_submitted.emit(device_name, result)
-
-                # 更新队列状态
-                self._update_queue_status(device_name)
-
-                self.logger.info(
-                    f"任务提交成功，设备: {device_name}, "
-                    f"任务ID: {result}"
+        # 检查是否需要启动该设备的处理循环
+        async with self._lock:
+            if device_name not in self._device_processors:
+                self.logger.info(f"设备 {device_name} 当前无任务处理器，正在创建一个新的。")
+                processor_task = asyncio.create_task(
+                    self._process_device_queue(device_name, device_config)
                 )
-                return result
+                self._device_processors[device_name] = processor_task
             else:
-                self.logger.warning(f"任务提交成功但未获取任务ID")
-                return None
-
-        except Exception as e:
-            error_msg = f"向设备 {device_name} 提交任务失败: {e}"
-            self.logger.error(error_msg, exc_info=True)
-
-            # 使用状态管理器设置错误
-            device_status_manager.set_device_error(device_name, str(e))
-            self.error_occurred.emit(device_name, str(e))
-            return None
+                self.logger.debug(f"设备 {device_name} 已有任务处理器在运行，任务已入队。")
 
     @asyncSlot(str)
-    async def stop_executor(self, device_name: str) -> bool:
+    async def stop_device_processing(self, device_name: str) -> bool:
         """
-        异步停止特定设备的执行器
+        停止特定设备的任务处理并清空其任务队列。
+        这将取消当前正在执行的任务并销毁其执行器。
         """
-        executor_info = await self._get_executor_info(device_name)
-        if not executor_info:
-            self.logger.error(f"停止执行器失败: 设备 {device_name} 的执行器未找到")
-            return False
-
-        try:
-            self.logger.info(f"正在停止设备 {device_name} 的执行器")
-
-            # 停止执行器
-            await executor_info.executor.stop()
-
-            # 从管理器中移除
-            async with self._lock:
-                del self._executors[device_name]
-
-            # 发送信号
-            self.device_removed.emit(device_name)
-
-            self.logger.info(
-                f"设备 {device_name} 的执行器已成功停止并移除 "
-                f"(该设备共执行了 {executor_info.task_count} 个任务)"
-            )
-            return True
-
-        except Exception as e:
-            error_msg = f"停止设备 {device_name} 的执行器失败: {e}"
-            self.logger.error(error_msg, exc_info=True)
-            self.error_occurred.emit(device_name, str(e))
-            return False
-
-    async def _get_executor_info(self, device_name: str) -> Optional[DeviceTaskInfo]:
-        """
-        内部辅助方法，获取特定设备的执行器信息
-        """
+        self.logger.info(f"请求停止设备 {device_name} 的所有任务处理...")
         async with self._lock:
-            return self._executors.get(device_name)
+            if device_name in self._device_processors:
+                processor = self._device_processors[device_name]
+                processor.cancel()
+                # 等待处理器任务完成其清理工作
+                await asyncio.sleep(0.1)
+                del self._device_processors[device_name]
+                self.logger.info(f"设备 {device_name} 的任务处理器已被取消。")
 
-    @asyncSlot()
-    async def get_active_devices(self) -> List[str]:
-        """
-        异步获取所有活跃设备名称列表
-        """
-        async with self._lock:
-            devices = list(self._executors.keys())
-            self.logger.debug(f"当前活跃设备数量: {len(devices)}")
-            return devices
+            # 清空队列
+            if device_name in self._device_queues:
+                queue = self._device_queues[device_name]
+                while not queue.empty():
+                    try:
+                        queue.get_nowait()
+                    except asyncio.QueueEmpty:
+                        break
+                del self._device_queues[device_name]
+                self.logger.info(f"设备 {device_name} 的任务队列已清空。")
+                return True
+        return False
 
     @asyncSlot()
     async def stop_all(self) -> None:
-        """
-        异步停止所有执行器
-        """
-        self.logger.info("正在停止所有任务执行器")
-
-        # 获取所有设备名称
+        """异步停止所有设备的任务处理器"""
+        self.logger.info("正在停止所有任务处理器...")
         async with self._lock:
-            device_names = list(self._executors.keys())
+            device_names = list(self._device_processors.keys())
 
         if not device_names:
-            self.logger.info("没有活跃的任务执行器需要停止")
+            self.logger.info("没有活跃的任务处理器需要停止。")
             return
 
-        self.logger.info(
-            f"找到 {len(device_names)} 个活跃的执行器需要停止: "
-            f"{', '.join(device_names)}"
-        )
-
-        # 并发停止所有执行器
-        tasks = [self.stop_executor(name) for name in device_names]
-        results = await asyncio.gather(*tasks, return_exceptions=True)
-
-        # 检查结果
-        for device_name, result in zip(device_names, results):
-            if isinstance(result, Exception):
-                self.logger.error(
-                    f"停止设备 {device_name} 的执行器时出错: {result}"
-                )
-
-        self.logger.info("所有任务执行器已停止")
-
-    def is_device_active(self, device_name: str) -> bool:
-        """
-        检查设备执行器是否处于活跃状态（同步方法）
-        """
-        with QMutexLocker(self._mutex):
-            return device_name in self._executors
-
-    def get_device_queue_info(self) -> Dict[str, int]:
-        """
-        获取所有设备的队列状态信息（同步方法）
-        """
-        with QMutexLocker(self._mutex):
-            queue_info = {}
-            for name, info in self._executors.items():
-                queue_info[name] = info.executor.get_queue_length()
-            return queue_info
-
-    def get_device_state(self, device_name: str) -> Optional[DeviceState]:
-        """获取设备状态（同步方法）"""
-        device_manager = device_status_manager.get_device_manager(device_name)
-        if device_manager:
-            return device_manager.get_state()
-        return None
-
-    @asyncSlot()
-    async def get_statistics(self) -> Dict[str, any]:
-        """
-        获取任务管理器统计信息
-        """
-        async with self._lock:
-            active_devices = len(self._executors)
-            device_stats = []
-
-            for name, info in self._executors.items():
-                # 获取设备状态
-                state = self.get_device_state(name)
-
-                device_stats.append({
-                    "name": name,
-                    "state": state.value if state else "unknown",
-                    "task_count": info.task_count,
-                    "queue_length": info.executor.get_queue_length(),
-                    "created_at": info.created_at.isoformat(),
-                    "last_task_time": (
-                        info.last_task_time.isoformat()
-                        if info.last_task_time else None
-                    )
-                })
-
-            return {
-                "active_devices": active_devices,
-                "total_tasks_submitted": self._total_tasks_submitted,
-                "total_tasks_completed": self._total_tasks_completed,
-                "devices": device_stats
-            }
-
-    @asyncSlot(DeviceConfig)
-    async def run_device_all_resource_task(self, device_config: DeviceConfig) -> bool:
-        """
-        异步一键启动：提交所有已启用资源的任务，不阻塞 UI
-        """
-        self.logger.info(
-            f"为设备 {device_config.device_name} 一键启动所有已启用资源任务"
-        )
-
-        # 获取已启用的资源
-        enabled_resources = [r for r in device_config.resources if r.enable]
-        self.logger.info(
-            f"设备 {device_config.device_name} 的已启用资源数: "
-            f"{len(enabled_resources)}"
-        )
-
-        def get_all_runtime_configs():
-            result = []
-            for resource in enabled_resources:
-                config = global_config.get_runtime_configs_for_resource(
-                    resource.resource_name,
-                    device_config.device_name
-                )
-                if config:
-                    result.append(config)
-            return result
-
-        runtime_configs = await asyncio.to_thread(get_all_runtime_configs)
-        self.logger.debug(f"为设备创建运行时配置:{runtime_configs} ")
-
-        if not runtime_configs:
-            self.logger.warning(
-                f"设备 {device_config.device_name} 没有找到可用的运行时配置"
-            )
-            return False
-
-        try:
-            self.logger.info(
-                f"设备 {device_config.device_name} 准备提交 "
-                f"{len(runtime_configs)} 个资源任务"
-            )
-
-            # 确保执行器已创建
-            success = await self.create_executor(device_config)
-            if not success:
-                error_msg = (
-                    f"为设备 {device_config.device_name} 创建执行器失败，"
-                    f"无法运行资源任务"
-                )
-                self.logger.error(error_msg)
-                self.error_occurred.emit(device_config.device_name, error_msg)
-                return False
-
-            # 提交任务批次
-            result = await self.submit_task(
-                device_config.device_name,
-                runtime_configs
-            )
-
-            if result:
-                self.logger.info(
-                    f"设备 {device_config.device_name} 的资源任务批次已成功提交"
-                )
-                return True
-            else:
-                self.logger.error(
-                    f"设备 {device_config.device_name} 的资源任务批次提交失败"
-                )
-                return False
-
-        except Exception as e:
-            error_msg = (
-                f"运行设备 {device_config.device_name} 的所有资源任务时出错: {e}"
-            )
-            self.logger.error(error_msg, exc_info=True)
-            self.error_occurred.emit(device_config.device_name, str(e))
-            return False
-
-    @asyncSlot(str, str)
-    async def run_resource_task(self, device_config_name: str, resource_name: str) -> None:
-        """
-        提交指定资源的任务
-        """
-        self.logger.info(
-            f"为设备 {device_config_name} 提交资源 {resource_name} 的任务"
-        )
-
-        # 获取运行时配置
-        runtime_config = global_config.get_runtime_configs_for_resource(
-            resource_name,
-            device_config_name
-        )
-
-        if not runtime_config:
-            error_msg = (
-                f"找不到设备 {device_config_name} 资源 {resource_name} "
-                f"的运行时配置"
-            )
-            self.logger.error(error_msg)
-            self.error_occurred.emit(device_config_name, error_msg)
-            return
-
-        # 获取设备配置
-        device_config = global_config.get_device_config(device_config_name)
-        if not device_config:
-            error_msg = f"找不到设备配置: {device_config_name}"
-            self.logger.error(error_msg)
-            self.error_occurred.emit(device_config_name, error_msg)
-            return
-
-        try:
-            # 确保执行器已创建
-            success = await self.create_executor(device_config)
-            if not success:
-                error_msg = (
-                    f"为设备 {device_config_name} 创建执行器失败，"
-                    f"无法运行资源 {resource_name}"
-                )
-                self.logger.error(error_msg)
-                self.error_occurred.emit(device_config_name, error_msg)
-                return
-            self.logger.debug(f"为设备创建运行时配置:{runtime_config} ")
-            # 提交任务
-            result = await self.submit_task(device_config.device_name, runtime_config)
-
-            if result:
-                self.logger.info(
-                    f"设备 {device_config.device_name} 的资源 {resource_name} "
-                    f"任务已成功提交，任务ID: {result}"
-                )
-            else:
-                self.logger.error(
-                    f"设备 {device_config.device_name} 的资源 {resource_name} "
-                    f"任务提交失败"
-                )
-
-        except Exception as e:
-            error_msg = (
-                f"运行设备 {device_config_name} 的资源 {resource_name} "
-                f"任务时出错: {e}"
-            )
-            self.logger.error(error_msg, exc_info=True)
-            self.error_occurred.emit(device_config_name, str(e))
-
-    @asyncSlot(str, str)
-    async def cancel_task(self, device_name: str, task_id: str) -> bool:
-        """
-        取消指定设备的特定任务
-        """
-        executor_info = await self._get_executor_info(device_name)
-        if not executor_info:
-            self.logger.error(f"取消任务失败: 设备 {device_name} 的执行器未找到")
-            return False
-
-        try:
-            success = await executor_info.executor.cancel_task(task_id)
-            if success:
-                self.logger.info(f"已取消设备 {device_name} 的任务 {task_id}")
-            else:
-                self.logger.warning(
-                    f"未能取消设备 {device_name} 的任务 {task_id} "
-                    f"(任务可能已完成或不存在)"
-                )
-            return success
-
-        except Exception as e:
-            self.logger.error(
-                f"取消设备 {device_name} 的任务 {task_id} 时出错: {e}"
-            )
-            return False
+        tasks = [self.stop_device_processing(name) for name in device_names]
+        await asyncio.gather(*tasks, return_exceptions=True)
+        self.logger.info("所有任务处理器已停止。")
 
     @asyncSlot(str)
     async def pause_device(self, device_name: str) -> bool:
         """
-        暂停设备的当前任务
+        暂停设备的任务执行。
+        这将取消当前任务并销毁执行器，但保留队列中未执行的任务。
         """
-        device_manager = device_status_manager.get_device_manager(device_name)
-        if device_manager and device_manager.get_state() == DeviceState.RUNNING:
-            device_manager.set_state(DeviceState.PAUSED)
-            return True
+        async with self._lock:
+            if device_name in self._device_processors:
+                self.logger.info(f"正在暂停设备 {device_name}...")
+                processor = self._device_processors.pop(device_name)
+                processor.cancel()
+                device_status_manager.get_device_manager(device_name).set_state(DeviceState.PAUSED)
+                self.logger.info(f"设备 {device_name} 已暂停。当前任务已中断。")
+                return True
+        self.logger.warning(f"无法暂停设备 {device_name}，因为它当前不活跃。")
         return False
 
     @asyncSlot(str)
     async def resume_device(self, device_name: str) -> bool:
         """
-        恢复设备的暂停任务
+        恢复设备的任务执行。
+        如果设备队列中有任务，将启动一个新的任务处理器。
         """
-        device_manager = device_status_manager.get_device_manager(device_name)
-        if device_manager and device_manager.get_state() == DeviceState.PAUSED:
-            device_manager.set_state(DeviceState.RUNNING)
-            return True
+        async with self._lock:
+            if device_name in self._device_processors:
+                self.logger.info(f"设备 {device_name} 已经在运行，无需恢复。")
+                return True
+
+            if device_name in self._device_queues and not self._device_queues[device_name].empty():
+                self.logger.info(f"正在恢复设备 {device_name}...")
+                device_config = global_config.get_device_config(device_name)
+                if not device_config:
+                    self.logger.error(f"无法恢复：找不到设备 {device_name} 的配置。")
+                    return False
+
+                processor_task = asyncio.create_task(
+                    self._process_device_queue(device_name, device_config)
+                )
+                self._device_processors[device_name] = processor_task
+                device_status_manager.get_device_manager(device_name).set_state(DeviceState.IDLE)  # 或其他合适的状态
+                return True
+
+        self.logger.warning(f"无法恢复设备 {device_name}，任务队列为空。")
         return False
+
+    # ... [其他辅助方法，如 get_statistics, is_device_active, run_device_all_resource_task 等需要相应调整] ...
+
+    def is_device_active(self, device_name: str) -> bool:
+        """检查设备处理器是否处于活跃状态"""
+        return device_name in self._device_processors
+
+    def get_device_queue_info(self) -> Dict[str, int]:
+        """获取所有设备的队列长度信息"""
+        return {name: queue.qsize() for name, queue in self._device_queues.items()}
+
+    def get_device_state(self, device_name: str) -> Optional[DeviceState]:
+        """获取设备状态"""
+        device_manager = device_status_manager.get_device_manager(device_name)
+        return device_manager.get_state() if device_manager else None
+
+    @asyncSlot(DeviceConfig)
+    async def run_device_all_resource_task(self, device_config: DeviceConfig) -> bool:
+        """异步一键启动：提交所有已启用资源的任务"""
+        self.logger.info(f"为设备 {device_config.device_name} 一键启动所有已启用资源任务")
+        enabled_resources = [r for r in device_config.resources if r.enable]
+
+        def get_all_runtime_configs():
+            return [
+                config for r in enabled_resources
+                if
+                (config := global_config.get_runtime_configs_for_resource(r.resource_name, device_config.device_name))
+            ]
+
+        runtime_configs = await asyncio.to_thread(get_all_runtime_configs)
+        if not runtime_configs:
+            self.logger.warning(f"设备 {device_config.device_name} 没有找到可用的运行时配置")
+            return False
+
+        await self.submit_task(device_config.device_name, runtime_configs)
+        return True
+
+    @asyncSlot(str, str)
+    async def run_resource_task(self, device_config_name: str, resource_name: str) -> None:
+        """提交指定资源的任务"""
+        self.logger.info(f"为设备 {device_config_name} 提交资源 {resource_name} 的任务")
+        runtime_config = global_config.get_runtime_configs_for_resource(resource_name, device_config_name)
+        if not runtime_config:
+            error_msg = f"找不到设备 {device_config_name} 资源 {resource_name} 的运行时配置"
+            self.logger.error(error_msg)
+            self.error_occurred.emit(device_config_name, error_msg)
+            return
+
+        await self.submit_task(device_config_name, runtime_config)
 
 
 # 单例模式

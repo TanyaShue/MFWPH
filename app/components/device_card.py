@@ -316,7 +316,7 @@ class DeviceCard(QFrame):
             try:
                 self.logger.info(f"停止设备任务")
                 self.run_btn.setEnabled(False)
-                success = await task_manager.stop_executor(self.device_name)
+                success = await task_manager.stop_device_processing(self.device_name)
                 if success:
                     self.logger.info(f"设备任务已停止")
             except Exception as e:
