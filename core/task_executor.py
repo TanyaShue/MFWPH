@@ -197,19 +197,38 @@ class TaskExecutor(QObject):
                         f"识别: {detail.name} - {'成功' if noti_type == NotificationType.Succeeded else '失败'}")
 
             def on_node_action(self, noti_type: NotificationType, detail: NotificationHandler.NodeActionDetail):
-                if not detail or not hasattr(detail, "focus") or not detail.focus: return
+                if not detail or not hasattr(detail, "focus") or not detail.focus:
+                    return
+
                 focus = detail.focus
-                type_to_log = {
+
+                # 定义默认的日志级别和关键字映射
+                type_to_log_defaults = {
                     NotificationType.Succeeded: ("succeeded", self.executor.logger.info),
                     NotificationType.Failed: ("failed", self.executor.logger.error),
                     NotificationType.Starting: ("start", self.executor.logger.info),
                 }
-                if noti_type in type_to_log:
-                    key, log_func = type_to_log[noti_type]
+
+                if noti_type in type_to_log_defaults:
+                    # 获取当前动作的关键字和默认日志方法
+                    key, default_log_func = type_to_log_defaults[noti_type]
+
+                    # 确定最终要使用的日志方法
+                    log_func = default_log_func
+                    level_config = focus.get("level")  # 安全地获取level配置
+                    if isinstance(level_config, dict):
+                        log_level_str = level_config.get(key)
+                        # 如果为当前动作指定了level, 就获取对应的logger方法
+                        # getattr的第三个参数是默认值，如果指定的level字符串无效(如"invalid_level")，则退回使用默认方法
+                        if log_level_str:
+                            log_func = getattr(self.executor.logger, log_level_str, default_log_func)
+
+                    # 检查focus中是否有要输出的日志内容
                     if key in focus:
                         values = focus[key]
                         if isinstance(values, list):
-                            for v in values: log_func(str(v))
+                            for v in values:
+                                log_func(str(v))
                         else:
                             log_func(str(values))
 
@@ -489,6 +508,7 @@ class TaskExecutor(QObject):
     async def _run_tasks(self, task: Task) -> dict:
         """执行任务列表"""
         task_list = task.data.task_list
+        self.logger.info(f"当前资源版本: {task.data.resource_version}")
         task_manager = task.state_manager
         self.logger.info(f"执行任务列表，共 {len(task_list)} 个子任务")
         for i, sub_task in enumerate(task_list):

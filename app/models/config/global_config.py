@@ -20,12 +20,11 @@ class RunTimeConfig:
 
 @dataclass
 class RunTimeConfigs:
-    # --- CHANGE 1 OF 2: The RunTimeConfigs dataclass is updated as requested ---
     task_list: List[RunTimeConfig] = field(default_factory=list)
-    # The type is now a single dictionary, with an empty dict as the default.
     resource_pack: Dict[str, Any] = field(default_factory=dict)
     resource_path: str = field(default_factory=Path)
     resource_name: str = field(default_factory=str)
+    resource_version: str = field(default_factory=str)
 
 
 class GlobalConfig:
@@ -185,6 +184,7 @@ class GlobalConfig:
                 task_list=[],
                 resource_path=resource_path,
                 resource_name=resource_name,
+                resource_version=resource_config.resource_version,
                 resource_pack=selected_pack_config
             )
 
@@ -220,6 +220,7 @@ class GlobalConfig:
             task_list=runtime_configs,
             resource_path=resource_path,
             resource_name=resource_name,
+            resource_version=resource_config.resource_version,
             resource_pack=selected_pack_config # Pass the found dictionary
         )
 

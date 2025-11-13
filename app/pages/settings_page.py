@@ -16,7 +16,7 @@ from PySide6.QtWidgets import (
 
 from app.components.no_wheel_ComboBox import NoWheelComboBox
 from app.models.config.global_config import global_config
-from app.models.logging.log_manager import log_manager
+from app.models.logging.log_manager import log_manager, app_logger
 from app.utils.theme_manager import theme_manager
 from app.utils.notification_manager import notification_manager
 from app.widgets.dependency_sources_dialog import DependencySourcesDialog
@@ -546,7 +546,6 @@ class SettingsPage(QWidget):
             self.debug_checkbox.setChecked(not is_enabled)
             notification_manager.show_error("调试模式切换失败", "操作失败")
 
-
 def get_version_info():
     """从versioninfo.txt文件中获取版本信息"""
     base_path = sys._MEIPASS if getattr(sys, 'frozen', False) else os.getcwd()
@@ -559,3 +558,4 @@ def get_version_info():
     except Exception as e:
         logger.warning(f"读取版本信息失败: {e}, 使用默认版本v1.0.0")
     return "v1.0.0"
+app_logger.info(f"欢迎来到MFWPH,当前版本为: {get_version_info()}")
