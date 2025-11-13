@@ -146,11 +146,10 @@ class ScheduledTaskManager(QObject):
                 task_found = False
                 for i, task in enumerate(app_config.schedule_tasks):
                     if task.schedule_id == schedule_id:
-                        # --- FIX: 使用 task_info 中的新 device_name 和 resource_name ---
                         updated_task_obj = ScheduleTask.from_ui_format(
                             task_info,
-                            task_info['device_name'],  # 使用新的设备名
-                            task_info['resource_name']  # 使用新的资源名
+                            task_info['device_name'],
+                            task_info['resource_name']
                         )
                         updated_task_obj.schedule_id = schedule_id
                         app_config.schedule_tasks[i] = updated_task_obj
@@ -280,20 +279,24 @@ class ScheduledTaskManager(QObject):
             if not resource:
                 self.logger.error(f"在设备 {device_name} 中找不到资源 {resource_name}")
                 return
+
+            # 为了确保任务使用指定的配置方案，我们临时修改资源配置
             original_settings_name = resource.settings_name
             try:
                 resource.settings_name = settings_name
                 runtime_config = global_config.get_runtime_configs_for_resource(resource_name, device_name)
+
                 if not runtime_config:
                     self.logger.error(f"无法获取运行时配置 (设备 {device_name}, 资源 {resource_name})")
                     return
-                await self._tasker_manager.create_executor(device_config)
-                result = await self._tasker_manager.submit_task(device_name, runtime_config)
-                if result:
-                    self.logger.info(f"成功提交任务 {result} (设备 {device_name}, 资源 {resource_name})")
-                else:
-                    self.logger.error(f"提交任务失败 (设备 {device_name}, 资源 {resource_name})")
+
+                # 【修改】移除 create_executor 调用，直接提交任务
+                # TaskerManager 的 submit_task 现在会处理所有启动逻辑
+                await self._tasker_manager.submit_task(device_name, runtime_config)
+                self.logger.info(f"成功将定时任务加入队列 (设备 {device_name}, 资源 {resource_name})")
+
             finally:
+                # 无论成功与否，都恢复原始的配置方案
                 resource.settings_name = original_settings_name
         except Exception as e:
             self.logger.error(f"运行定时任务时出错: {e}", exc_info=True)
