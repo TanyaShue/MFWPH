@@ -167,16 +167,13 @@ class TaskExecutor(QObject):
     async def _cleanup(self):
         """停止所有活动并清理资源，用于执行器销毁前"""
         self.logger.info(f"正在为执行器实例 {id(self)} 执行全面清理")
-
+        await self._cleanup_agent()
         # 停止MAA任务
         if self._tasker and self._tasker.running:
             try:
                 await self._run_in_executor(self._tasker.post_stop().wait)
             except Exception as e:
                 self.logger.warning(f"停止 MAA tasker 时出错: {e}")
-
-        # 清理Agent
-        await self._cleanup_agent()
 
         # 关闭线程池
         self._executor.shutdown(wait=False)
