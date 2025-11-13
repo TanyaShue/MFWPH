@@ -1,4 +1,4 @@
-maafw==4.5.2
+maafw==5.0.2
 pyside6
 pyinstaller
 requests

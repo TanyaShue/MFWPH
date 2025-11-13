@@ -45,7 +45,7 @@ class TaskerManager(QObject):
         self._total_tasks_completed = 0
 
         self._connect_status_manager_signals()
-        self.logger.info("TaskerManager (重构版) 初始化完成")
+        self.logger.info("TaskerManager初始化完成")
 
     def _connect_status_manager_signals(self):
         """连接状态管理器的信号"""
