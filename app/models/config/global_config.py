@@ -135,7 +135,6 @@ class GlobalConfig:
         else:
             raise ValueError("AppConfig 尚未加载，无法保存。")
 
-    # --- CHANGE 2 OF 2: The get_runtime_configs_for_resource method is updated ---
     def get_runtime_configs_for_resource(self, resource_name: str, device_id: str = None) -> RunTimeConfigs | None:
         """
         获取指定资源中已启用的任务实例的RunTimeConfigs，

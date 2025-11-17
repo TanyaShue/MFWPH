@@ -7,7 +7,7 @@ from pathlib import Path
 from types import SimpleNamespace
 
 from PySide6.QtCore import QTimer, QCoreApplication, Qt, QUrl
-from PySide6.QtGui import QFont, QPixmap, QDesktopServices
+from PySide6.QtGui import QFont, QPixmap, QDesktopServices, QIntValidator
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QScrollArea, QFrame, QCheckBox,
@@ -307,11 +307,58 @@ class SettingsPage(QWidget):
         global_config.save_all_configs()
 
     def create_startup_section(self):
+        """【已修改】创建启动设置的界面区域，并添加等待时间输入框"""
         layout = self.create_section("启动设置")
+
+        # 依赖源按钮
         dep_source_button = QPushButton("依赖源")
         dep_source_button.setObjectName("primaryButton")
         dep_source_button.clicked.connect(self.show_dependency_sources_dialog)
-        layout.addWidget(dep_source_button)
+        layout.addWidget(dep_source_button, 0, Qt.AlignLeft)  # 左对齐
+
+        layout.addSpacing(10)
+
+        # 模拟器启动等待时间
+        wait_time_row = QHBoxLayout()
+        wait_time_label = QLabel("模拟器启动等待时间 (秒) ")
+        self.wait_time_input = QLineEdit()
+        self.wait_time_input.setValidator(QIntValidator(0, 300, self))  # 限制输入为0-300的整数
+        self.wait_time_input.setFixedWidth(100)  # 设置一个合适的宽度
+
+        # 从配置加载初始值
+        try:
+            current_wait_time = global_config.get_app_config().emulator_start_wait_time
+            self.wait_time_input.setText(str(current_wait_time))
+        except Exception as e:
+            logger.warning(f"无法加载模拟器启动等待时间: {e}, 使用默认值 30")
+            self.wait_time_input.setText("30")
+
+        # 当编辑完成时（例如，用户点击别处），触发保存
+        self.wait_time_input.editingFinished.connect(self.on_emulator_wait_time_changed)
+
+        wait_time_row.addWidget(wait_time_label)
+        wait_time_row.addWidget(self.wait_time_input)
+        wait_time_row.addStretch()
+        layout.addLayout(wait_time_row)
+
+    def on_emulator_wait_time_changed(self):
+        """【新增】当模拟器启动等待时间输入框编辑完成时，保存设置"""
+        app_config = global_config.get_app_config()
+        try:
+            new_value = int(self.wait_time_input.text())
+            # 仅在值发生变化时保存并提示
+            if app_config.emulator_start_wait_time != new_value:
+                app_config.emulator_start_wait_time = new_value
+                global_config.save_all_configs()
+                notification_manager.show_info(f"模拟器启动等待时间已设置为 {new_value} 秒。", "设置已保存")
+        except ValueError:
+            # 如果输入为空或无效（例如，用户清空了输入框），则恢复为之前的值
+            current_value = app_config.emulator_start_wait_time
+            self.wait_time_input.setText(str(current_value))
+            notification_manager.show_warning("请输入有效的等待时间（0-300秒）。", "输入无效")
+        except Exception as e:
+            logger.error(f"保存模拟器启动等待时间失败: {e}")
+            notification_manager.show_error("保存设置失败", "错误")
 
     def show_dependency_sources_dialog(self):
         dialog = DependencySourcesDialog(self)

@@ -160,9 +160,6 @@ class Resource:
     # 内部引用，不会被序列化
     _app_config: Optional['AppConfig'] = field(default=None, repr=False, compare=False)
 
-    # 移除了旧的 selected_tasks 和 options 属性，因为它们已不再 ResourceSettings 中
-    # 访问任务实例现在需要通过 self._app_config 获取对应的 ResourceSettings
-
     def set_app_config(self, app_config: 'AppConfig'):
         """设置对 AppConfig 的引用。"""
         self._app_config = app_config
@@ -203,6 +200,7 @@ class DeviceConfig:
     start_command: str = ""
     auto_start_emulator: bool = False  # 是否自动启动模拟器
     auto_close_emulator: bool = False  # 是否自动关闭模拟器
+    # emulator_start_wait_time 已从此移除
 
 
 @dataclass
@@ -227,6 +225,7 @@ class AppConfig:
     window_position: str = field(default="center")
     debug_model: bool = False
     minimize_to_tray_on_close: Optional[bool] = False
+    emulator_start_wait_time: int = 30  # 通用参数：模拟器启动等待时间（秒）
 
     def add_or_update_resource_setting(self, setting_data: Dict[str, Any]):
         """
@@ -469,6 +468,8 @@ class AppConfig:
         config.window_position = data.get('window_position', "center")
         config.debug_model = data.get('debug_model', False)
         config.minimize_to_tray_on_close = data.get('minimize_to_tray_on_close', False)
+        # 从配置字典中读取通用等待时间，如果不存在则默认为 30
+        config.emulator_start_wait_time = data.get('emulator_start_wait_time', 30)
 
         config.link_resources_to_config()
         return config
@@ -491,6 +492,8 @@ class AppConfig:
         result["window_position"] = self.window_position
         result["debug_model"] = self.debug_model
         result["minimize_to_tray_on_close"] = self.minimize_to_tray_on_close
+        # 将通用等待时间写入配置字典
+        result["emulator_start_wait_time"] = self.emulator_start_wait_time
         return result
 
 

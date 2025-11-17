@@ -208,7 +208,6 @@ class TaskExecutor(QObject):
                     NotificationType.Failed: ("failed", self.executor.logger.error),
                     NotificationType.Starting: ("start", self.executor.logger.info),
                 }
-
                 if noti_type in type_to_log_defaults:
                     # 获取当前动作的关键字和默认日志方法
                     key, default_log_func = type_to_log_defaults[noti_type]
@@ -265,7 +264,6 @@ class TaskExecutor(QObject):
             self.logger.error(f"确保设备连接失败: {e}", exc_info=True)
             self.device_manager.set_state(DeviceState.ERROR, error_message=str(e))
             return False
-
     async def _manage_emulator_process(self) -> Optional[int]:
         """管理模拟器进程的启动和等待"""
         if not self.device_config.start_command:
@@ -280,7 +278,8 @@ class TaskExecutor(QObject):
             self.logger.info("模拟器未运行，将根据配置尝试启动...")
             pid = await self._start_emulator_and_wait_for_pid(self.device_config.start_command)
             if pid:
-                await self._wait_for_emulator_startup(20)
+                wait_time = global_config.get_app_config().emulator_start_wait_time
+                await self._wait_for_emulator_startup(wait_time)
                 return pid
         else:
             self.logger.warning("模拟器未运行，且自动启动选项未开启。")
@@ -303,7 +302,8 @@ class TaskExecutor(QObject):
                         self.logger.error("重启模拟器失败，无法继续。")
                         break
                     pid = new_pid
-                    await self._wait_for_emulator_startup(20)
+                    wait_time = global_config.get_app_config().emulator_start_wait_time
+                    await self._wait_for_emulator_startup(wait_time)
                 else:
                     self.logger.warning("无法重启模拟器，将直接重试连接。")
                     await asyncio.sleep(5)
