@@ -291,6 +291,8 @@ class TaskerManager(QObject):
             ]
 
         runtime_configs = await asyncio.to_thread(get_all_runtime_configs)
+        self.logger.info(f"当前任务的配置为:{runtime_configs}")
+
         if not runtime_configs:
             self.logger.warning(f"设备 {device_config.device_name} 没有找到可用的运行时配置")
             return False
@@ -303,6 +305,7 @@ class TaskerManager(QObject):
         """提交指定资源的任务"""
         self.logger.info(f"为设备 {device_config_name} 提交资源 {resource_name} 的任务")
         runtime_config = global_config.get_runtime_configs_for_resource(resource_name, device_config_name)
+        self.logger.info(f"当前任务的配置为:{runtime_config}")
         if not runtime_config:
             error_msg = f"找不到设备 {device_config_name} 资源 {resource_name} 的运行时配置"
             self.logger.error(error_msg)
