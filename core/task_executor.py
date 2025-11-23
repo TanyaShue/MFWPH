@@ -52,7 +52,6 @@ class TaskExecutor(QObject):
     重构后的任务执行器 - 具有短生命周期，为单次任务执行而创建和销毁。
     """
 
-    # 信号定义
     task_state_changed = Signal(str, DeviceState, dict)
 
     def __init__(self, device_config: DeviceConfig, parent=None):
@@ -264,6 +263,7 @@ class TaskExecutor(QObject):
             self.logger.error(f"确保设备连接失败: {e}", exc_info=True)
             self.device_manager.set_state(DeviceState.ERROR, error_message=str(e))
             return False
+
     async def _manage_emulator_process(self) -> Optional[int]:
         """管理模拟器进程的启动和等待"""
         if not self.device_config.start_command:
