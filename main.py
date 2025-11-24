@@ -96,16 +96,12 @@ def main():
     startup_checker = StartupResourceUpdateChecker(window)
     QTimer.singleShot(1000, startup_checker.check_for_updates)
 
-    # ---- 关键修复：将清理逻辑挂载到 aboutToQuit ----
-    # 当 app.quit() 被调用时，这个信号触发
     app.aboutToQuit.connect(lambda: cleanup_and_exit(loop, app))
 
-    # ---- 最终运行事件循环 ----
     with loop:
         try:
             loop.run_forever()
         finally:
-            # 确保彻底退出，防止 console 窗口残留
             sys.exit(0)
 
 
