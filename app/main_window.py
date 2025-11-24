@@ -296,9 +296,11 @@ class MainWindow(QMainWindow):
         self.activateWindow()
 
     def force_quit(self):
-        """托盘退出：正确保存配置 + 停止所有事件循环并退出"""
+        """托盘退出"""
+        # 1. 隐藏托盘 (防止图标残留)
         self.tray_icon.hide()
 
+        # 2. 保存配置
         size = self.size()
         window_size = f"{size.width()}x{size.height()}"
         pos = self.pos()
@@ -309,17 +311,12 @@ class MainWindow(QMainWindow):
         app_config.window_position = window_position
         global_config.save_all_configs()
 
-        # ---- 停止 asyncio 事件循环（关键修复） ----
-        import asyncio
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.stop()
-
-        # ---- 退出 Qt ----
+        # 3. 触发全局退出信号 -> 只有这一行！
+        # 这会触发 main.py 中的 app.aboutToQuit，从而执行清理和 loop.stop()
         QCoreApplication.instance().quit()
 
     def closeEvent(self, event):
-        """窗口关闭时：正确退出或最小化托盘"""
+        """窗口关闭事件"""
         app_config = global_config.get_app_config()
 
         if app_config.minimize_to_tray_on_close:
@@ -333,7 +330,7 @@ class MainWindow(QMainWindow):
             )
             return
 
-        # ---- 正常退出时：保存窗口状态 ----
+        # 正常退出
         size = self.size()
         window_size = f"{size.width()}x{size.height()}"
         pos = self.pos()
@@ -343,13 +340,14 @@ class MainWindow(QMainWindow):
         app_config.window_position = window_position
         global_config.save_all_configs()
 
-        # ---- 关键修复：停止 asyncio 事件循环 ----
-        import asyncio
-        loop = asyncio.get_event_loop()
-        if loop.is_running():
-            loop.stop()
+        # 隐藏托盘
+        self.tray_icon.hide()
 
+        # 接受关闭事件
         event.accept()
+
+        # 触发全局退出
+        QCoreApplication.instance().quit()
 
     def load_devices(self):
         while self.device_buttons_layout.count():
