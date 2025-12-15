@@ -21,10 +21,11 @@ from concurrent.futures import ThreadPoolExecutor
 
 import psutil
 from PySide6.QtCore import QObject, Signal
+from maa.context import ContextEventSink
 from maa.controller import AdbController, Win32Controller
-from maa.notification_handler import NotificationHandler, NotificationType
+from maa.event_sink import NotificationType
 from maa.resource import Resource
-from maa.tasker import Tasker
+from maa.tasker import Tasker, TaskerEventSink
 from maa.toolkit import Toolkit
 from maa.agent_client import AgentClient
 
@@ -52,6 +53,7 @@ class TaskExecutor(QObject):
     重构后的任务执行器 - 具有短生命周期，为单次任务执行而创建和销毁。
     """
 
+    # 信号定义
     task_state_changed = Signal(str, DeviceState, dict)
 
     def __init__(self, device_config: DeviceConfig, parent=None):
@@ -184,21 +186,19 @@ class TaskExecutor(QObject):
     def _create_notification_handler(self):
         """创建通知处理器"""
 
-        class Handler(NotificationHandler):
+        class Handler(ContextEventSink):
             def __init__(self, executor):
                 super().__init__()
                 self.executor = executor
 
-            def on_node_recognition(self, noti_type: NotificationType,
-                                    detail: NotificationHandler.NodeRecognitionDetail):
+            def on_node_recognition(self,context, noti_type: NotificationType,
+                                    detail: ContextEventSink.NodeRecognitionDetail):
                 if noti_type in (NotificationType.Succeeded, NotificationType.Failed):
                     self.executor.logger.debug(
                         f"识别: {detail.name} - {'成功' if noti_type == NotificationType.Succeeded else '失败'}")
 
-            def on_node_action(self, noti_type: NotificationType, detail: NotificationHandler.NodeActionDetail):
-                if not detail or not hasattr(detail, "focus") or not detail.focus:
-                    return
-
+            def on_node_action(self, context,noti_type: NotificationType, detail: ContextEventSink.NodeActionDetail):
+                if not detail or not hasattr(detail, "focus") or not detail.focus: return
                 focus = detail.focus
 
                 # 定义默认的日志级别和关键字映射
@@ -434,7 +434,8 @@ class TaskExecutor(QObject):
         resource = await self._load_resource(resource_pack, resource_path)
         resource.clear_custom_action()
         resource.clear_custom_recognition()
-        self._tasker = Tasker(notification_handler=self._notification_handler)
+        self._tasker = Tasker()
+        self._tasker.add_context_sink(self._notification_handler)
         self._tasker.bind(resource=resource, controller=self._controller)
         if not self._tasker.inited:
             raise RuntimeError("任务执行器初始化失败")
