@@ -4,16 +4,17 @@ import os
 import sys
 import argparse
 
-import qasync
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QStyleFactory
+import qasync
 
 from app.main_window import MainWindow
 from app.models.logging.log_manager import log_manager
 from app.utils.notification_manager import notification_manager
 from app.utils.until import clean_up_old_pyinstaller_temps, load_light_palette, \
     StartupResourceUpdateChecker, kill_processes
+# from app_refact.app_windows import AppWindow
 
 # ... (Windows ctypes 设置保持不变) ...
 
