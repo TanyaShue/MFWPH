@@ -3,10 +3,10 @@ import os
 import sys
 import argparse
 
-import qasync
 from PySide6.QtCore import QTimer
 from PySide6.QtGui import QIcon
 from PySide6.QtWidgets import QApplication, QStyleFactory
+import qasync
 
 from app.main_window import MainWindow
 from app.models.logging.log_manager import log_manager
