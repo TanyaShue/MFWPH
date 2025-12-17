@@ -136,7 +136,7 @@ class ResourceConfigWidget(QFrame):
 
         # 资源包选择行
         pack_layout = QHBoxLayout()
-        pack_label = QLabel("资源包:")
+        pack_label = QLabel("资源包(游戏区服):")
         self.pack_selector = QComboBox()
         self.pack_selector.setObjectName("packSelector")
         self.pack_selector.setMinimumWidth(200)
