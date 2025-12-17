@@ -10,6 +10,7 @@
 
 import asyncio
 import os
+import re
 import subprocess
 import threading
 import time
@@ -190,38 +191,100 @@ class TaskExecutor(QObject):
             def __init__(self, executor):
                 super().__init__()
                 self.executor = executor
+                # 预编译正则：匹配 [info]消息内容，忽略大小写
+                self._log_pattern = re.compile(r"^\[(info|debug|warning|error|critical)\](.*)", re.IGNORECASE)
 
-            def on_node_recognition(self,context, noti_type: NotificationType,
+            def _process_log_protocol(self, focus_data, key_map, noti_type):
+                """
+                通用处理方法：检查新协议Key -> 解析[level] -> 输出日志
+                返回 True 表示已通过新协议处理了日志，False 表示未找到配置
+                """
+                if not focus_data or not isinstance(focus_data, dict):
+                    return False
+
+                # 获取当前 notification type 对应的新协议 Key (例如 'Node.Action.Succeeded')
+                protocol_key = key_map.get(noti_type)
+                if not protocol_key or protocol_key not in focus_data:
+                    return False
+
+                raw_content = focus_data[protocol_key]
+                # 兼容列表或单字符串
+                messages = raw_content if isinstance(raw_content, list) else [str(raw_content)]
+
+                for msg in messages:
+                    match = self._log_pattern.match(msg)
+                    if match:
+                        level_str = match.group(1).lower()
+                        content = match.group(2)
+                        # 动态获取 logger 方法 (info, debug, error...)
+                        log_func = getattr(self.executor.logger, level_str, self.executor.logger.info)
+                        log_func(content)
+                    else:
+                        # 如果没有 [level] 标签，默认使用 info
+                        self.executor.logger.info(msg)
+
+                return True
+
+            def on_node_recognition(self, context, noti_type: NotificationType,
                                     detail: ContextEventSink.NodeRecognitionDetail):
-                if noti_type in (NotificationType.Succeeded, NotificationType.Failed):
-                    self.executor.logger.debug(
-                        f"识别: {detail.name} - {'成功' if noti_type == NotificationType.Succeeded else '失败'}")
+                # 1. 定义识别事件的新协议映射
+                recog_key_map = {
+                    NotificationType.Starting: 'Node.Recognition.Starting',
+                    NotificationType.Succeeded: 'Node.Recognition.Succeeded',
+                    NotificationType.Failed: 'Node.Recognition.Failed',
+                }
 
-            def on_node_action(self, context,noti_type: NotificationType, detail: ContextEventSink.NodeActionDetail):
-                if not detail or not hasattr(detail, "focus") or not detail.focus: return
+                # 尝试获取 focus 数据 (假设 detail 中也有 focus 属性，或者 detail 本身支持类似字典的访问)
+                # 如果 detail 是特定对象且没有 focus 属性，这里需要根据实际情况调整，这里假设与 action 结构一致
+                focus = getattr(detail, "focus", None)
+
+                # 2. 尝试使用新协议输出日志
+                # 如果 _process_log_protocol 返回 True，说明用户配置了自定义消息，处理完毕
+                if self._process_log_protocol(focus, recog_key_map, noti_type):
+                    return
+
+                # 3. 旧逻辑回退 (Default Fallback)
+                # 如果没有配置自定义消息，保持原有的 debug 输出逻辑
+                if noti_type in (NotificationType.Succeeded, NotificationType.Failed):
+                    status_text = '成功' if noti_type == NotificationType.Succeeded else '失败'
+                    self.executor.logger.debug(f"识别: {detail.name} - {status_text}")
+
+            def on_node_action(self, context, noti_type: NotificationType, detail: ContextEventSink.NodeActionDetail):
+                if not detail or not hasattr(detail, "focus") or not detail.focus:
+                    return
                 focus = detail.focus
 
-                # 定义默认的日志级别和关键字映射
-                type_to_log_defaults = {
+                # 1. 定义动作事件的新协议映射
+                action_key_map = {
+                    NotificationType.Starting: 'Node.Action.Starting',
+                    NotificationType.Succeeded: 'Node.Action.Succeeded',
+                    NotificationType.Failed: 'Node.Action.Failed',
+                }
+
+                # 2. 尝试使用新协议输出日志
+                if self._process_log_protocol(focus, action_key_map, noti_type):
+                    return
+
+                # 3. 旧逻辑回退 (Compatible Mode)
+                # 定义旧协议的映射：(旧Key, 默认日志方法)
+                old_protocol_map = {
                     NotificationType.Succeeded: ("succeeded", self.executor.logger.info),
                     NotificationType.Failed: ("failed", self.executor.logger.error),
                     NotificationType.Starting: ("start", self.executor.logger.info),
                 }
-                if noti_type in type_to_log_defaults:
-                    # 获取当前动作的关键字和默认日志方法
-                    key, default_log_func = type_to_log_defaults[noti_type]
 
-                    # 确定最终要使用的日志方法
+                if noti_type in old_protocol_map:
+                    key, default_log_func = old_protocol_map[noti_type]
+
+                    # 确定日志方法 (检查 level 字典)
                     log_func = default_log_func
-                    level_config = focus.get("level")  # 安全地获取level配置
+                    level_config = focus.get("level")
                     if isinstance(level_config, dict):
                         log_level_str = level_config.get(key)
-                        # 如果为当前动作指定了level, 就获取对应的logger方法
-                        # getattr的第三个参数是默认值，如果指定的level字符串无效(如"invalid_level")，则退回使用默认方法
                         if log_level_str:
                             log_func = getattr(self.executor.logger, log_level_str, default_log_func)
 
-                    # 检查focus中是否有要输出的日志内容
+                    # 输出内容
                     if key in focus:
                         values = focus[key]
                         if isinstance(values, list):
@@ -231,7 +294,6 @@ class TaskExecutor(QObject):
                             log_func(str(values))
 
         return Handler(self)
-
     async def _run_in_executor(self, func, *args):
         """在线程池中运行阻塞操作"""
         loop = asyncio.get_event_loop()
