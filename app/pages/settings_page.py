@@ -9,7 +9,7 @@ from types import SimpleNamespace
 from datetime import datetime
 
 from PySide6.QtCore import QTimer, QCoreApplication, Qt, QUrl, QThread, Signal, QMimeData
-from PySide6.QtGui import QFont, QPixmap, QDesktopServices, QIntValidator, QClipboard
+from PySide6.QtGui import QFont, QPixmap, QDesktopServices, QIntValidator, QClipboard, QGuiApplication
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QScrollArea, QFrame, QCheckBox,
@@ -35,6 +35,7 @@ class LogExportWorker(QThread):
     """后台日志导出线程：负责压缩日志并清理旧文件"""
     finished = Signal(str)  # 成功信号，传递zip路径
     error = Signal(str)  # 失败信号，传递错误信息
+    progress = Signal(float, str)  # 进度信号: (0.0-1.0的小数, 状态文本)
 
     def __init__(self, base_path, log_dir, debug_dir):
         super().__init__()
@@ -49,37 +50,55 @@ class LogExportWorker(QThread):
             zip_filename = f"logs_export_{timestamp}.zip"
             zip_path = os.path.join(self.base_path, zip_filename)
 
-            files_to_delete = []  # 记录打包成功后需要删除的文件
+            # 2. 预先扫描所有需要处理的文件 (用于计算进度)
+            files_to_process = []  # 存储元组: (绝对路径, 压缩包内路径)
 
-            # 2. 创建压缩包
+            # 扫描 logs 目录
+            if os.path.exists(self.log_dir):
+                for root, dirs, files in os.walk(self.log_dir):
+                    for file in files:
+                        # 跳过之前的导出文件，防止递归打包
+                        if file.startswith("logs_export_") and file.endswith(".zip"):
+                            continue
+                        abs_path = os.path.join(root, file)
+                        arc_name = os.path.join("logs", os.path.relpath(abs_path, self.log_dir))
+                        files_to_process.append((abs_path, arc_name))
+
+            # 扫描 debug 目录
+            if os.path.exists(self.debug_dir):
+                for root, dirs, files in os.walk(self.debug_dir):
+                    for file in files:
+                        abs_path = os.path.join(root, file)
+                        arc_name = os.path.join("assets/debug", os.path.relpath(abs_path, self.debug_dir))
+                        files_to_process.append((abs_path, arc_name))
+
+            total_files = len(files_to_process)
+            processed_count = 0
+
+            # 3. 创建压缩包并写入文件
+            files_to_delete = []  # 记录成功写入后需要删除的源文件路径
+
             with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
-                # 添加软件日志
-                if os.path.exists(self.log_dir):
-                    for root, dirs, files in os.walk(self.log_dir):
-                        for file in files:
-                            file_path = os.path.join(root, file)
-                            # 跳过之前的导出文件，防止递归打包
-                            if file.startswith("logs_export_") and file.endswith(".zip"):
-                                continue
-                            arcname = os.path.join("logs", os.path.relpath(file_path, self.log_dir))
-                            zipf.write(file_path, arcname)
-                            files_to_delete.append(file_path)
+                for abs_path, arc_name in files_to_process:
+                    # 写入压缩包
+                    zipf.write(abs_path, arc_name)
+                    files_to_delete.append(abs_path)
 
-                # 添加调试日志
-                if os.path.exists(self.debug_dir):
-                    for root, dirs, files in os.walk(self.debug_dir):
-                        for file in files:
-                            file_path = os.path.join(root, file)
-                            arcname = os.path.join("assets/debug", os.path.relpath(file_path, self.debug_dir))
-                            zipf.write(file_path, arcname)
-                            files_to_delete.append(file_path)
+                    # 更新进度
+                    processed_count += 1
+                    if total_files > 0:
+                        percent = processed_count / total_files
+                        # 保留两位小数的进度，文本显示当前处理数量
+                        self.progress.emit(percent, f"正在打包 ({processed_count}/{total_files})...")
 
-            # 3. 删除原文件 (清理旧日志)
-            # 注意：使用 try-except 跳过被系统锁定的文件（如当前正在写入的日志）
+            # 4. 删除原文件 (清理阶段)
+            self.progress.emit(1.0, "正在清理旧日志文件...")
+
             for file_path in files_to_delete:
                 try:
                     os.remove(file_path)
                 except OSError:
+                    # 跳过被占用的文件
                     pass
 
             self.finished.emit(zip_path)
@@ -693,15 +712,16 @@ class SettingsPage(QWidget):
         log_dir = os.path.join(base_path, "logs")
         debug_dir = os.path.join(base_path, "assets", "debug")
 
+        # 简单检查是否有文件夹存在
         if not os.path.exists(log_dir) and not os.path.exists(debug_dir):
             notification_manager.show_warning("未找到日志文件夹", "无需导出")
             return
 
-        # 3. 立即显示反馈动画 (使用进度条通知，设为不确定进度)
+        # 3. 初始化进度通知 (初始进度 0.0)
         notification_manager.show_progress(
             self.export_notification_id,
-            "正在打包并清理旧日志...",
-            "日志导出中",
+            "正在扫描日志文件...",
+            "准备导出",
             0.0
         )
 
@@ -709,7 +729,18 @@ class SettingsPage(QWidget):
         self.log_worker = LogExportWorker(base_path, log_dir, debug_dir)
         self.log_worker.finished.connect(self.on_export_finished)
         self.log_worker.error.connect(self.on_export_error)
+        self.log_worker.progress.connect(self.update_export_progress)  # <--- 连接进度信号
         self.log_worker.start()
+
+    def update_export_progress(self, percent, msg):
+        """更新导出进度条"""
+        # 调用 notification_manager 更新进度
+        # 假设 update_progress 接受 (id, float进度0-1, 文本消息)
+        notification_manager.update_progress(
+            self.export_notification_id,
+            percent,
+            msg
+        )
 
     def on_export_finished(self, zip_path):
         """日志导出成功的回调"""
@@ -719,7 +750,7 @@ class SettingsPage(QWidget):
         logger.info(f"日志导出成功: {zip_path}")
 
         # 弹窗询问复制
-        msg_box = QMessageBox(self)  # 指定父对象防止弹窗跑偏
+        msg_box = QMessageBox(self)
         msg_box.setWindowTitle("日志导出成功")
         msg_box.setText(f"日志已打包并清理旧文件。\n保存路径：\n{zip_path}\n\n是否要复制这个压缩包到剪贴板？")
         msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
@@ -730,7 +761,7 @@ class SettingsPage(QWidget):
 
         if result == QMessageBox.Yes:
             try:
-                clipboard = QClipboard()
+                clipboard = QGuiApplication.clipboard()
                 mime_data = QMimeData()
                 mime_data.setUrls([QUrl.fromLocalFile(zip_path)])
                 clipboard.setMimeData(mime_data)
