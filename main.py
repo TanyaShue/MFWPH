@@ -3,87 +3,209 @@ import asyncio
 import os
 import sys
 import argparse
+import multiprocessing
+import ctypes
+from ctypes import wintypes
 
 from PySide6.QtCore import QTimer
-from PySide6.QtGui import QIcon
+from PySide6.QtGui import QIcon, QCloseEvent
 from PySide6.QtWidgets import QApplication, QStyleFactory
 import qasync
 
 from app.main_window import MainWindow
 from app.models.logging.log_manager import log_manager
+from app.models.config.global_config import global_config
 from app.utils.notification_manager import notification_manager
-from app.utils.until import clean_up_old_pyinstaller_temps, load_light_palette, \
-    StartupResourceUpdateChecker, kill_processes
-# from app_refact.app_windows import AppWindow
+from app.utils.until import (
+    clean_up_old_pyinstaller_temps,
+    load_light_palette,
+    StartupResourceUpdateChecker,
+    kill_processes,
+)
 
-# ... (Windows ctypes 设置保持不变) ...
+from core.tasker_manager import task_manager
 
 logger = log_manager.get_app_logger()
 
-
-def get_base_path():
-    if getattr(sys, 'frozen', False):
-        return os.path.dirname(sys.executable)
-    else:
-        return os.path.dirname(os.path.abspath(__file__))
+_job_handle = None
 
 
-async def shutdown_tasks():
-    """优雅地取消所有未完成的异步任务"""
-    tasks = [t for t in asyncio.all_tasks() if t is not asyncio.current_task()]
-
-    if not tasks:
+# -----------------------------------------------------------------------------
+# Windows Job Object（保持不变，这是正确的）
+# -----------------------------------------------------------------------------
+def setup_windows_job_object():
+    if sys.platform != "win32":
         return
 
-    logger.info(f"Cleaning up {len(tasks)} pending tasks...")
-    for task in tasks:
-        task.cancel()
-
-    # 等待所有任务取消完成，避免报错
-    await asyncio.gather(*tasks, return_exceptions=True)
-    logger.info("All tasks cancelled.")
-
-
-def cleanup_and_exit(loop, app):
-    """统一的退出清理入口"""
+    global _job_handle
     try:
-        # 1. 执行进程清理 (你原本的 kill_processes)
-        kill_processes()
+        JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+        h_job = ctypes.windll.kernel32.CreateJobObjectW(None, None)
+        if not h_job:
+            return
 
-        # 2. 安排异步任务清理
-        # 我们创建一个新的 task 来运行 shutdown_tasks，然后停止 loop
-        async def _do_shutdown():
-            await shutdown_tasks()
-            loop.stop()
+        class IO_COUNTERS(ctypes.Structure):
+            _fields_ = [
+                ("ReadOperationCount", ctypes.c_ulonglong),
+                ("WriteOperationCount", ctypes.c_ulonglong),
+                ("OtherOperationCount", ctypes.c_ulonglong),
+                ("ReadTransferCount", ctypes.c_ulonglong),
+                ("WriteTransferCount", ctypes.c_ulonglong),
+                ("OtherTransferCount", ctypes.c_ulonglong),
+            ]
 
-        asyncio.ensure_future(_do_shutdown(), loop=loop)
+        class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("PerProcessUserTimeLimit", wintypes.LARGE_INTEGER),
+                ("PerJobUserTimeLimit", wintypes.LARGE_INTEGER),
+                ("LimitFlags", wintypes.DWORD),
+                ("MinimumWorkingSetSize", ctypes.c_size_t),
+                ("MaximumWorkingSetSize", ctypes.c_size_t),
+                ("ActiveProcessLimit", wintypes.DWORD),
+                ("Affinity", ctypes.c_size_t),
+                ("PriorityClass", wintypes.DWORD),
+                ("SchedulingClass", wintypes.DWORD),
+            ]
+
+        class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+            _fields_ = [
+                ("BasicLimitInformation", JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                ("IoInfo", IO_COUNTERS),
+                ("ProcessMemoryLimit", ctypes.c_size_t),
+                ("JobMemoryLimit", ctypes.c_size_t),
+                ("PeakProcessMemoryUsed", ctypes.c_size_t),
+                ("PeakJobMemoryUsed", ctypes.c_size_t),
+            ]
+
+        info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+        info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+
+        ctypes.windll.kernel32.SetInformationJobObject(
+            h_job, 9, ctypes.pointer(info), ctypes.sizeof(info)
+        )
+
+        ctypes.windll.kernel32.AssignProcessToJobObject(
+            h_job, ctypes.windll.kernel32.GetCurrentProcess()
+        )
+
+        _job_handle = h_job
+        logger.info("Windows Job Object enabled.")
 
     except Exception as e:
+        logger.error(f"Job Object setup failed: {e}")
+
+
+def get_base_path():
+    if getattr(sys, "frozen", False):
+        return os.path.dirname(sys.executable)
+    return os.path.dirname(os.path.abspath(__file__))
+
+
+# -----------------------------------------------------------------------------
+# 🚀 进阶版：真正不会卡的退出流程
+# -----------------------------------------------------------------------------
+async def perform_graceful_shutdown(loop, app, window):
+    """
+    UI 立即消失 → 后台最多清理 3 秒 → 强制退出
+    """
+    logger.info("🛑 Graceful shutdown started")
+
+    # 1️⃣ UI 立刻消失（用户立刻感觉程序关了）
+    try:
+        window.hide()
+        app.processEvents()
+    except Exception:
+        pass
+
+    # 2️⃣ 尝试优雅清理（限时）
+    try:
+        logger.info("Stopping task manager (timeout=3s)...")
+        await asyncio.wait_for(task_manager.stop_all(), timeout=3)
+        logger.info("Task manager stopped cleanly.")
+    except asyncio.TimeoutError:
+        logger.warning("Task manager shutdown timed out.")
+    except Exception as e:
         logger.error(f"Error during shutdown: {e}")
-        loop.stop()
+
+    # 3️⃣ 最后兜底（防止任何残留）
+    try:
+        kill_processes()
+    except Exception:
+        pass
+
+    logger.info("💀 Forcing process exit.")
+    os._exit(0)  # GUI 程序必须用这个，别犹豫
 
 
+# -----------------------------------------------------------------------------
+# 关闭事件 Patch（核心）
+# -----------------------------------------------------------------------------
+def patch_mainwindow_exit_logic(window: MainWindow, loop, app):
+    original_close_event = window.closeEvent
+
+    def save_window_config():
+        try:
+            size = window.size()
+            pos = window.pos()
+            app_config = global_config.get_app_config()
+            app_config.window_size = f"{size.width()}x{size.height()}"
+            app_config.window_position = f"{pos.x()},{pos.y()}"
+            global_config.save_all_configs()
+        except Exception as e:
+            logger.error(f"Failed to save config: {e}")
+
+    def patched_close_event(event: QCloseEvent):
+        app_config = global_config.get_app_config()
+
+        if app_config.minimize_to_tray_on_close:
+            event.ignore()
+            window.hide()
+            return
+
+        logger.info("User requested exit (window close).")
+        save_window_config()
+
+        event.ignore()  # 阻止 Qt 自己 quit
+        asyncio.ensure_future(
+            perform_graceful_shutdown(loop, app, window)
+        )
+
+    def patched_force_quit():
+        logger.info("User requested exit (tray).")
+        save_window_config()
+        asyncio.ensure_future(
+            perform_graceful_shutdown(loop, app, window)
+        )
+
+    window.closeEvent = patched_close_event
+    window.force_quit = patched_force_quit
+
+    logger.info("MainWindow exit logic patched (fast-exit mode).")
+
+
+# -----------------------------------------------------------------------------
+# main
+# -----------------------------------------------------------------------------
 def main():
+    multiprocessing.freeze_support()
+    setup_windows_job_object()
+
     base_path = get_base_path()
     clean_up_old_pyinstaller_temps()
-
     os.chdir(base_path)
 
-    parser = argparse.ArgumentParser(description="MFWPH Application")
-    parser.add_argument('-auto', action='store_true', help='Automatically start tasks 5 seconds after launch.')
-    parser.add_argument('-s', nargs='+', default=['all'], help='Specify device names to auto-start. Default is "all".')
-    parser.add_argument('-exit_on_complete', action='store_true', help='Exit after auto-started tasks are complete.')
+    parser = argparse.ArgumentParser()
+    parser.add_argument("-auto", action="store_true")
+    parser.add_argument("-s", nargs="+", default=["all"])
+    parser.add_argument("-exit_on_complete", action="store_true")
     args = parser.parse_args()
 
-    # 修复: 设置 setQuitOnLastWindowClosed(False) 
-    # 这样我们可以完全控制退出的时机（尤其是有托盘图标时）
     app = QApplication(sys.argv)
     app.setQuitOnLastWindowClosed(False)
-
     app.setStyle(QStyleFactory.create("Fusion"))
     app.setPalette(load_light_palette())
 
-    icon_path = os.path.join(base_path, 'assets', 'icons', 'app', 'logo.png')
+    icon_path = os.path.join(base_path, "assets", "icons", "app", "logo.png")
     if os.path.exists(icon_path):
         app.setWindowIcon(QIcon(icon_path))
 
@@ -92,18 +214,16 @@ def main():
 
     window = MainWindow()
     notification_manager.set_reference_window(window)
+
+    patch_mainwindow_exit_logic(window, loop, app)
+
     window.show()
 
     startup_checker = StartupResourceUpdateChecker(window)
     QTimer.singleShot(1000, startup_checker.check_for_updates)
 
-    app.aboutToQuit.connect(lambda: cleanup_and_exit(loop, app))
-
     with loop:
-        try:
-            loop.run_forever()
-        finally:
-            sys.exit(0)
+        loop.run_forever()
 
 
 if __name__ == "__main__":

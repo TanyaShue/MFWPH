@@ -3,11 +3,13 @@
 import os
 import platform
 import sys
+import zipfile
 from pathlib import Path
 from types import SimpleNamespace
+from datetime import datetime
 
-from PySide6.QtCore import QTimer, QCoreApplication, Qt, QUrl
-from PySide6.QtGui import QFont, QPixmap, QDesktopServices, QIntValidator
+from PySide6.QtCore import QTimer, QCoreApplication, Qt, QUrl, QThread, Signal, QMimeData
+from PySide6.QtGui import QFont, QPixmap, QDesktopServices, QIntValidator, QClipboard
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QLabel,
     QListWidget, QListWidgetItem, QScrollArea, QFrame, QCheckBox,
@@ -29,6 +31,63 @@ from app.utils.update.models import UpdateInfo, UpdateSource
 logger = log_manager.get_app_logger()
 
 
+class LogExportWorker(QThread):
+    """后台日志导出线程：负责压缩日志并清理旧文件"""
+    finished = Signal(str)  # 成功信号，传递zip路径
+    error = Signal(str)  # 失败信号，传递错误信息
+
+    def __init__(self, base_path, log_dir, debug_dir):
+        super().__init__()
+        self.base_path = base_path
+        self.log_dir = log_dir
+        self.debug_dir = debug_dir
+
+    def run(self):
+        try:
+            # 1. 生成 ZIP 路径
+            timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+            zip_filename = f"logs_export_{timestamp}.zip"
+            zip_path = os.path.join(self.base_path, zip_filename)
+
+            files_to_delete = []  # 记录打包成功后需要删除的文件
+
+            # 2. 创建压缩包
+            with zipfile.ZipFile(zip_path, 'w', zipfile.ZIP_DEFLATED) as zipf:
+                # 添加软件日志
+                if os.path.exists(self.log_dir):
+                    for root, dirs, files in os.walk(self.log_dir):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            # 跳过之前的导出文件，防止递归打包
+                            if file.startswith("logs_export_") and file.endswith(".zip"):
+                                continue
+                            arcname = os.path.join("logs", os.path.relpath(file_path, self.log_dir))
+                            zipf.write(file_path, arcname)
+                            files_to_delete.append(file_path)
+
+                # 添加调试日志
+                if os.path.exists(self.debug_dir):
+                    for root, dirs, files in os.walk(self.debug_dir):
+                        for file in files:
+                            file_path = os.path.join(root, file)
+                            arcname = os.path.join("assets/debug", os.path.relpath(file_path, self.debug_dir))
+                            zipf.write(file_path, arcname)
+                            files_to_delete.append(file_path)
+
+            # 3. 删除原文件 (清理旧日志)
+            # 注意：使用 try-except 跳过被系统锁定的文件（如当前正在写入的日志）
+            for file_path in files_to_delete:
+                try:
+                    os.remove(file_path)
+                except OSError:
+                    pass
+
+            self.finished.emit(zip_path)
+
+        except Exception as e:
+            self.error.emit(str(e))
+
+
 class SettingsPage(QWidget):
     """设置页面 (已按新需求重构)"""
 
@@ -44,6 +103,12 @@ class SettingsPage(QWidget):
         self.app_update_info: UpdateInfo | None = None
 
         self.download_notification_id = "app_update_download"
+        self.last_exported_zip_path = None  # 记录最近导出的压缩包路径
+
+        # 日志导出相关
+        self.log_worker = None
+        self.export_notification_id = "log_export_process"
+
         self.initUI()
 
     def initUI(self):
@@ -246,6 +311,7 @@ class SettingsPage(QWidget):
         self.update_checker_thread.update_not_found.connect(self.handle_update_not_found)
         self.update_checker_thread.check_failed.connect(self.handle_check_failed)
         self.update_checker_thread.start()
+
     # --- 修改结束 ---
 
     def create_section(self, title):
@@ -547,6 +613,8 @@ class SettingsPage(QWidget):
 
     def create_developer_section(self):
         layout = self.create_section("开发者选项")
+
+        # 调试模式行
         debug_row = QHBoxLayout()
         debug_label = QLabel("调试模式")
         self.debug_checkbox = QCheckBox("启用调试日志")
@@ -558,15 +626,30 @@ class SettingsPage(QWidget):
         debug_row.addWidget(debug_label)
         debug_row.addWidget(self.debug_checkbox)
         debug_row.addStretch()
+        layout.addLayout(debug_row)
+
+        # 日志文件夹按钮行
+        log_folder_row = QHBoxLayout()
         log_btn = QPushButton("打开软件日志文件夹")
         log_btn.setObjectName("primaryButton")
         log_btn.clicked.connect(self.open_log_folder)
-        debug_row.addWidget(log_btn)
+        log_folder_row.addWidget(log_btn)
         debug_btn = QPushButton("打开调试日志文件夹")
         debug_btn.setObjectName("primaryButton")
         debug_btn.clicked.connect(self.open_debug_folder)
-        debug_row.addWidget(debug_btn)
-        layout.addLayout(debug_row)
+        log_folder_row.addWidget(debug_btn)
+        log_folder_row.addStretch()
+        layout.addLayout(log_folder_row)
+
+        # 导出日志按钮行
+        export_log_row = QHBoxLayout()
+        export_log_btn = QPushButton("导出日志")
+        export_log_btn.setObjectName("primaryButton")
+        export_log_btn.clicked.connect(self.export_logs)
+        export_log_row.addWidget(export_log_btn)
+        export_log_row.addStretch()
+        layout.addLayout(export_log_row)
+
         warning = QLabel("⚠️ 注意：启用调试模式可能会影响应用性能并生成大量日志文件")
         warning.setObjectName("warningText")
         layout.addWidget(warning)
@@ -593,6 +676,75 @@ class SettingsPage(QWidget):
             self.debug_checkbox.setChecked(not is_enabled)
             notification_manager.show_error("调试模式切换失败", "操作失败")
 
+    def export_logs(self):
+        """导出日志文件：后台打包并清理旧日志"""
+
+        # 1. 防止重复点击
+        if self.log_worker and self.log_worker.isRunning():
+            notification_manager.show_warning("正在后台打包日志，请稍候...", "操作进行中")
+            return
+
+        # 2. 路径准备
+        if getattr(sys, 'frozen', False):
+            base_path = os.path.dirname(sys.executable)
+        else:
+            base_path = os.getcwd()
+
+        log_dir = os.path.join(base_path, "logs")
+        debug_dir = os.path.join(base_path, "assets", "debug")
+
+        if not os.path.exists(log_dir) and not os.path.exists(debug_dir):
+            notification_manager.show_warning("未找到日志文件夹", "无需导出")
+            return
+
+        # 3. 立即显示反馈动画 (使用进度条通知，设为不确定进度)
+        notification_manager.show_progress(
+            self.export_notification_id,
+            "正在打包并清理旧日志...",
+            "日志导出中",
+            0.0
+        )
+
+        # 4. 启动后台线程
+        self.log_worker = LogExportWorker(base_path, log_dir, debug_dir)
+        self.log_worker.finished.connect(self.on_export_finished)
+        self.log_worker.error.connect(self.on_export_error)
+        self.log_worker.start()
+
+    def on_export_finished(self, zip_path):
+        """日志导出成功的回调"""
+        # 关闭进度通知
+        notification_manager.close_progress(self.export_notification_id)
+
+        logger.info(f"日志导出成功: {zip_path}")
+
+        # 弹窗询问复制
+        msg_box = QMessageBox(self)  # 指定父对象防止弹窗跑偏
+        msg_box.setWindowTitle("日志导出成功")
+        msg_box.setText(f"日志已打包并清理旧文件。\n保存路径：\n{zip_path}\n\n是否要复制这个压缩包到剪贴板？")
+        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg_box.button(QMessageBox.Yes).setText("是，复制")
+        msg_box.button(QMessageBox.No).setText("否，关闭")
+
+        result = msg_box.exec()
+
+        if result == QMessageBox.Yes:
+            try:
+                clipboard = QClipboard()
+                mime_data = QMimeData()
+                mime_data.setUrls([QUrl.fromLocalFile(zip_path)])
+                clipboard.setMimeData(mime_data)
+                notification_manager.show_success("压缩包已复制到剪贴板", "复制成功")
+            except Exception as e:
+                notification_manager.show_error(f"复制失败: {e}", "错误")
+
+    def on_export_error(self, error_msg):
+        """日志导出失败的回调"""
+        notification_manager.close_progress(self.export_notification_id)
+        logger.error(f"导出日志失败: {error_msg}")
+        notification_manager.show_error(f"导出失败: {error_msg}", "错误")
+
+
 def get_version_info():
     """从versioninfo.txt文件中获取版本信息"""
     base_path = sys._MEIPASS if getattr(sys, 'frozen', False) else os.getcwd()
@@ -605,4 +757,6 @@ def get_version_info():
     except Exception as e:
         logger.warning(f"读取版本信息失败: {e}, 使用默认版本v1.0.0")
     return "v1.0.0"
+
+
 app_logger.info(f"欢迎来到MFWPH,当前版本为: {get_version_info()}")

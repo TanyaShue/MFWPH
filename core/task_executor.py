@@ -6,6 +6,7 @@
 - 短生命周期: 为每个任务批次创建和销毁。
 - 无状态: 不维护内部任务队列或长期后台循环。
 - 单一入口: 通过 run_task_lifecycle 方法驱动。
+- 僵尸进程防护: 使用 Windows Job Object 强制管理子进程生命周期。
 """
 
 import asyncio
@@ -14,6 +15,8 @@ import re
 import subprocess
 import threading
 import time
+import ctypes
+from ctypes import wintypes
 from datetime import datetime
 from pathlib import Path
 from typing import Optional, Dict, List, Union, Any
@@ -26,7 +29,7 @@ from maa.context import ContextEventSink
 from maa.controller import AdbController, Win32Controller
 from maa.event_sink import NotificationType
 from maa.resource import Resource
-from maa.tasker import Tasker, TaskerEventSink
+from maa.tasker import Tasker
 from maa.toolkit import Toolkit
 from maa.agent_client import AgentClient
 
@@ -73,6 +76,9 @@ class TaskExecutor(QObject):
         self._current_resource_path: Optional[str] = None
         self._agent: Optional[AgentClient] = None
         self._agent_process: Optional[subprocess.Popen] = None
+
+        # Windows Job Object 句柄，用于防止僵尸进程
+        self._agent_job_handle = None
 
         # 线程池
         self._executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix=f"TaskExec_{self.device_name}")
@@ -131,7 +137,6 @@ class TaskExecutor(QObject):
     async def _execute_task(self, task: Task):
         """
         执行单个任务。
-        【修改】移除了此处的 CancelledError 处理，让它向上冒泡到 run_task_lifecycle。
         """
         task_manager = task.state_manager
         try:
@@ -169,11 +174,13 @@ class TaskExecutor(QObject):
     async def _cleanup(self):
         """停止所有活动并清理资源，用于执行器销毁前"""
         self.logger.info(f"正在为执行器实例 {id(self)} 执行全面清理")
-        await self._cleanup_agent()
+        # 强制清理 Agent
+        await self._cleanup_agent(force_kill=True)
+
         # 停止MAA任务
         if self._tasker and self._tasker.running:
             try:
-                await self._run_in_executor(self._tasker.post_stop())
+                await self._run_in_executor(self._tasker.post_stop)
             except Exception as e:
                 self.logger.warning(f"停止 MAA tasker 时出错: {e}")
 
@@ -183,6 +190,113 @@ class TaskExecutor(QObject):
         self._controller = None
         self.device_manager.set_state(DeviceState.DISCONNECTED)
         self.logger.info("执行器资源已完全清理")
+
+    # -------------------------------------------------------------------------
+    # Windows Job Object Implementation
+    # -------------------------------------------------------------------------
+        # -------------------------------------------------------------------------
+        # Windows Job Object Implementation (Fixed)
+        # -------------------------------------------------------------------------
+    def _setup_agent_job_object(self, process: subprocess.Popen):
+        """
+        为 Agent 子进程配置 Windows Job Object。
+        修复：使用精确的结构体定义，并处理继承冲突。
+        """
+        if os.name != 'nt' or not process:
+            return
+
+        try:
+            # 1. 创建 Job Object
+            self._agent_job_handle = ctypes.windll.kernel32.CreateJobObjectW(None, None)
+            if not self._agent_job_handle:
+                self.logger.warning(f"Agent Job Object 创建失败: {ctypes.GetLastError()}")
+                return
+
+            # 2. 定义精确的结构体 (修复点：使用 IO_COUNTERS 而非 c_void_p)
+            JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE = 0x2000
+
+            class IO_COUNTERS(ctypes.Structure):
+                _fields_ = [
+                    ('ReadOperationCount', ctypes.c_ulonglong),
+                    ('WriteOperationCount', ctypes.c_ulonglong),
+                    ('OtherOperationCount', ctypes.c_ulonglong),
+                    ('ReadTransferCount', ctypes.c_ulonglong),
+                    ('WriteTransferCount', ctypes.c_ulonglong),
+                    ('OtherTransferCount', ctypes.c_ulonglong),
+                ]
+
+            class JOBOBJECT_BASIC_LIMIT_INFORMATION(ctypes.Structure):
+                _fields_ = [
+                    ('PerProcessUserTimeLimit', wintypes.LARGE_INTEGER),
+                    ('PerJobUserTimeLimit', wintypes.LARGE_INTEGER),
+                    ('LimitFlags', wintypes.DWORD),
+                    ('MinimumWorkingSetSize', ctypes.c_size_t),
+                    ('MaximumWorkingSetSize', ctypes.c_size_t),
+                    ('ActiveProcessLimit', wintypes.DWORD),
+                    ('Affinity', ctypes.c_size_t),
+                    ('PriorityClass', wintypes.DWORD),
+                    ('SchedulingClass', wintypes.DWORD),
+                ]
+
+            class JOBOBJECT_EXTENDED_LIMIT_INFORMATION(ctypes.Structure):
+                _fields_ = [
+                    ('BasicLimitInformation', JOBOBJECT_BASIC_LIMIT_INFORMATION),
+                    ('IoInfo', IO_COUNTERS),  # 这里必须是精确的 IO_COUNTERS 结构
+                    ('ProcessMemoryLimit', ctypes.c_size_t),
+                    ('JobMemoryLimit', ctypes.c_size_t),
+                    ('PeakProcessMemoryUsed', ctypes.c_size_t),
+                    ('PeakJobMemoryUsed', ctypes.c_size_t),
+                ]
+
+            # 3. 配置属性
+            info = JOBOBJECT_EXTENDED_LIMIT_INFORMATION()
+            info.BasicLimitInformation.LimitFlags = JOB_OBJECT_LIMIT_KILL_ON_JOB_CLOSE
+
+            res = ctypes.windll.kernel32.SetInformationJobObject(
+                self._agent_job_handle,
+                9,  # JobObjectExtendedLimitInformation
+                ctypes.pointer(info),
+                ctypes.sizeof(JOBOBJECT_EXTENDED_LIMIT_INFORMATION)
+            )
+
+            if not res:
+                err_code = ctypes.GetLastError()
+                self.logger.warning(f"无法设置 Agent Job Object 属性 (Error Code: {err_code})")
+                ctypes.windll.kernel32.CloseHandle(self._agent_job_handle)
+                self._agent_job_handle = None
+                return
+
+            # 4. 获取子进程句柄并绑定
+            PROCESS_ALL_ACCESS = 0x1FFFFF
+            process_handle = ctypes.windll.kernel32.OpenProcess(PROCESS_ALL_ACCESS, False, process.pid)
+
+            if not process_handle:
+                self.logger.warning(f"无法获取 Agent 进程句柄 (PID: {process.pid})")
+                return
+
+            try:
+                success = ctypes.windll.kernel32.AssignProcessToJobObject(self._agent_job_handle, process_handle)
+                if not success:
+                    # [修复] 处理 Job 冲突：
+                    # 如果返回 False (Error 5: Access Denied)，通常因为主程序 (main.py) 已经把这个子进程
+                    # 纳入了全局 Job Object。这是好事，说明主程序的防护生效了。
+                    # 我们不需要再创建一个独立的 Job，直接忽略即可。
+                    err = ctypes.GetLastError()
+                    if err == 5:  # ERROR_ACCESS_DENIED
+                        self.logger.info(
+                            f"Agent (PID: {process.pid}) 已由全局主程序 Job Object 管理 (跳过独立绑定)。")
+                        # 释放无用的 handle
+                        ctypes.windll.kernel32.CloseHandle(self._agent_job_handle)
+                        self._agent_job_handle = None
+                    else:
+                        self.logger.debug(f"绑定 Job Object 失败 (Code: {err})")
+                else:
+                    self.logger.info(f"Agent (PID: {process.pid}) 已成功绑定到独立 Job Object")
+            finally:
+                ctypes.windll.kernel32.CloseHandle(process_handle)
+
+        except Exception as e:
+            self.logger.error(f"设置 Agent Job Object 时发生错误: {e}")
 
     def _create_notification_handler(self):
         """创建通知处理器"""
@@ -195,20 +309,14 @@ class TaskExecutor(QObject):
                 self._log_pattern = re.compile(r"^\[(info|debug|warning|error|critical)\](.*)", re.IGNORECASE)
 
             def _process_log_protocol(self, focus_data, key_map, noti_type):
-                """
-                通用处理方法：检查新协议Key -> 解析[level] -> 输出日志
-                返回 True 表示已通过新协议处理了日志，False 表示未找到配置
-                """
                 if not focus_data or not isinstance(focus_data, dict):
                     return False
 
-                # 获取当前 notification type 对应的新协议 Key (例如 'Node.Action.Succeeded')
                 protocol_key = key_map.get(noti_type)
                 if not protocol_key or protocol_key not in focus_data:
                     return False
 
                 raw_content = focus_data[protocol_key]
-                # 兼容列表或单字符串
                 messages = raw_content if isinstance(raw_content, list) else [str(raw_content)]
 
                 for msg in messages:
@@ -216,35 +324,24 @@ class TaskExecutor(QObject):
                     if match:
                         level_str = match.group(1).lower()
                         content = match.group(2)
-                        # 动态获取 logger 方法 (info, debug, error...)
                         log_func = getattr(self.executor.logger, level_str, self.executor.logger.info)
                         log_func(content)
                     else:
-                        # 如果没有 [level] 标签，默认使用 info
                         self.executor.logger.info(msg)
 
                 return True
 
             def on_node_recognition(self, context, noti_type: NotificationType,
                                     detail: ContextEventSink.NodeRecognitionDetail):
-                # 1. 定义识别事件的新协议映射
                 recog_key_map = {
                     NotificationType.Starting: 'Node.Recognition.Starting',
                     NotificationType.Succeeded: 'Node.Recognition.Succeeded',
                     NotificationType.Failed: 'Node.Recognition.Failed',
                 }
-
-                # 尝试获取 focus 数据 (假设 detail 中也有 focus 属性，或者 detail 本身支持类似字典的访问)
-                # 如果 detail 是特定对象且没有 focus 属性，这里需要根据实际情况调整，这里假设与 action 结构一致
                 focus = getattr(detail, "focus", None)
-
-                # 2. 尝试使用新协议输出日志
-                # 如果 _process_log_protocol 返回 True，说明用户配置了自定义消息，处理完毕
                 if self._process_log_protocol(focus, recog_key_map, noti_type):
                     return
 
-                # 3. 旧逻辑回退 (Default Fallback)
-                # 如果没有配置自定义消息，保持原有的 debug 输出逻辑
                 if noti_type in (NotificationType.Succeeded, NotificationType.Failed):
                     status_text = '成功' if noti_type == NotificationType.Succeeded else '失败'
                     self.executor.logger.debug(f"识别: {detail.name} - {status_text}")
@@ -254,19 +351,15 @@ class TaskExecutor(QObject):
                     return
                 focus = detail.focus
 
-                # 1. 定义动作事件的新协议映射
                 action_key_map = {
                     NotificationType.Starting: 'Node.Action.Starting',
                     NotificationType.Succeeded: 'Node.Action.Succeeded',
                     NotificationType.Failed: 'Node.Action.Failed',
                 }
 
-                # 2. 尝试使用新协议输出日志
                 if self._process_log_protocol(focus, action_key_map, noti_type):
                     return
 
-                # 3. 旧逻辑回退 (Compatible Mode)
-                # 定义旧协议的映射：(旧Key, 默认日志方法)
                 old_protocol_map = {
                     NotificationType.Succeeded: ("succeeded", self.executor.logger.info),
                     NotificationType.Failed: ("failed", self.executor.logger.error),
@@ -275,8 +368,6 @@ class TaskExecutor(QObject):
 
                 if noti_type in old_protocol_map:
                     key, default_log_func = old_protocol_map[noti_type]
-
-                    # 确定日志方法 (检查 level 字典)
                     log_func = default_log_func
                     level_config = focus.get("level")
                     if isinstance(level_config, dict):
@@ -284,7 +375,6 @@ class TaskExecutor(QObject):
                         if log_level_str:
                             log_func = getattr(self.executor.logger, log_level_str, default_log_func)
 
-                    # 输出内容
                     if key in focus:
                         values = focus[key]
                         if isinstance(values, list):
@@ -294,6 +384,7 @@ class TaskExecutor(QObject):
                             log_func(str(values))
 
         return Handler(self)
+
     async def _run_in_executor(self, func, *args):
         """在线程池中运行阻塞操作"""
         loop = asyncio.get_event_loop()
@@ -530,7 +621,7 @@ class TaskExecutor(QObject):
         except Exception as e:
             self.logger.error(f"Agent设置失败: {e}")
             self.device_manager.set_state(DeviceState.ERROR, error_message=str(e))
-            await self._cleanup_agent()
+            await self._cleanup_agent(force_kill=True)
             return False
 
     async def _prepare_python_environment_global(self, resource_name: str, resource_path: str, python_version: str,
@@ -615,6 +706,7 @@ class TaskExecutor(QObject):
             common_kwargs = dict(cwd=os.getcwd(), stdout=subprocess.PIPE, stderr=subprocess.PIPE, env=agent_env,
                                  text=True, encoding="utf-8", errors="replace")
             if os.name == 'nt':
+                # 注意：CREATE_NEW_PROCESS_GROUP 允许发送信号，但通常不影响 Job 继承
                 return subprocess.Popen(cmd,
                                         creationflags=subprocess.CREATE_NEW_PROCESS_GROUP | subprocess.CREATE_NO_WINDOW,
                                         **common_kwargs)
@@ -623,13 +715,15 @@ class TaskExecutor(QObject):
 
         self._agent_process = await self._run_in_executor(start_process)
         self.logger.info(f"Agent进程已启动，PID: {self._agent_process.pid}")
+
+        await self._run_in_executor(self._setup_agent_job_object, self._agent_process)
+
         if not hasattr(global_config, "agent_processes"): global_config.agent_processes = []
         global_config.agent_processes.append(self._agent_process)
         self._start_log_threads()
         await asyncio.sleep(1)
         if self._agent_process.poll() is not None:
-            stderr = self._agent_process.stderr.read()
-            self.logger.error(f"Agent进程已启动，PID: {stderr}")
+            self.logger.error(f"Agent进程启动后立即退出了")
 
     def _start_log_threads(self):
         """启动日志捕获线程"""
@@ -646,20 +740,34 @@ class TaskExecutor(QObject):
         for pipe, prefix in [(self._agent_process.stdout, 'stdout'), (self._agent_process.stderr, 'stderr')]:
             threading.Thread(target=log_output, args=(pipe, prefix), daemon=True).start()
 
-    async def _cleanup_agent(self):
-        """清理Agent"""
+    async def _cleanup_agent(self, force_kill: bool = False):
+        """
+        清理Agent - 无论是否请求强制，此处均执行强制清理。
+        不会尝试 terminate() 等待，直接 kill 并关闭 Job 句柄。
+        """
         if self._agent_process:
+            self.logger.warning(f"正在强制清理 Agent 进程 (PID: {self._agent_process.pid})...")
             try:
-                self._agent_process.terminate()
-                await asyncio.sleep(0.5)
-                if self._agent_process.poll() is None: self._agent_process.kill()
-            except Exception:
-                pass
+                self._agent_process.kill()
+            except Exception as e:
+                self.logger.error(f"Kill Agent 进程时出错 (通常忽略): {e}")
+
+            # 关闭 Job 句柄：如果进程因某种原因还活着，Job Object 会由操作系统层面进行收割
+            if self._agent_job_handle:
+                try:
+                    self.logger.debug("正在关闭 Agent Job Object 句柄 (这将触发内核级进程清理)")
+                    ctypes.windll.kernel32.CloseHandle(self._agent_job_handle)
+                except Exception as e:
+                    self.logger.error(f"关闭 Job Handle 失败: {e}")
+                self._agent_job_handle = None
+
             if hasattr(global_config, "agent_processes") and self._agent_process in global_config.agent_processes:
                 global_config.agent_processes.remove(self._agent_process)
             self._agent_process = None
+
         if self._agent:
             try:
+                # 尽力通知断开，但如果不成功也不阻塞
                 await self._run_in_executor(self._agent.disconnect)
             except Exception:
                 pass
