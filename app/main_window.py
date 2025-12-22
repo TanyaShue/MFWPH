@@ -38,8 +38,6 @@ class MainWindow(QMainWindow):
         self.current_device = None
         self.current_button_id = None  # 跟踪唯一的设备按钮ID
 
-        self.load_config()
-
         app_config = global_config.get_app_config()
         if hasattr(app_config, 'window_size') and app_config.window_size:
             try:
@@ -484,49 +482,6 @@ class MainWindow(QMainWindow):
                 self.page_layout.removeWidget(widget)
 
     @staticmethod
-    def load_config():
-        """
-        加载所有配置
-        """
-        try:
-            resource_dir = "assets/resource/"
-            if not os.path.exists(resource_dir):
-                os.makedirs(resource_dir)
-            global_config.load_all_resources_from_directory(resource_dir)
-        except OSError as e:
-            app_logger.error(f"创建或访问资源目录 '{resource_dir}' 时发生操作系统错误: {e}")
-        except Exception as e:
-            app_logger.error(f"从 '{resource_dir}' 加载资源时发生未知错误: {e}")
-
-        try:
-            devices_config_path = "assets/config/app_config.json"
-            config_dir = os.path.dirname(devices_config_path)
-
-            if not os.path.exists(config_dir):
-                os.makedirs(config_dir)
-
-            if not os.path.exists(devices_config_path):
-                with open(devices_config_path, "w", encoding="utf-8") as f:
-                    f.write("{}")
-
-            global_config.load_app_config(devices_config_path)
-
-        except (OSError, IOError) as e:
-            app_logger.error(f"处理应用配置文件 '{devices_config_path}' 时发生IO错误: {e}")
-        except json.JSONDecodeError as e:
-            app_logger.error(f"解析应用配置文件 '{devices_config_path}' 失败: {e}")
-        except Exception as e:
-            app_logger.error(f"加载应用配置 '{devices_config_path}' 时发生未知错误: {e}")
-
-        try:
-            app_config = global_config.get_app_config()
-            if not hasattr(app_config, 'window_size') or not app_config.window_size:
-                app_config.window_size = "800x600"
-        except Exception as e:
-            app_logger.error(f"获取或处理应用配置时出错: {e}")
-
-
-
     def show_previous_device_or_home(self, deleted_device_name):
         try:
             if deleted_device_name in self.device_pages:

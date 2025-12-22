@@ -19,7 +19,7 @@ class LogManager(QObject):
     app_log_updated = Signal()
     device_log_updated = Signal(str)  # device_name
 
-    def __init__(self, flush_interval_ms: int = 1000):
+    def __init__(self, flush_interval_ms: int = 1000, enable_qt: bool = True):
         super().__init__()
         self.loggers: Dict[str, logging.Logger] = {}
         self.memory_handlers: List[logging.handlers.MemoryHandler] = []
@@ -40,10 +40,13 @@ class LogManager(QObject):
         if app_logger:
             app_logger.info(f"=== New session started at {self.session_start_str} ===")
 
-        # Setup a timer to flush logs periodically
-        self.flush_timer = QTimer(self)
-        self.flush_timer.timeout.connect(self.flush_all_logs)
-        self.flush_timer.start(flush_interval_ms)
+        # Setup a timer to flush logs periodically (only if Qt is enabled)
+        if enable_qt:
+            self.flush_timer = QTimer(self)
+            self.flush_timer.timeout.connect(self.flush_all_logs)
+            self.flush_timer.start(flush_interval_ms)
+        else:
+            self.flush_timer = None
 
     def flush_all_logs(self):
         """Flushes all buffered logs to their respective files."""
@@ -120,6 +123,16 @@ class LogManager(QObject):
         )
         self.memory_handlers.append(memory_handler)
         logger.addHandler(memory_handler)
+
+        # Add console handler for headless mode and debugging
+        console_handler = logging.StreamHandler()
+        console_handler.setLevel(logging.INFO)  # Show INFO level and above to console
+        console_formatter = logging.Formatter(
+            '%(asctime)s - %(levelname)s - %(message)s',
+            datefmt='%H:%M:%S'
+        )
+        console_handler.setFormatter(console_formatter)
+        logger.addHandler(console_handler)
 
         # Add signal handlers directly to the logger to ensure they fire immediately
         if name == "app":

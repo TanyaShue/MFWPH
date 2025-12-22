@@ -14,7 +14,6 @@ QScrollBar:vertical {
 
 /* 资源项选中效果 */
 ResourceListItem[selected="true"] {
-    box-shadow: 0 4px 12px rgba(33, 150, 243, 0.3);
 }
 /* 左侧面板样式 */
 #leftPanel {
