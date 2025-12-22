@@ -178,7 +178,7 @@ class TaskExecutor(QObject):
         await self._cleanup_agent(force_kill=True)
 
         # 停止MAA任务
-        if self._tasker and self._tasker.running:
+        if self._tasker:
             try:
                 await self._run_in_executor(self._tasker.post_stop)
             except Exception as e:

@@ -31,7 +31,7 @@ _job_handle = None
 
 
 # -----------------------------------------------------------------------------
-# Windows Job Object（保持不变，这是正确的）
+# Windows Job Object（保持）
 # -----------------------------------------------------------------------------
 def setup_windows_job_object():
     if sys.platform != "win32":
@@ -83,7 +83,6 @@ def setup_windows_job_object():
         ctypes.windll.kernel32.SetInformationJobObject(
             h_job, 9, ctypes.pointer(info), ctypes.sizeof(info)
         )
-
         ctypes.windll.kernel32.AssignProcessToJobObject(
             h_job, ctypes.windll.kernel32.GetCurrentProcess()
         )
@@ -102,22 +101,19 @@ def get_base_path():
 
 
 # -----------------------------------------------------------------------------
-# 🚀 进阶版：真正不会卡的退出流程
+# ✅ 真正可靠的退出流程（必达）
 # -----------------------------------------------------------------------------
 async def perform_graceful_shutdown(loop, app, window):
-    """
-    UI 立即消失 → 后台最多清理 3 秒 → 强制退出
-    """
     logger.info("🛑 Graceful shutdown started")
 
-    # 1️⃣ UI 立刻消失（用户立刻感觉程序关了）
+    # 1️⃣ UI 立刻消失
     try:
         window.hide()
         app.processEvents()
     except Exception:
         pass
 
-    # 2️⃣ 尝试优雅清理（限时）
+    # 2️⃣ 尝试优雅关闭后台任务（最多 3 秒）
     try:
         logger.info("Stopping task manager (timeout=3s)...")
         await asyncio.wait_for(task_manager.stop_all(), timeout=3)
@@ -127,22 +123,32 @@ async def perform_graceful_shutdown(loop, app, window):
     except Exception as e:
         logger.error(f"Error during shutdown: {e}")
 
-    # 3️⃣ 最后兜底（防止任何残留）
+    # 3️⃣ 清理子进程兜底
     try:
         kill_processes()
     except Exception:
         pass
 
+    # 4️⃣ 停止事件循环
+    try:
+        loop.stop()
+    except Exception:
+        pass
+
+    # 5️⃣ Qt quit + OS 级强退（双保险）
     logger.info("💀 Forcing process exit.")
-    os._exit(0)  # GUI 程序必须用这个，别犹豫
+    try:
+        app.quit()
+    except Exception:
+        pass
+
+    os._exit(0)  # 最终兜底，确保不留后台
 
 
 # -----------------------------------------------------------------------------
-# 关闭事件 Patch（核心）
+# 关闭事件 Patch（修复版）
 # -----------------------------------------------------------------------------
 def patch_mainwindow_exit_logic(window: MainWindow, loop, app):
-    original_close_event = window.closeEvent
-
     def save_window_config():
         try:
             size = window.size()
@@ -157,30 +163,32 @@ def patch_mainwindow_exit_logic(window: MainWindow, loop, app):
     def patched_close_event(event: QCloseEvent):
         app_config = global_config.get_app_config()
 
+        # 👉 仅“最小化到托盘”时阻止关闭
         if app_config.minimize_to_tray_on_close:
             event.ignore()
             window.hide()
             return
 
+        # 👉 真正退出
         logger.info("User requested exit (window close).")
         save_window_config()
 
-        event.ignore()  # 阻止 Qt 自己 quit
-        asyncio.ensure_future(
+        event.accept()  # 允许 Qt 关闭窗口
+        asyncio.create_task(
             perform_graceful_shutdown(loop, app, window)
         )
 
     def patched_force_quit():
         logger.info("User requested exit (tray).")
         save_window_config()
-        asyncio.ensure_future(
+        asyncio.create_task(
             perform_graceful_shutdown(loop, app, window)
         )
 
     window.closeEvent = patched_close_event
     window.force_quit = patched_force_quit
 
-    logger.info("MainWindow exit logic patched (fast-exit mode).")
+    logger.info("MainWindow exit logic patched (safe-exit mode).")
 
 
 # -----------------------------------------------------------------------------
@@ -201,7 +209,10 @@ def main():
     args = parser.parse_args()
 
     app = QApplication(sys.argv)
-    app.setQuitOnLastWindowClosed(False)
+
+    # ❗ 关键：允许 Qt 正常在窗口关闭时退出
+    app.setQuitOnLastWindowClosed(True)
+
     app.setStyle(QStyleFactory.create("Fusion"))
     app.setPalette(load_light_palette())
 
