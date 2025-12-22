@@ -91,6 +91,9 @@ class DeviceInfoPage(QWidget):
         main_layout.addWidget(self.horizontal_splitter)
         self.connect_signals()
 
+        # 初始化完成后，默认选中第一个启用的资源
+        self.auto_select_first_enabled_resource()
+
     def connect_signals(self):
         """设置组件之间的信号和槽连接"""
         # 1. 当在资源列表(左上)中选择一个资源时，触发 on_resource_selected
@@ -136,3 +139,28 @@ class DeviceInfoPage(QWidget):
         self.task_settings_widget.clear_settings()
         self.task_options_widget.clear()
         self.resource_config_widget.clear()
+
+    def auto_select_first_enabled_resource(self):
+        """
+        初始化完成后，自动选择第一个启用的资源，并显示其配置和任务。
+        """
+        if not self.device_config or not hasattr(self.device_config, 'resources'):
+            return
+
+        # 获取所有启用的资源
+        enabled_resources = [r for r in self.device_config.resources if r.enable]
+
+        if not enabled_resources:
+            # 如果没有启用的资源，则选择第一个资源（如果存在）
+            if self.device_config.resources:
+                first_resource = self.device_config.resources[0]
+                # 自动启用第一个资源
+                first_resource.enable = True
+                global_config.save_all_configs()
+                enabled_resources = [first_resource]
+
+        if enabled_resources:
+            # 选择第一个启用的资源
+            first_enabled_resource = enabled_resources[0]
+            # 模拟选择这个资源，触发相应的更新流程
+            self.on_resource_selected(first_enabled_resource.resource_name)

@@ -17,6 +17,7 @@ from PySide6.QtWidgets import (
 )
 
 from app.components.no_wheel_ComboBox import NoWheelComboBox
+from app.config.config_manager import get_config_directory
 from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager, app_logger
 from app.utils.theme_manager import theme_manager
@@ -668,6 +669,14 @@ class SettingsPage(QWidget):
         export_log_row.addWidget(export_log_btn)
         export_log_row.addStretch()
         layout.addLayout(export_log_row)
+        # 配置文件目录按钮行
+        config_folder_row = QHBoxLayout()
+        config_folder_btn = QPushButton("打开配置文件目录")
+        config_folder_btn.setObjectName("primaryButton")
+        config_folder_btn.clicked.connect(self.open_config_folder)
+        config_folder_row.addWidget(config_folder_btn)
+        config_folder_row.addStretch()
+        layout.addLayout(config_folder_row)
 
         warning = QLabel("⚠️ 注意：启用调试模式可能会影响应用性能并生成大量日志文件")
         warning.setObjectName("warningText")
@@ -680,6 +689,10 @@ class SettingsPage(QWidget):
     def open_debug_folder(self):
         debug_path = os.path.abspath("assets/debug")
         if os.path.exists(debug_path): QDesktopServices.openUrl(QUrl.fromLocalFile(debug_path))
+
+    def open_config_folder(self):
+        config_path = get_config_directory()
+        if os.path.exists(config_path): QDesktopServices.openUrl(QUrl.fromLocalFile(config_path))
 
     def on_debug_changed(self, state):
         is_enabled = (state == Qt.CheckState.Checked.value)

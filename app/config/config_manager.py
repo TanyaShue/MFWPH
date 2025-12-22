@@ -4,10 +4,10 @@
 负责应用配置的加载、迁移和管理
 """
 
+import json
 import os
 import sys
 import shutil
-from PySide6.QtCore import QStandardPaths
 
 from app.models.config.global_config import global_config
 from app.utils.global_logger import get_logger
@@ -50,19 +50,16 @@ def load_resources_directory():
 
 
 def get_config_directory():
-    """使用 QStandardPaths 获取配置目录"""
-    # AppDataLocation 返回 %APPDATA% (Windows) 或 ~/.local/share (Linux) 或 ~/Library/Application Support (macOS)
-    config_locations = QStandardPaths.standardLocations(QStandardPaths.StandardLocation.AppDataLocation)
-    if config_locations:
-        config_base_dir = os.path.join(config_locations[0], "MFWPH")
-    else:
-        # fallback to platform-specific locations
-        if os.name == 'nt':  # Windows
-            config_base_dir = os.path.join(os.path.expanduser("~"), "AppData", "Roaming", "MFWPH")
-        elif sys.platform == 'darwin':  # macOS
-            config_base_dir = os.path.join(os.path.expanduser("~"), "Library", "Application Support", "MFWPH")
-        else:  # Linux and others
-            config_base_dir = os.path.join(os.path.expanduser("~"), ".config", "MFWPH")
+    """获取配置目录 - 使用统一的平台特定路径"""
+    # 直接使用平台特定的标准路径，避免QStandardPaths在conda环境中的不稳定行为
+    if os.name == 'nt':  # Windows
+        appdata_path = os.path.join(os.path.expanduser("~"), "AppData", "Roaming")
+    elif sys.platform == 'darwin':  # macOS
+        appdata_path = os.path.join(os.path.expanduser("~"), "Library", "Application Support")
+    else:  # Linux and others
+        appdata_path = os.path.join(os.path.expanduser("~"), ".config")
+
+    config_base_dir = os.path.join(appdata_path, "MFWPH")
 
     # 确保配置目录存在
     if not os.path.exists(config_base_dir):

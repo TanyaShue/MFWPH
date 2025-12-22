@@ -175,7 +175,7 @@ class ResourceWidget(QFrame):
             default_settings_name = existing_settings.name
         else:
             # 如果不存在任何配置方案，则创建一个新的
-            default_settings_name = "默认配置"
+            default_settings_name = f"默认配置_{self.device_name}"
             new_settings = ResourceSettings(
                 name=default_settings_name,
                 resource_name=resource_name
