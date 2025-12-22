@@ -19,10 +19,10 @@ from app.app_initializer import (
     run_event_loop,
 )
 from app.config.config_manager import load_and_migrate_config
-from app.utils.global_logger import initialize_global_logger
+from app.utils.global_logger import initialize_global_logger, get_logger
 from app.utils.until import clean_up_old_pyinstaller_temps
 
-
+logger = get_logger()
 def get_base_path():
     """获取基础路径"""
     if getattr(sys, "frozen", False):
