@@ -166,22 +166,23 @@ class ResourceWidget(QFrame):
         self.logger.info(f"资源 {resource_name} 首次在本设备上配置，将创建默认条目。")
         app_config = global_config.get_app_config()
 
-        # 检查此资源是否已存在任何全局配置方案
-        existing_settings = next((s for s in app_config.resource_settings if s.resource_name == resource_name), None)
+        # 检查此设备是否已有此资源的专用配置方案
+        device_specific_settings_name = f"默认配置_{self.device_name}"
+        existing_device_settings = next((s for s in app_config.resource_settings
+                                       if s.resource_name == resource_name and s.name == device_specific_settings_name), None)
 
-        default_settings_name = ""
-        if existing_settings:
-            # 如果已存在，则使用找到的第一个作为默认
-            default_settings_name = existing_settings.name
+        if existing_device_settings:
+            # 如果此设备的专用配置已存在，直接使用
+            default_settings_name = device_specific_settings_name
         else:
-            # 如果不存在任何配置方案，则创建一个新的
-            default_settings_name = f"默认配置_{self.device_name}"
+            # 如果不存在此设备的专用配置，则创建一个新的
+            default_settings_name = device_specific_settings_name
             new_settings = ResourceSettings(
                 name=default_settings_name,
                 resource_name=resource_name
             )
             app_config.resource_settings.append(new_settings)
-            self.logger.info(f"为资源 {resource_name} 创建了全局默认配置方案 '{default_settings_name}'。")
+            self.logger.info(f"为资源 {resource_name} 创建了设备专用默认配置方案 '{default_settings_name}'。")
 
         # 为此设备创建新的资源条目
         new_resource = Resource(

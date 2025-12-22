@@ -294,6 +294,13 @@ class BasicSettingsPage(QFrame):
             self.task_container.order_changed.connect(self.on_task_order_changed)
 
             # 核心逻辑：遍历 task_order 来构建UI，确保顺序正确
+            # 首先清理无效的 task_order ID（防御性编程）
+            valid_order = [inst_id for inst_id in settings.task_order if inst_id in settings.task_instances]
+            if len(valid_order) != len(settings.task_order):
+                settings.task_order = valid_order
+                global_config.save_all_configs()
+                self.logger.info("已自动清理无效的 task_order ID")
+
             for instance_id in settings.task_order:
                 task_instance = settings.task_instances.get(instance_id)
                 if not task_instance:

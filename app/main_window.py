@@ -481,7 +481,6 @@ class MainWindow(QMainWindow):
                 widget.hide()
                 self.page_layout.removeWidget(widget)
 
-    @staticmethod
     def show_previous_device_or_home(self, deleted_device_name):
         try:
             if deleted_device_name in self.device_pages:

@@ -81,11 +81,19 @@ class ResourceSettings:
             for inst_id, inst_data in task_instances_data.items()
         }
 
+        raw_task_order = data.get('task_order', list(instances.keys()))
+
+        cleaned_task_order = [inst_id for inst_id in raw_task_order if inst_id in instances]
+
+        # 如果清理后 task_order 为空，则使用所有实例ID
+        if not cleaned_task_order:
+            cleaned_task_order = list(instances.keys())
+
         settings_kwargs = {
             'name': data.get('name', ''),
             'resource_name': data.get('resource_name', ''),
             'task_instances': instances,
-            'task_order': data.get('task_order', list(instances.keys()))
+            'task_order': cleaned_task_order
         }
         return cls(**settings_kwargs)
 
