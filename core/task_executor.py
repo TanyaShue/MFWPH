@@ -174,15 +174,33 @@ class TaskExecutor(QObject):
     async def _cleanup(self):
         """停止所有活动并清理资源，用于执行器销毁前"""
         self.logger.info(f"正在为执行器实例 {id(self)} 执行全面清理")
-        # 强制清理 Agent
-        await self._cleanup_agent(force_kill=True)
 
-        # 停止MAA任务
-        if self._tasker:
+        try:
+            # 强制清理 Agent - 确保即使被取消也能完成基本清理
+            await asyncio.wait_for(self._cleanup_agent(force_kill=True), timeout=10.0)
+        except asyncio.TimeoutError:
+            self.logger.warning("Agent清理超时，继续其他清理")
+        except asyncio.CancelledError:
+            self.logger.warning("Agent清理被取消，但继续执行关键清理步骤")
+            # 即使被取消，也要尝试完成基本的Agent清理
             try:
-                await self._run_in_executor(self._tasker.post_stop)
+                if self._agent_process:
+                    self._agent_process.kill()
+                if self._agent_job_handle:
+                    ctypes.windll.kernel32.CloseHandle(self._agent_job_handle)
+                    self._agent_job_handle = None
+                self._agent_process = None
             except Exception as e:
-                self.logger.warning(f"停止 MAA tasker 时出错: {e}")
+                self.logger.error(f"紧急Agent清理失败: {e}")
+            # 重新抛出取消异常，让调用方知道被取消了
+            raise
+
+        try:
+            # 停止MAA任务
+            if self._tasker:
+                await self._run_in_executor(self._tasker.post_stop)
+        except Exception as e:
+            self.logger.warning(f"停止 MAA tasker 时出错: {e}")
 
         self._executor.shutdown(wait=False)
 
@@ -749,6 +767,17 @@ class TaskExecutor(QObject):
             self.logger.warning(f"正在强制清理 Agent 进程 (PID: {self._agent_process.pid})...")
             try:
                 self._agent_process.kill()
+                # 等待进程结束，避免竞争条件
+                try:
+                    await asyncio.wait_for(
+                        self._run_in_executor(self._agent_process.wait),
+                        timeout=5.0
+                    )
+                    self.logger.debug(f"Agent 进程 (PID: {self._agent_process.pid}) 已确认结束")
+                except asyncio.TimeoutError:
+                    self.logger.warning(f"等待 Agent 进程结束超时，继续清理")
+                except Exception as e:
+                    self.logger.debug(f"等待进程结束时出错 (通常忽略): {e}")
             except Exception as e:
                 self.logger.error(f"Kill Agent 进程时出错 (通常忽略): {e}")
 

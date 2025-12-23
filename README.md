@@ -92,8 +92,6 @@ python main.py --headless --device "我的设备" --timeout 7200
 # 无限制超时，适合超长时间任务
 python main.py --headless --device all --timeout 0
 
-# 指定配置方案启动
-python main.py --headless --device "服务器1" --config "生产环境配置"
 ```
 
 **参数说明：**

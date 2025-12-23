@@ -30,6 +30,28 @@ def get_base_path():
     return os.path.dirname(os.path.abspath(__file__))
 
 
+def setup_console_for_headless(args):
+    """在headless模式下为打包程序动态分配控制台窗口"""
+    # 只有在打包程序且headless模式下才需要分配控制台
+    if not getattr(sys, "frozen", False) or not args.headless:
+        return
+
+    if sys.platform == "win32":
+        try:
+            # 尝试分配控制台（如果还没有的话）
+            # Windows API: AllocConsole() - 分配新的控制台
+            import ctypes
+            if not ctypes.windll.kernel32.GetConsoleWindow():
+                ctypes.windll.kernel32.AllocConsole()
+                # 设置控制台标题
+                ctypes.windll.kernel32.SetConsoleTitleW("MFWPH - Headless Mode")
+                # 重定向stdout和stderr到控制台
+                # 注意：这可能会影响PyInstaller的重定向，但对于我们的需求应该足够
+        except Exception as e:
+            print(f"控制台分配失败: {e}")
+    # 对于macOS和Linux，在终端中运行时已经有控制台了
+
+
 def setup_windows_job_object():
     """设置Windows Job Object（仅Windows）"""
     if sys.platform != "win32":
@@ -108,6 +130,9 @@ def main():
 
     # 解析命令行参数
     args = parse_arguments()
+
+    # 在headless模式下为打包程序分配控制台
+    setup_console_for_headless(args)
 
     # 初始化日志管理器
     log_manager = initialize_logging_manager(args)

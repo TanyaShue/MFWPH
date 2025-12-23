@@ -229,11 +229,11 @@ def run_pyinstaller(version_file: str, win_version_file: str):
 
     # 平台特定参数
     if sys.platform == 'win32':
-        args.extend(['--windowed', '--uac-admin'])
+        args.extend(['--windowed', '--uac-admin'])  # GUI模式默认无控制台，headless模式会动态分配
         if win_version_file:
             args.append(f'--version-file={win_version_file}')
     elif sys.platform == 'darwin':
-        args.append('--windowed')
+        args.append('--windowed')  # macOS默认无控制台，headless模式会动态分配
 
     args.extend([
         f'--add-binary={maa_bin_path}{os.pathsep}maa/bin',
