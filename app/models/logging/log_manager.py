@@ -3,6 +3,7 @@ import logging
 import logging.handlers
 import os
 import sys
+import threading
 import zipfile
 from datetime import datetime
 from typing import Dict, List, Any, Callable
@@ -41,13 +42,33 @@ class LogManager(QObject):
         if app_logger:
             app_logger.info(f"=== New session started at {self.session_start_str} ===")
 
-        # Setup a timer to flush logs periodically (only if Qt is enabled)
+        # Setup a timer to flush logs periodically
         if enable_qt:
             self.flush_timer = QTimer(self)
             self.flush_timer.timeout.connect(self.flush_all_logs)
             self.flush_timer.start(flush_interval_ms)
         else:
+            # For headless mode, use threading.Timer to periodically flush logs
             self.flush_timer = None
+            self._setup_threading_timer(flush_interval_ms)
+
+    def _setup_threading_timer(self, interval_ms: int):
+        """Setup a threading timer for headless mode to periodically flush logs"""
+        def timer_callback():
+            try:
+                self.flush_all_logs()
+                # Schedule the next flush
+                self._timer = threading.Timer(interval_ms / 1000.0, timer_callback)
+                self._timer.daemon = True
+                self._timer.start()
+            except Exception as e:
+                # Timer might fail if the program is shutting down
+                pass
+
+        # Start the first timer
+        self._timer = threading.Timer(interval_ms / 1000.0, timer_callback)
+        self._timer.daemon = True
+        self._timer.start()
 
     def flush_all_logs(self):
         """Flushes all buffered logs to their respective files."""
@@ -269,10 +290,30 @@ class LogManager(QObject):
         """重新配置所有console handlers以使用当前的stdout"""
         if hasattr(self, 'console_handlers'):
             for handler in self.console_handlers:
-                # StreamHandler默认使用sys.stderr，我们需要确保它使用sys.stdout
-                # 或者让它重新初始化stream
+                # 重新创建StreamHandler并指定使用sys.stdout
+                # 这样可以确保在控制台重定向后，日志能正确输出到新控制台
                 if hasattr(handler, 'stream'):
-                    handler.stream = sys.stdout
+                    # 保存原有的formatter和level设置
+                    formatter = handler.formatter
+                    level = handler.level
+
+                    # 移除旧的handler
+                    for logger in self.loggers.values():
+                        if handler in logger.handlers:
+                            logger.removeHandler(handler)
+
+                    # 创建新的handler，使用sys.stdout
+                    new_handler = logging.StreamHandler(sys.stdout)
+                    new_handler.setLevel(level)
+                    new_handler.setFormatter(formatter)
+
+                    # 添加新handler到所有logger
+                    for logger in self.loggers.values():
+                        logger.addHandler(new_handler)
+
+                    # 更新console_handlers列表
+                    self.console_handlers.remove(handler)
+                    self.console_handlers.append(new_handler)
 
 
 class AppLogSignalHandler(logging.Handler):
