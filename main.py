@@ -32,23 +32,73 @@ def get_base_path():
 
 def setup_console_for_headless(args):
     """在headless模式下为打包程序动态分配控制台窗口"""
-    # 只有在打包程序且headless模式下才需要分配控制台
-    if not getattr(sys, "frozen", False) or not args.headless:
+    # 只有在打包程序、headless模式且没有--no-console参数时才分配控制台
+    if not getattr(sys, "frozen", False) or not args.headless or getattr(args, 'no_console', False):
         return
 
     if sys.platform == "win32":
         try:
             # 尝试分配控制台（如果还没有的话）
-            # Windows API: AllocConsole() - 分配新的控制台
             import ctypes
-            if not ctypes.windll.kernel32.GetConsoleWindow():
-                ctypes.windll.kernel32.AllocConsole()
-                # 设置控制台标题
-                ctypes.windll.kernel32.SetConsoleTitleW("MFWPH - Headless Mode")
-                # 重定向stdout和stderr到控制台
-                # 注意：这可能会影响PyInstaller的重定向，但对于我们的需求应该足够
+            import os
+
+            # 检查是否已经有控制台窗口
+            console_hwnd = ctypes.windll.kernel32.GetConsoleWindow()
+            if not console_hwnd:
+                # 分配新的控制台
+                if ctypes.windll.kernel32.AllocConsole():
+                    # 设置控制台标题
+                    ctypes.windll.kernel32.SetConsoleTitleW("MFWPH - Headless Mode")
+
+                    # 获取标准输出和标准错误的文件描述符
+                    # 并重定向到新分配的控制台
+                    try:
+                        # 获取控制台的句柄
+                        import msvcrt
+                        import sys
+
+                        # 重新创建sys.stdout和sys.stderr指向控制台
+                        # 使用msvcrt.get_osfhandle来创建文件对象
+                        stdout_handle = ctypes.windll.kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+                        stderr_handle = ctypes.windll.kernel32.GetStdHandle(-12)  # STD_ERROR_HANDLE
+
+                        if stdout_handle and stdout_handle != -1:
+                            # 创建新的stdout文件对象
+                            try:
+                                new_stdout = os.fdopen(os.dup(stdout_handle), 'w')
+                                sys.stdout = new_stdout
+                            except:
+                                pass
+
+                        if stderr_handle and stderr_handle != -1:
+                            # 创建新的stderr文件对象
+                            try:
+                                new_stderr = os.fdopen(os.dup(stderr_handle), 'w')
+                                sys.stderr = new_stderr
+                            except:
+                                pass
+
+                        # 测试输出
+                        print("控制台分配成功，开始输出日志...")
+                        print("=" * 50)
+
+                    except Exception as redirect_error:
+                        print(f"控制台重定向失败: {redirect_error}")
+                else:
+                    print("控制台分配失败")
+            else:
+                # 已经有控制台，尝试重定向输出
+                try:
+                    console_handle = ctypes.windll.kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
+                    if console_handle:
+                        os.dup2(console_handle, 1)  # stdout
+                    console_handle = ctypes.windll.kernel32.GetStdHandle(-12)  # STD_ERROR_HANDLE
+                    if console_handle:
+                        os.dup2(console_handle, 2)  # stderr
+                except Exception as redirect_error:
+                    print(f"控制台重定向失败: {redirect_error}")
         except Exception as e:
-            print(f"控制台分配失败: {e}")
+            print(f"控制台设置失败: {e}")
     # 对于macOS和Linux，在终端中运行时已经有控制台了
 
 

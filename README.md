@@ -96,6 +96,7 @@ python main.py --headless --device all --timeout 0
 
 **参数说明：**
 - `--headless`: 无窗口模式，适合服务器环境
+- `--no-console`: 在headless模式下不显示控制台窗口（默认显示）
 - `--device`: 指定设备名称，或使用 `all` 启动所有设备
 - `--timeout`: 超时时间（秒），0表示无限制
 - `--config`: 指定使用的配置方案
@@ -189,6 +190,7 @@ MFWPH 提供了丰富的命令行参数，支持各种自动化场景：
 | 参数 | 简写 | 类型 | 默认值 | 描述 |
 |------|------|------|--------|------|
 | `--headless` | 无 | 布尔 | False | 无窗口模式运行 |
+| `--no-console` | 无 | 布尔 | False | 在headless模式下不显示控制台窗口 |
 | `--device` | `-d` | 字符串列表 | 无 | 设备名称，或使用 `all` |
 | `--config` | `-c` | 字符串 | 当前配置 | 使用的配置方案 |
 | `--timeout` | `-t` | 整数 | 3600 | 超时时间（秒），0表示无限制 |
@@ -215,8 +217,11 @@ python main.py --help
 
 #### 无窗口模式
 ```bash
-# 启动所有设备，默认1小时超时
+# 启动所有设备，默认1小时超时（显示控制台）
 python main.py --headless --device all
+
+# 启动所有设备，不显示控制台窗口
+python main.py --headless --no-console --device all
 
 # 启动特定设备，30分钟超时
 python main.py --headless --device "服务器1" --timeout 1800
@@ -242,6 +247,9 @@ python main.py --headless --device all --timeout 0
 # 指定配置方案
 python main.py --headless --device all --config "生产环境配置"
 
+# 后台运行，不显示控制台
+python main.py --headless --no-console --device all --config "生产环境配置"
+
 # 有窗口但任务后退出
 python main.py --device all --exit-on-complete --timeout 3600
 ```
@@ -266,6 +274,12 @@ A: 请确保已正确安装所有依赖，并使用 Python 3.9 及以上版本�
 A: 使用 `--headless` 参数启动无窗口模式：
 ```bash
 python main.py --headless --device all --timeout 0
+```
+
+**Q: 如何在headless模式下隐藏控制台窗口？**  
+A: 使用 `--no-console` 参数：
+```bash
+python main.py --headless --no-console --device all --timeout 0
 ```
 
 **Q: 任务执行时间很长怎么办？**  
