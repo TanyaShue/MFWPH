@@ -72,12 +72,8 @@ def initialize_logging_manager(args):
     """初始化日志管理器"""
     global log_manager, logger
 
-    if args.headless:
-        # 无头模式：禁用Qt功能以避免线程问题
-        log_manager = LogManager(enable_qt=False)
-    else:
-        # 有窗口模式：启用完整功能
-        log_manager = LogManager(enable_qt=True)
+    # 新的日志管理器不需要区分Qt和非Qt模式
+    log_manager = LogManager()
 
     logger = log_manager.get_app_logger()
     return log_manager

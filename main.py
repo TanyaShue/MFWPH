@@ -32,19 +32,13 @@ def get_base_path():
 
 def allocate_console_for_headless(args):
     """在headless模式下为打包程序动态分配控制台窗口"""
-    # 确保在函数内部可以访问sys模块
-    import sys as sys_module
-
     # 只有在打包程序、headless模式且没有--no-console参数时才分配控制台
-    if not getattr(sys_module, "frozen", False) or not args.headless or getattr(args, 'no_console', False):
+    if not getattr(sys, "frozen", False) or not args.headless or getattr(args, 'no_console', False):
         return False
 
-    if sys_module.platform == "win32":
+    if sys.platform == "win32":
         try:
-            # 尝试分配控制台（如果还没有的话）
             import ctypes
-            import os
-
             # 检查是否已经有控制台窗口
             console_hwnd = ctypes.windll.kernel32.GetConsoleWindow()
             if not console_hwnd:
@@ -53,54 +47,12 @@ def allocate_console_for_headless(args):
                     # 设置控制台标题
                     ctypes.windll.kernel32.SetConsoleTitleW("MFWPH - Headless Mode")
                     return True
-                else:
-                    print("控制台分配失败")
-                    return False
-            else:
-                # 已经有控制台
-                return True
+            return True  # 已经有控制台或成功分配
         except Exception as e:
-            print(f"控制台设置失败: {e}")
+            print(f"控制台分配失败: {e}")
             return False
     # 对于macOS和Linux，在终端中运行时已经有控制台了
     return True
-
-
-def redirect_console_output():
-    """重定向标准输出到已分配的控制台"""
-    import sys
-    import os
-    import ctypes
-
-    try:
-        # 获取标准输出和标准错误的文件描述符
-        # 并重定向到分配的控制台
-        # 获取控制台的句柄
-        import msvcrt
-
-        # 重新创建sys.stdout和sys.stderr指向控制台
-        # 使用msvcrt.get_osfhandle来创建文件对象
-        stdout_handle = ctypes.windll.kernel32.GetStdHandle(-11)  # STD_OUTPUT_HANDLE
-        stderr_handle = ctypes.windll.kernel32.GetStdHandle(-12)  # STD_ERROR_HANDLE
-
-        if stdout_handle and stdout_handle != -1:
-            # 创建新的stdout文件对象
-            try:
-                new_stdout = os.fdopen(os.dup(stdout_handle), 'w', encoding='utf-8')
-                sys.stdout = new_stdout
-            except Exception as e:
-                print(f"重定向stdout失败: {e}")
-
-        if stderr_handle and stderr_handle != -1:
-            # 创建新的stderr文件对象
-            try:
-                new_stderr = os.fdopen(os.dup(stderr_handle), 'w', encoding='utf-8')
-                sys.stderr = new_stderr
-            except Exception as e:
-                print(f"重定向stderr失败: {e}")
-
-    except Exception as redirect_error:
-        print(f"控制台重定向失败: {redirect_error}")
 
 
 def setup_windows_job_object():
@@ -182,10 +134,8 @@ def main():
     # 解析命令行参数
     args = parse_arguments()
 
-    # 在headless模式下优先分配并重定向控制台，确保后续logger直接输出到正确的控制台
+    # 在headless模式下分配控制台（Windows打包程序）
     console_allocated = allocate_console_for_headless(args)
-    if console_allocated:
-        redirect_console_output()
 
     # 初始化日志管理器
     log_manager = initialize_logging_manager(args)
@@ -195,7 +145,7 @@ def main():
 
     # 如果分配了控制台，给出提示
     if console_allocated:
-        logger.info("控制台分配成功，开始输出日志...")
+        logger.info("控制台已就绪，开始输出日志...")
         logger.info("=" * 50)
 
     # 现在logger已初始化，可以安全调用需要logger的函数
