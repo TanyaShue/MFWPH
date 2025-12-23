@@ -669,6 +669,7 @@ class SettingsPage(QWidget):
         export_log_row.addWidget(export_log_btn)
         export_log_row.addStretch()
         layout.addLayout(export_log_row)
+
         # 配置文件目录按钮行
         config_folder_row = QHBoxLayout()
         config_folder_btn = QPushButton("打开配置文件目录")
