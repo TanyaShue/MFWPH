@@ -4,9 +4,11 @@ import logging.handlers
 import os
 import sys
 import threading
+import time
+import atexit
 import zipfile
 from datetime import datetime
-from typing import Dict, List, Any, Callable
+from typing import Dict, List, Any, Callable, Optional
 
 from PySide6.QtCore import QObject, Signal, QTimer
 
@@ -29,6 +31,8 @@ class LogManager(QObject):
         self.backup_dir = os.path.join(self.log_dir, "backup")
         self.handle_to_device: Dict[Any, str] = {}
         self.context_to_logger: Dict[Any, logging.Logger] = {}
+        self._stop_event = threading.Event()
+        self._flush_thread: Optional[threading.Thread] = None
 
         self.session_start_time = datetime.now()
         self.session_start_str = self.session_start_time.strftime("%Y-%m-%d %H:%M:%S")
@@ -48,27 +52,34 @@ class LogManager(QObject):
             self.flush_timer.timeout.connect(self.flush_all_logs)
             self.flush_timer.start(flush_interval_ms)
         else:
-            # For headless mode, use threading.Timer to periodically flush logs
+            # headless模式下启用后台线程定时刷新，避免依赖Qt
             self.flush_timer = None
-            self._setup_threading_timer(flush_interval_ms)
+            self._start_background_flush(flush_interval_ms)
 
-    def _setup_threading_timer(self, interval_ms: int):
-        """Setup a threading timer for headless mode to periodically flush logs"""
-        def timer_callback():
-            try:
-                self.flush_all_logs()
-                # Schedule the next flush
-                self._timer = threading.Timer(interval_ms / 1000.0, timer_callback)
-                self._timer.daemon = True
-                self._timer.start()
-            except Exception as e:
-                # Timer might fail if the program is shutting down
-                pass
+        # 退出时确保刷新并关闭后台线程
+        atexit.register(self.shutdown)
 
-        # Start the first timer
-        self._timer = threading.Timer(interval_ms / 1000.0, timer_callback)
-        self._timer.daemon = True
-        self._timer.start()
+    def _start_background_flush(self, interval_ms: int):
+        """使用后台线程在headless模式下周期性flush"""
+        def flush_loop():
+            while not self._stop_event.is_set():
+                time.sleep(interval_ms / 1000.0)
+                try:
+                    self.flush_all_logs()
+                except Exception:
+                    # 避免后台线程异常导致程序中断
+                    pass
+        self._flush_thread = threading.Thread(target=flush_loop, name="log-flush", daemon=True)
+        self._flush_thread.start()
+
+    def shutdown(self):
+        """停止后台flush线程并强制刷新所有日志"""
+        try:
+            self._stop_event.set()
+            if self._flush_thread and self._flush_thread.is_alive():
+                self._flush_thread.join(timeout=1)
+        finally:
+            self.flush_all_logs()
 
     def flush_all_logs(self):
         """Flushes all buffered logs to their respective files."""
@@ -147,7 +158,7 @@ class LogManager(QObject):
         logger.addHandler(memory_handler)
 
         # Add console handler for headless mode and debugging
-        console_handler = logging.StreamHandler()
+        console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(logging.INFO)  # Show INFO level and above to console
         console_formatter = logging.Formatter(
             '%(asctime)s - %(levelname)s - %(message)s',

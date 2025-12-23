@@ -182,8 +182,10 @@ def main():
     # 解析命令行参数
     args = parse_arguments()
 
-    # 在headless模式下为打包程序分配控制台
+    # 在headless模式下优先分配并重定向控制台，确保后续logger直接输出到正确的控制台
     console_allocated = allocate_console_for_headless(args)
+    if console_allocated:
+        redirect_console_output()
 
     # 初始化日志管理器
     log_manager = initialize_logging_manager(args)
@@ -191,10 +193,8 @@ def main():
     # 初始化全局logger
     initialize_global_logger(log_manager)
 
-    # 如果分配了控制台，重定向输出并重新配置logger
+    # 如果分配了控制台，给出提示
     if console_allocated:
-        redirect_console_output()
-        log_manager.reconfigure_console_handlers()
         logger.info("控制台分配成功，开始输出日志...")
         logger.info("=" * 50)
 
