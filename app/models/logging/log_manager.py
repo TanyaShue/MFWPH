@@ -133,6 +133,10 @@ class LogManager(QObject):
         )
         console_handler.setFormatter(console_formatter)
         logger.addHandler(console_handler)
+        # Store console handler reference for later reconfiguration
+        if not hasattr(self, 'console_handlers'):
+            self.console_handlers = []
+        self.console_handlers.append(console_handler)
 
         # Add signal handlers directly to the logger to ensure they fire immediately
         if name == "app":
@@ -259,6 +263,15 @@ class LogManager(QObject):
             except (ValueError, IndexError):
                 session_lines.append(line)
         return session_lines
+
+    def reconfigure_console_handlers(self):
+        """重新配置所有console handlers以使用当前的stdout"""
+        if hasattr(self, 'console_handlers'):
+            for handler in self.console_handlers:
+                # StreamHandler默认使用sys.stderr，我们需要确保它使用sys.stdout
+                # 或者让它重新初始化stream
+                if hasattr(handler, 'stream'):
+                    handler.stream = sys.stdout
 
 
 class AppLogSignalHandler(logging.Handler):

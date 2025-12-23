@@ -31,6 +31,8 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="MFWPH - 多设备任务管理器")
     parser.add_argument("--headless", action="store_true",
                         help="无窗口模式运行，不显示GUI界面")
+    parser.add_argument("--no-console", action="store_true",
+                        help="在headless模式下不显示控制台窗口（默认显示）")
     parser.add_argument("--device", "-d", nargs="+",
                         help="指定要启动的设备名称，或使用 'all' 启动所有设备")
     parser.add_argument("--config", "-c",
@@ -58,6 +60,10 @@ def parse_arguments():
     # 无窗口模式默认启用退出行为
     if args.headless and not args.exit_on_complete:
         args.exit_on_complete = True
+
+    # 在headless模式下，如果没有指定设备，默认启动所有设备
+    if args.headless and not args.device:
+        args.device = ["all"]
 
     return args
 
