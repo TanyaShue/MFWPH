@@ -32,11 +32,14 @@ def get_base_path():
 
 def setup_console_for_headless(args):
     """在headless模式下为打包程序动态分配控制台窗口"""
+    # 确保在函数内部可以访问sys模块
+    import sys as sys_module
+
     # 只有在打包程序、headless模式且没有--no-console参数时才分配控制台
-    if not getattr(sys, "frozen", False) or not args.headless or getattr(args, 'no_console', False):
+    if not getattr(sys_module, "frozen", False) or not args.headless or getattr(args, 'no_console', False):
         return
 
-    if sys.platform == "win32":
+    if sys_module.platform == "win32":
         try:
             # 尝试分配控制台（如果还没有的话）
             import ctypes
@@ -67,16 +70,16 @@ def setup_console_for_headless(args):
                             try:
                                 new_stdout = os.fdopen(os.dup(stdout_handle), 'w')
                                 sys.stdout = new_stdout
-                            except:
-                                pass
+                            except Exception as e:
+                                print(f"重定向stdout失败: {e}")
 
                         if stderr_handle and stderr_handle != -1:
                             # 创建新的stderr文件对象
                             try:
                                 new_stderr = os.fdopen(os.dup(stderr_handle), 'w')
                                 sys.stderr = new_stderr
-                            except:
-                                pass
+                            except Exception as e:
+                                print(f"重定向stderr失败: {e}")
 
                         # 测试输出
                         print("控制台分配成功，开始输出日志...")
