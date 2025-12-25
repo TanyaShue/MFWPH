@@ -278,7 +278,7 @@ class BasicSettingsPage(QFrame):
 
         # 如果没有任务，显示提示信息
         if not settings.task_order:
-            no_tasks_label = QLabel("当前没有已添加的任务, 请点击下方的'添加任务'按钮。")
+            no_tasks_label = QLabel("请点击右上角的'+'按钮来添加任务。")
             no_tasks_label.setAlignment(Qt.AlignCenter)
             self.settings_content_layout.addWidget(no_tasks_label)
             self.settings_content_layout.addStretch(1)
