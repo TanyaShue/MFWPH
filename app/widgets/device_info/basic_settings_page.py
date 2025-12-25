@@ -1,7 +1,7 @@
 # --- START OF FILE app/widgets/basic_settings_page.py ---
 
 from PySide6.QtCore import Qt, Signal, QMimeData, QPoint, QSize
-from PySide6.QtGui import QIcon, QDrag, QPainter, QPixmap
+from PySide6.QtGui import QIcon, QDrag, QPainter, QPixmap, QFont
 from PySide6.QtWidgets import (
     QWidget, QVBoxLayout, QHBoxLayout, QFrame, QLabel,
     QScrollArea, QCheckBox, QPushButton, QSizePolicy, QApplication
@@ -232,7 +232,7 @@ class BasicSettingsPage(QFrame):
     def init_ui(self):
         """初始化UI，开始时显示占位符"""
         basic_layout = QVBoxLayout(self)
-        basic_layout.setContentsMargins(0, 0, 0, 0)
+        basic_layout.setContentsMargins(12, 12, 12, 12)
 
         self.settings_content = QWidget()
         self.settings_content_layout = QVBoxLayout(self.settings_content)
@@ -414,9 +414,9 @@ class BasicSettingsPage(QFrame):
         if settings and instance_id in settings.task_instances:
             settings.task_instances[instance_id].enabled = is_enabled
             global_config.save_all_configs()
-            status = "启用" if is_enabled else "禁用"
-            task_name = settings.task_instances[instance_id].task_name
-            self.logger.info(f"任务 '{task_name}' (ID: {instance_id}) 已被{status}。")
+            # status = "启用" if is_enabled else "禁用"
+            # task_name = settings.task_instances[instance_id].task_name
+            # self.logger.info(f"任务 '{task_name}' (ID: {instance_id}) 已被{status}。")
 
     def on_task_settings_requested(self, instance_id: str):
         """处理任务设置请求，找到所有需要的信息并发出信号"""
@@ -455,6 +455,58 @@ class BasicSettingsPage(QFrame):
         self.selected_resource_name = None
         self.selected_settings_name = None
         self.task_container = None
+
+    def enable_all_tasks(self) -> int:
+        """
+        启用所有任务
+        返回被启用的任务数量
+        """
+        if not self.task_container:
+            return 0
+
+        app_config = global_config.get_app_config()
+        settings = next((s for s in app_config.resource_settings if s.name == self.selected_settings_name), None)
+
+        if not settings:
+            return 0
+
+        enabled_count = 0
+        for task_widget in self.task_container.task_widgets:
+            instance_id = task_widget.task_instance.instance_id
+            if instance_id in settings.task_instances:
+                task_instance = settings.task_instances[instance_id]
+                if not task_instance.enabled:
+                    task_instance.enabled = True
+                    task_widget.checkbox.setChecked(True)
+                    enabled_count += 1
+
+        return enabled_count
+
+    def disable_all_tasks(self) -> int:
+        """
+        禁用所有任务
+        返回被禁用的任务数量
+        """
+        if not self.task_container:
+            return 0
+
+        app_config = global_config.get_app_config()
+        settings = next((s for s in app_config.resource_settings if s.name == self.selected_settings_name), None)
+
+        if not settings:
+            return 0
+
+        disabled_count = 0
+        for task_widget in self.task_container.task_widgets:
+            instance_id = task_widget.task_instance.instance_id
+            if instance_id in settings.task_instances:
+                task_instance = settings.task_instances[instance_id]
+                if task_instance.enabled:
+                    task_instance.enabled = False
+                    task_widget.checkbox.setChecked(False)
+                    disabled_count += 1
+
+        return disabled_count
 
     def _clear_layout(self, layout):
         """安全地清除布局中的所有小部件"""
