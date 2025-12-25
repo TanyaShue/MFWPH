@@ -75,6 +75,10 @@ class AddTaskDialog(QDialog):
         self.device_config = device_config
         # 使用集合来高效地跟踪选中的任务名称
         self.selected_tasks = set()
+        # 存储所有任务控件的引用，用于全选功能
+        self.task_widgets = []
+        # 存储所有任务控件的引用，用于全选功能
+        self.task_widgets = []
 
         self.init_ui()
         self.populate_tasks()
@@ -100,11 +104,21 @@ class AddTaskDialog(QDialog):
         self.scroll_area.setWidget(self.scroll_content)
         self.layout.addWidget(self.scroll_area)
 
+        # 创建底部按钮区域布局
+        bottom_layout = QHBoxLayout()
+        bottom_layout.setContentsMargins(0, 10, 0, 0)
+
+        # 全选按钮
+        self.select_all_button = QPushButton("全选")
+        self.select_all_button.setObjectName("primaryButton")  # 默认使用主要按钮样式，和确定按钮一样
+        self.select_all_button.clicked.connect(self._on_select_all_clicked)
+        bottom_layout.addWidget(self.select_all_button)
+
         # 反馈标签，显示选中数量
         self.feedback_label = QLabel("已选择 0 个任务")
         self.feedback_label.setObjectName("feedbackText")
         self.feedback_label.setAlignment(Qt.AlignCenter)
-        self.layout.addWidget(self.feedback_label)
+        bottom_layout.addWidget(self.feedback_label, 1)  # 设置伸缩因子为1，使其占据中间空间
 
         # 创建标准按钮盒
         self.button_box = QDialogButtonBox(QDialogButtonBox.Ok | QDialogButtonBox.Cancel)
@@ -123,7 +137,8 @@ class AddTaskDialog(QDialog):
             cancel_button.setObjectName("secondaryButton")  # 设置为次要按钮样式
             cancel_button.setText("取消")
 
-        self.layout.addWidget(self.button_box)
+        bottom_layout.addWidget(self.button_box)
+        self.layout.addLayout(bottom_layout)
 
     def populate_tasks(self):
         """
@@ -139,6 +154,10 @@ class AddTaskDialog(QDialog):
             # 连接子控件的信号到对话框的槽函数
             task_widget.selection_changed.connect(self._on_task_selection_changed)
             self.task_layout.addWidget(task_widget)
+            # 保存任务控件的引用
+            self.task_widgets.append(task_widget)
+            # 保存任务控件的引用
+            self.task_widgets.append(task_widget)
 
     def _on_task_selection_changed(self, task_name: str, is_selected: bool):
         """
@@ -156,6 +175,50 @@ class AddTaskDialog(QDialog):
         ok_button = self.button_box.button(QDialogButtonBox.Ok)
         if ok_button:
             ok_button.setEnabled(count > 0)
+
+    def _on_select_all_clicked(self):
+        """
+        处理全选按钮点击事件。
+        根据按钮当前文本决定操作：全选或取消全选。
+        """
+        current_text = self.select_all_button.text()
+
+        if current_text == "取消全选":
+            # 当前是全选状态，需要取消全选
+            for task_widget in self.task_widgets:
+                task_widget.is_selected = False
+                task_widget._update_style()
+            # 清空选中集合
+            self.selected_tasks.clear()
+            # 更新UI反馈
+            self.feedback_label.setText("已选择 0 个任务")
+            # 禁用确定按钮
+            ok_button = self.button_box.button(QDialogButtonBox.Ok)
+            if ok_button:
+                ok_button.setEnabled(False)
+            # 更新按钮文本和样式
+            self.select_all_button.setText("全选")
+            self.select_all_button.setObjectName("primaryButton")
+        else:
+            # 当前不是全选状态，需要全选
+            for task_widget in self.task_widgets:
+                task_widget.is_selected = True
+                task_widget._update_style()
+            # 添加所有任务到选中集合
+            self.selected_tasks = set(task_widget.task_name for task_widget in self.task_widgets)
+            # 更新UI反馈
+            count = len(self.selected_tasks)
+            self.feedback_label.setText(f"已选择 {count} 个任务")
+            # 启用确定按钮
+            ok_button = self.button_box.button(QDialogButtonBox.Ok)
+            if ok_button:
+                ok_button.setEnabled(True)
+            # 更新按钮文本和样式
+            self.select_all_button.setText("取消全选")
+            self.select_all_button.setObjectName("secondaryButton")
+
+        # 刷新样式
+        self.select_all_button.style().polish(self.select_all_button)
 
     def get_selected_tasks(self) -> list[str]:
         """

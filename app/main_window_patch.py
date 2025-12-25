@@ -5,10 +5,8 @@
 """
 
 import asyncio
-import os
 
 from PySide6.QtGui import QCloseEvent
-from PySide6.QtWidgets import QApplication
 
 from app.models.config.global_config import global_config
 from app.utils.global_logger import get_logger
