@@ -109,6 +109,7 @@ class ScheduleTask:
     week_days: List[str] = field(default_factory=list)  # 周执行时的星期列表 ["周一", "周二", ...]
     settings_name: str = ""  # 使用的配置方案
     notify: bool = False  # 是否发送通知
+    force_stop: bool = False  # 运行前是否强制停止所有任务
     schedule_id: str = field(default_factory=lambda: uuid.uuid4().hex[:8])
 
     def to_ui_format(self) -> dict:
@@ -117,6 +118,7 @@ class ScheduleTask:
             'time': self.schedule_time,
             'config_scheme': self.settings_name or '默认配置',
             'notify': self.notify,
+            'force_stop': self.force_stop,
             'enabled': self.enabled
         }
         if self.schedule_type == 'weekly' and self.week_days:
@@ -152,6 +154,7 @@ class ScheduleTask:
             'week_days': ui_data.get('week_days', []),
             'settings_name': ui_data.get('config_scheme', '默认配置'),
             'notify': ui_data.get('notify', False),
+            'force_stop': ui_data.get('force_stop', False),
         }
         if ui_data.get('id'):
             init_args['schedule_id'] = ui_data['id']
@@ -189,7 +192,8 @@ def schedule_task_to_dict(schedule: ScheduleTask) -> Dict[str, Any]:
         'schedule_time': schedule.schedule_time,
         'schedule_type': schedule.schedule_type,
         'settings_name': schedule.settings_name,
-        'notify': schedule.notify
+        'notify': schedule.notify,
+        'force_stop': schedule.force_stop
     }
     if schedule.week_days:
         result['week_days'] = schedule.week_days
