@@ -17,7 +17,7 @@ class ScheduledTaskManager(QObject):
     task_added = Signal(dict)
     task_removed = Signal(str)
     task_modified = Signal(str, dict)
-    task_triggered = Signal(str, str, str)
+    task_triggered = Signal(str, str, str, bool)
     task_status_changed = Signal(str, bool)
 
     def __init__(self, tasker_manager: 'TaskerManager', parent=None):
@@ -216,7 +216,8 @@ class ScheduledTaskManager(QObject):
             self.task_triggered.emit(
                 task_info['device_name'],
                 task_info['resource_name'],
-                task_info.get('config_scheme', '')
+                task_info.get('config_scheme', ''),
+                task_info.get('force_stop', False)
             )
 
             if task_info.get('schedule_type') == '单次执行':
@@ -267,8 +268,8 @@ class ScheduledTaskManager(QObject):
             self.logger.error(f"计算下次运行时间时出错: {e}", exc_info=True)
             return None
 
-    @asyncSlot(str, str, str)
-    async def _on_scheduled_task_triggered(self, device_name: str, resource_name: str, settings_name: str):
+    @asyncSlot(str, str, str, bool)
+    async def _on_scheduled_task_triggered(self, device_name: str, resource_name: str, settings_name: str, force_stop: bool):
         self.logger.info(f"处理任务触发：设备 {device_name}，资源 {resource_name}，设置 {settings_name}")
         try:
             device_config = global_config.get_device_config(device_name)
@@ -283,6 +284,12 @@ class ScheduledTaskManager(QObject):
             # 为了确保任务使用指定的配置方案，我们临时修改资源配置
             original_settings_name = resource.settings_name
             try:
+                # 如果配置了强制停止，先杀掉当前设备的执行器
+                if force_stop:
+                    self.logger.warning(f"定时任务配置了强制停止。正在停止设备 {device_name} 的所有任务...")
+                    await self._tasker_manager.stop_device_processing(device_name)
+                    await asyncio.sleep(2)
+
                 resource.settings_name = settings_name
                 runtime_config = global_config.get_runtime_configs_for_resource(resource_name, device_name)
 
@@ -310,6 +317,7 @@ class ScheduledTaskManager(QObject):
             'time': task.schedule_time,
             'config_scheme': task.settings_name or '默认配置',
             'notify': task.notify,
+            'force_stop': task.force_stop,
             'status': '活动' if task.enabled else '暂停',
         }
         if task.schedule_type == 'weekly' and task.week_days:

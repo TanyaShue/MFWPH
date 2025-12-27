@@ -101,9 +101,9 @@ class TaskPlanTableWidget(QWidget):
             QPushButton:hover {{ background: {color}dd; }} """
 
     def setup_table(self):
-        self.table.setColumnCount(9)
+        self.table.setColumnCount(10)
         self.table.setHorizontalHeaderLabels(
-            ["ID", "设备", "资源", "类型", "执行时间", "配置方案", "通知", "状态", "操作"]
+            ["ID", "设备", "资源", "类型", "执行时间", "配置方案", "通知", "运行前强制停止所有任务", "状态", "操作"]
         )
         self.table.setAlternatingRowColors(True)
         self.table.setSelectionBehavior(QAbstractItemView.SelectRows)
@@ -129,11 +129,14 @@ class TaskPlanTableWidget(QWidget):
         header.setSectionResizeMode(6, QHeaderView.Fixed)  # 通知
         self.table.setColumnWidth(6, 50)
 
-        header.setSectionResizeMode(7, QHeaderView.Fixed)  # 状态
-        self.table.setColumnWidth(7, 60)
+        header.setSectionResizeMode(7, QHeaderView.Fixed)  # 运行前强制停止所有任务
+        self.table.setColumnWidth(7, 160)
 
-        header.setSectionResizeMode(8, QHeaderView.Fixed)  # 操作按钮
-        self.table.setColumnWidth(8, 120)  # 三个按钮大概这个宽度
+        header.setSectionResizeMode(8, QHeaderView.Fixed)  # 状态
+        self.table.setColumnWidth(8, 60)
+
+        header.setSectionResizeMode(9, QHeaderView.Fixed)  # 操作按钮
+        self.table.setColumnWidth(9, 120)  # 三个按钮大概这个宽度
 
         # 自适应列（占剩余空间）
         for col in [1, 2, 3, 4, 5]:
@@ -202,12 +205,19 @@ class TaskPlanTableWidget(QWidget):
         notify_item.setTextAlignment(Qt.AlignCenter)
         self.table.setItem(row, 6, notify_item)
 
+        force_stop = task_data.get('force_stop', False)
+        force_item = QTableWidgetItem("是" if force_stop else "否")
+        force_item.setTextAlignment(Qt.AlignCenter)
+        if force_stop:
+            force_item.setForeground(QColor("#f44336")) # 如果是则用红色标注提醒
+        self.table.setItem(row, 7, force_item)
+
         status = task_data.get('status', '活动')
         status_item = QTableWidgetItem(status)
         status_item.setTextAlignment(Qt.AlignCenter)
         status_item.setForeground(QColor("#4caf50") if status == "活动" else QColor("#ff9800"))
         status_item.setFont(QFont("", 10, QFont.Bold))
-        self.table.setItem(row, 7, status_item)
+        self.table.setItem(row, 8, status_item)
 
         op_widget = QWidget()
         op_layout = QHBoxLayout(op_widget)
@@ -228,7 +238,7 @@ class TaskPlanTableWidget(QWidget):
         op_layout.addWidget(toggle_btn)
         op_layout.addWidget(edit_btn)
         op_layout.addWidget(delete_btn)
-        self.table.setCellWidget(row, 8, op_widget)
+        self.table.setCellWidget(row, 9, op_widget)
 
     @asyncSlot()
     async def toggle_task(self, row):
