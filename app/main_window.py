@@ -1,9 +1,3 @@
-import json
-import os
-import sys
-
-from app.models.logging.log_manager import app_logger
-
 from PySide6.QtCore import Qt, QCoreApplication
 from PySide6.QtGui import QIcon, QAction
 from PySide6.QtWidgets import (

@@ -38,11 +38,12 @@ class LogExportWorker(QThread):
     error = Signal(str)  # 失败信号，传递错误信息
     progress = Signal(float, str)  # 进度信号: (0.0-1.0的小数, 状态文本)
 
-    def __init__(self, base_path, log_dir, debug_dir):
+    def __init__(self, base_path, log_dir, debug_dir, only_today: bool = False):
         super().__init__()
         self.base_path = base_path
         self.log_dir = log_dir
         self.debug_dir = debug_dir
+        self.only_today = only_today
 
     def run(self):
         try:
@@ -62,6 +63,8 @@ class LogExportWorker(QThread):
                         if file.startswith("logs_export_") and file.endswith(".zip"):
                             continue
                         abs_path = os.path.join(root, file)
+                        if self.only_today and not self._is_today_file(abs_path):
+                            continue
                         arc_name = os.path.join("logs", os.path.relpath(abs_path, self.log_dir))
                         files_to_process.append((abs_path, arc_name))
 
@@ -70,11 +73,17 @@ class LogExportWorker(QThread):
                 for root, dirs, files in os.walk(self.debug_dir):
                     for file in files:
                         abs_path = os.path.join(root, file)
+                        if self.only_today and not self._is_today_file(abs_path):
+                            continue
                         arc_name = os.path.join("assets/debug", os.path.relpath(abs_path, self.debug_dir))
                         files_to_process.append((abs_path, arc_name))
 
             total_files = len(files_to_process)
             processed_count = 0
+
+            if total_files == 0:
+                self.error.emit("未找到符合条件的日志文件")
+                return
 
             # 3. 创建压缩包并写入文件
             files_to_delete = []  # 记录成功写入后需要删除的源文件路径
@@ -107,6 +116,16 @@ class LogExportWorker(QThread):
         except Exception as e:
             self.error.emit(str(e))
 
+    def _is_today_file(self, path: str) -> bool:
+        """判断文件的修改时间或创建时间是否为今天"""
+        try:
+            today = datetime.now().date()
+            m_date = datetime.fromtimestamp(os.path.getmtime(path)).date()
+            c_date = datetime.fromtimestamp(os.path.getctime(path)).date()
+            return m_date == today or c_date == today
+        except Exception:
+            return False
+
 
 class SettingsPage(QWidget):
     """设置页面 (已按新需求重构)"""
@@ -127,7 +146,9 @@ class SettingsPage(QWidget):
 
         # 日志导出相关
         self.log_worker = None
-        self.export_notification_id = "log_export_process"
+        self.export_notification_id = "log_export_process"  # 保留兼容
+        self.export_today_notification_id = "log_export_today_process"
+        self.export_all_notification_id = "log_export_all_process"
 
         self.initUI()
 
@@ -482,6 +503,8 @@ class SettingsPage(QWidget):
         github_token_input.setEchoMode(QLineEdit.Password)
         save_github_token_button = QPushButton("保存密钥")
         save_github_token_button.setObjectName("primaryButton")
+        open_github_token_button = QPushButton("获取密钥")
+        open_github_token_button.setObjectName("secondaryButton")
 
         try:
             current_token = global_config.get_app_config().github_token
@@ -492,6 +515,7 @@ class SettingsPage(QWidget):
         github_token_row.addWidget(github_token_label)
         github_token_row.addWidget(github_token_input, 1)
         github_token_row.addWidget(save_github_token_button)
+        github_token_row.addWidget(open_github_token_button)
         layout.addLayout(github_token_row)
 
         # Mirror酱 CDK 设置
@@ -501,6 +525,8 @@ class SettingsPage(QWidget):
         cdk_input.setEchoMode(QLineEdit.Password)
         save_cdk_button = QPushButton("保存密钥")
         save_cdk_button.setObjectName("primaryButton")
+        open_cdk_button = QPushButton("获取密钥")
+        open_cdk_button.setObjectName("secondaryButton")
         try:
             current_cdk = global_config.get_app_config().CDK
             if current_cdk: cdk_input.setText(current_cdk)
@@ -509,6 +535,7 @@ class SettingsPage(QWidget):
         cdk_row.addWidget(cdk_label)
         cdk_row.addWidget(cdk_input, 1)
         cdk_row.addWidget(save_cdk_button)
+        cdk_row.addWidget(open_cdk_button)
         layout.addLayout(cdk_row)
 
         def save_github_token():
@@ -517,6 +544,9 @@ class SettingsPage(QWidget):
             notification_manager.show_success("GitHub Token 已成功保存", "保存成功")
 
         save_github_token_button.clicked.connect(save_github_token)
+        open_github_token_button.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl("https://github.com/settings/personal-access-tokens"))
+        )
 
         def save_cdk():
             global_config.get_app_config().CDK = cdk_input.text()
@@ -524,6 +554,9 @@ class SettingsPage(QWidget):
             notification_manager.show_success("CDK 已成功保存", "保存成功")
 
         save_cdk_button.clicked.connect(save_cdk)
+        open_cdk_button.clicked.connect(
+            lambda: QDesktopServices.openUrl(QUrl("https://mirrorchyan.com?source=MaaYYs"))
+        )
 
     def handle_update_found(self, update_info: UpdateInfo):
         self.check_button.setEnabled(True)
@@ -648,25 +681,69 @@ class SettingsPage(QWidget):
         debug_row.addStretch()
         layout.addLayout(debug_row)
 
-        # 日志文件夹按钮行
-        log_folder_row = QHBoxLayout()
-        log_btn = QPushButton("打开软件日志文件夹")
-        log_btn.setObjectName("primaryButton")
-        log_btn.clicked.connect(self.open_log_folder)
-        log_folder_row.addWidget(log_btn)
-        debug_btn = QPushButton("打开调试日志文件夹")
-        debug_btn.setObjectName("primaryButton")
-        debug_btn.clicked.connect(self.open_debug_folder)
-        log_folder_row.addWidget(debug_btn)
-        log_folder_row.addStretch()
-        layout.addLayout(log_folder_row)
+        layout.addSpacing(6)
+
+        # 日志信息与操作
+        log_card = QVBoxLayout()
+        log_card.setSpacing(8)
+
+        # 软件日志行
+        log_line = QHBoxLayout()
+        log_title = QLabel("软件日志")
+        self.log_size_label = QLabel("--")
+        self.log_size_label.setObjectName("infoText")
+        self.log_size_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        log_open_btn = QPushButton("打开文件夹")
+        log_open_btn.setObjectName("primaryButton")
+        log_open_btn.clicked.connect(self.open_log_folder)
+        log_clear_btn = QPushButton("清空")
+        log_clear_btn.setObjectName("secondaryButton")
+        log_clear_btn.clicked.connect(self.clear_log_folder)
+
+        log_line.addWidget(log_title)
+        log_line.addStretch()
+        log_line.addWidget(self.log_size_label)
+        log_line.addSpacing(8)
+        log_line.addWidget(log_open_btn)
+        log_line.addWidget(log_clear_btn)
+        log_card.addLayout(log_line)
+
+        # 调试日志行
+        debug_line = QHBoxLayout()
+        debug_title = QLabel("调试日志")
+        self.debug_size_label = QLabel("--")
+        self.debug_size_label.setObjectName("infoText")
+        self.debug_size_label.setAlignment(Qt.AlignRight | Qt.AlignVCenter)
+        debug_open_btn = QPushButton("打开文件夹")
+        debug_open_btn.setObjectName("primaryButton")
+        debug_open_btn.clicked.connect(self.open_debug_folder)
+        debug_clear_btn = QPushButton("清空")
+        debug_clear_btn.setObjectName("secondaryButton")
+        debug_clear_btn.clicked.connect(self.clear_debug_folder)
+
+        debug_line.addWidget(debug_title)
+        debug_line.addStretch()
+        debug_line.addWidget(self.debug_size_label)
+        debug_line.addSpacing(8)
+        debug_line.addWidget(debug_open_btn)
+        debug_line.addWidget(debug_clear_btn)
+        log_card.addLayout(debug_line)
+
+        layout.addLayout(log_card)
+
+        layout.addSpacing(6)
 
         # 导出日志按钮行
         export_log_row = QHBoxLayout()
-        export_log_btn = QPushButton("导出日志")
+        export_log_btn = QPushButton("导出今日日志")
         export_log_btn.setObjectName("primaryButton")
-        export_log_btn.clicked.connect(self.export_logs)
+        export_log_btn.clicked.connect(self.export_logs)  # 默认导出当日日志
         export_log_row.addWidget(export_log_btn)
+
+        export_all_log_btn = QPushButton("导出全部日志")
+        export_all_log_btn.setObjectName("primaryButton")
+        export_all_log_btn.clicked.connect(self.export_all_logs)
+        export_log_row.addWidget(export_all_log_btn)
         export_log_row.addStretch()
         layout.addLayout(export_log_row)
 
@@ -683,6 +760,8 @@ class SettingsPage(QWidget):
         warning.setObjectName("warningText")
         layout.addWidget(warning)
 
+        self._refresh_log_sizes()
+
     def open_log_folder(self):
         log_path = os.path.abspath("logs")
         if os.path.exists(log_path): QDesktopServices.openUrl(QUrl.fromLocalFile(log_path))
@@ -694,6 +773,61 @@ class SettingsPage(QWidget):
     def open_config_folder(self):
         config_path = get_config_directory()
         if os.path.exists(config_path): QDesktopServices.openUrl(QUrl.fromLocalFile(config_path))
+
+    def clear_log_folder(self):
+        """清空软件日志目录"""
+        log_path = os.path.abspath("logs")
+        self._confirm_and_clear_folder(log_path, "清空软件日志", "软件日志已清空")
+
+    def clear_debug_folder(self):
+        """清空调试日志目录"""
+        debug_path = os.path.abspath("assets/debug")
+        self._confirm_and_clear_folder(debug_path, "清空调试日志", "调试日志已清空")
+
+    def _confirm_and_clear_folder(self, path: str, title: str, success_msg: str):
+        """确认并清空指定目录"""
+        if not os.path.exists(path):
+            notification_manager.show_warning("目录不存在或已被删除", "无需清理")
+            return
+
+        msg_box = QMessageBox(self)
+        msg_box.setWindowTitle(title)
+        msg_box.setText(f"将清空目录：\n{path}\n该操作不可恢复，是否继续？")
+        msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
+        msg_box.button(QMessageBox.Yes).setText("确认清空")
+        msg_box.button(QMessageBox.No).setText("取消")
+        self._style_message_box_buttons(msg_box)
+
+        result = msg_box.exec()
+        if result != QMessageBox.Yes:
+            return
+
+        removed_any = self._clean_directory(path)
+        self._refresh_log_sizes()
+
+        if removed_any:
+            notification_manager.show_success(success_msg, "已清空")
+        else:
+            notification_manager.show_info("目录已为空", "无需清理")
+
+    def _clean_directory(self, path: str) -> bool:
+        """删除目录下所有文件和空子目录，返回是否删除了内容"""
+        removed = False
+        for root, dirs, files in os.walk(path, topdown=False):
+            for file in files:
+                try:
+                    os.remove(os.path.join(root, file))
+                    removed = True
+                except OSError:
+                    pass
+            for dir_name in dirs:
+                dir_path = os.path.join(root, dir_name)
+                try:
+                    os.rmdir(dir_path)
+                except OSError:
+                    # 目录非空或被占用，忽略
+                    pass
+        return removed
 
     def on_debug_changed(self, state):
         is_enabled = (state == Qt.CheckState.Checked.value)
@@ -710,66 +844,80 @@ class SettingsPage(QWidget):
             notification_manager.show_error("调试模式切换失败", "操作失败")
 
     def export_logs(self):
-        """导出日志文件：后台打包并清理旧日志"""
+        """导出当日新增/修改的日志文件"""
+        self.start_log_export(
+            only_today=True,
+            notification_id=self.export_today_notification_id,
+            scanning_text="正在扫描今日生成或修改的日志文件..."
+        )
 
-        # 1. 防止重复点击
+    def export_all_logs(self):
+        """导出全部日志文件（保持原有逻辑）"""
+        self.start_log_export(
+            only_today=False,
+            notification_id=self.export_all_notification_id,
+            scanning_text="正在扫描全部日志文件..."
+        )
+
+    def start_log_export(self, only_today: bool, notification_id: str, scanning_text: str):
+        """启动日志导出线程，支持仅导出今日日志"""
         if self.log_worker and self.log_worker.isRunning():
             notification_manager.show_warning("正在后台打包日志，请稍候...", "操作进行中")
             return
 
-        # 2. 路径准备
-        if getattr(sys, 'frozen', False):
-            base_path = os.path.dirname(sys.executable)
-        else:
-            base_path = os.getcwd()
-
+        base_path = os.path.dirname(sys.executable) if getattr(sys, 'frozen', False) else os.getcwd()
         log_dir = os.path.join(base_path, "logs")
         debug_dir = os.path.join(base_path, "assets", "debug")
 
-        # 简单检查是否有文件夹存在
         if not os.path.exists(log_dir) and not os.path.exists(debug_dir):
             notification_manager.show_warning("未找到日志文件夹", "无需导出")
             return
 
-        # 3. 初始化进度通知 (初始进度 0.0)
         notification_manager.show_progress(
-            self.export_notification_id,
-            "正在扫描日志文件...",
+            notification_id,
+            scanning_text,
             "准备导出",
             0.0
         )
 
-        # 4. 启动后台线程
-        self.log_worker = LogExportWorker(base_path, log_dir, debug_dir)
-        self.log_worker.finished.connect(self.on_export_finished)
-        self.log_worker.error.connect(self.on_export_error)
-        self.log_worker.progress.connect(self.update_export_progress)  # <--- 连接进度信号
+        self.log_worker = LogExportWorker(base_path, log_dir, debug_dir, only_today=only_today)
+        self.log_worker.finished.connect(
+            lambda zip_path, nid=notification_id, is_today=only_today: self.on_export_finished(
+                zip_path, nid, is_today
+            )
+        )
+        self.log_worker.error.connect(
+            lambda err_msg, nid=notification_id, is_today=only_today: self.on_export_error(
+                err_msg, nid, is_today
+            )
+        )
+        self.log_worker.progress.connect(
+            lambda percent, msg, nid=notification_id: self.update_export_progress(nid, percent, msg)
+        )
         self.log_worker.start()
 
-    def update_export_progress(self, percent, msg):
+    def update_export_progress(self, notification_id, percent, msg):
         """更新导出进度条"""
-        # 调用 notification_manager 更新进度
-        # 假设 update_progress 接受 (id, float进度0-1, 文本消息)
-        notification_manager.update_progress(
-            self.export_notification_id,
-            percent,
-            msg
-        )
+        notification_manager.update_progress(notification_id, percent, msg)
 
-    def on_export_finished(self, zip_path):
+    def on_export_finished(self, zip_path, notification_id, only_today=False):
         """日志导出成功的回调"""
-        # 关闭进度通知
-        notification_manager.close_progress(self.export_notification_id)
+        notification_manager.close_progress(notification_id)
+        self.log_worker = None
 
-        logger.info(f"日志导出成功: {zip_path}")
+        scope_text = "今日日志" if only_today else "全部日志"
+        logger.info(f"{scope_text}导出成功: {zip_path}")
+        self._refresh_log_sizes()
 
-        # 弹窗询问复制
         msg_box = QMessageBox(self)
         msg_box.setWindowTitle("日志导出成功")
-        msg_box.setText(f"日志已打包并清理旧文件。\n保存路径：\n{zip_path}\n\n是否要复制这个压缩包到剪贴板？")
+        msg_box.setText(
+            f"{scope_text}已打包并清理旧文件。\n保存路径：\n{zip_path}\n\n是否要复制这个压缩包到剪贴板？"
+        )
         msg_box.setStandardButtons(QMessageBox.Yes | QMessageBox.No)
         msg_box.button(QMessageBox.Yes).setText("是，复制")
         msg_box.button(QMessageBox.No).setText("否，关闭")
+        self._style_message_box_buttons(msg_box)
 
         result = msg_box.exec()
 
@@ -783,11 +931,55 @@ class SettingsPage(QWidget):
             except Exception as e:
                 notification_manager.show_error(f"复制失败: {e}", "错误")
 
-    def on_export_error(self, error_msg):
+    def on_export_error(self, error_msg, notification_id, only_today=False):
         """日志导出失败的回调"""
-        notification_manager.close_progress(self.export_notification_id)
-        logger.error(f"导出日志失败: {error_msg}")
-        notification_manager.show_error(f"导出失败: {error_msg}", "错误")
+        notification_manager.close_progress(notification_id)
+        self.log_worker = None
+        scope_text = "今日日志" if only_today else "全部日志"
+        logger.error(f"{scope_text}导出日志失败: {error_msg}")
+        self._refresh_log_sizes()
+
+        if error_msg == "未找到符合条件的日志文件":
+            notification_manager.show_warning("未找到符合条件的日志文件", "无需导出")
+        else:
+            notification_manager.show_error(f"导出失败: {error_msg}", "错误")
+
+    def _style_message_box_buttons(self, msg_box: QMessageBox):
+        """为消息框按钮应用统一样式"""
+        yes_btn = msg_box.button(QMessageBox.Yes)
+        no_btn = msg_box.button(QMessageBox.No)
+        for btn, name in ((yes_btn, "primaryButton"), (no_btn, "secondaryButton")):
+            if btn is None:
+                continue
+            btn.setObjectName(name)
+            btn.setStyleSheet("min-width: 96px; padding: 6px 12px;")
+
+    def _refresh_log_sizes(self):
+        """刷新日志与调试日志的体积显示"""
+        log_path = os.path.abspath("logs")
+        debug_path = os.path.abspath("assets/debug")
+        self.log_size_label.setText(self._format_size(self._get_folder_size(log_path)))
+        self.debug_size_label.setText(self._format_size(self._get_folder_size(debug_path)))
+
+    def _get_folder_size(self, path: str) -> int:
+        """计算目录大小（字节）"""
+        if not os.path.exists(path):
+            return 0
+        total = 0
+        for root, _, files in os.walk(path):
+            for file in files:
+                try:
+                    total += os.path.getsize(os.path.join(root, file))
+                except OSError:
+                    pass
+        return total
+
+    def _format_size(self, size_bytes: int) -> str:
+        """格式化文件大小为 MB"""
+        if size_bytes <= 0:
+            return "0.00 MB"
+        size_mb = size_bytes / (1024 * 1024)
+        return f"{size_mb:.2f} MB"
 
 
 def get_version_info():
