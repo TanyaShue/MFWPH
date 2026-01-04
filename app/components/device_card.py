@@ -11,6 +11,8 @@ from PySide6.QtWidgets import QFrame, QVBoxLayout, QHBoxLayout, QLabel, QPushBut
 from qasync import asyncSlot
 
 from app.models.logging.log_manager import log_manager
+from app.models.config.global_config import global_config
+from app.utils.notification_manager import notification_manager
 from core.scheduled_task_manager import scheduled_task_manager
 from core.tasker_manager import task_manager
 from core.device_state_machine import DeviceState
@@ -291,6 +293,12 @@ class DeviceCard(QFrame):
         # ... (此方法保持不变) ...
         if not self.device_config:
             return
+
+        # 启动更新尚未完成时禁止启动任务
+        if getattr(global_config, "startup_update_in_progress", False):
+            notification_manager.show_warning("正在检查/安装更新，请稍后再开始任务。", "更新进行中")
+            return
+
         if self.device_manager.is_busy():
             await self.stop_device_tasks()
         else:

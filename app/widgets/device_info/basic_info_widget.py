@@ -18,6 +18,7 @@ from core.scheduled_task_manager import scheduled_task_manager
 from core.tasker_manager import task_manager
 from core.device_state_machine import DeviceState
 from core.device_status_manager import device_status_manager, DeviceUIInfo
+from app.utils.notification_manager import notification_manager
 
 
 class BasicInfoWidget(QFrame):
@@ -254,7 +255,14 @@ class BasicInfoWidget(QFrame):
     @asyncSlot()
     async def handle_run_stop_action(self):
         """处理运行/停止按钮的点击事件"""
-        if not self.device_config: return
+        if not self.device_config:
+            return
+
+        # 启动更新尚未结束时禁止启动任务
+        if getattr(global_config, "startup_update_in_progress", False):
+            notification_manager.show_warning("正在检查/安装更新，请稍后再开始任务。", "更新进行中")
+            return
+
         if self.device_manager.is_busy():
             await self.stop_device_tasks()
         else:

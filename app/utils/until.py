@@ -2,6 +2,7 @@ import os
 import shutil
 import sys
 import time
+from pathlib import Path
 
 import psutil
 from PySide6.QtGui import QPalette, QColor
@@ -10,9 +11,17 @@ from app.models.config.global_config import global_config
 from app.models.logging.log_manager import log_manager
 from app.utils.notification_manager import notification_manager
 from app.utils.update.checker import UpdateChecker
-from app.utils.update.models import UpdateInfo
+from app.utils.update.downloader import UpdateDownloader
+from app.utils.update.installer.factory import UpdateInstallerFactory
+from app.utils.update.models import UpdateInfo, UpdateSource
 
 logger = log_manager.get_app_logger()
+STARTUP_UPDATE_FLAG = "startup_update_in_progress"
+
+
+def _set_startup_updating(is_running: bool):
+    """设置启动阶段更新的全局标记，供界面按钮等查询。"""
+    setattr(global_config, STARTUP_UPDATE_FLAG, is_running)
 
 def clean_up_old_pyinstaller_temps():
     """
@@ -152,6 +161,15 @@ class StartupResourceUpdateChecker:
         self.main_window = main_window
         self.update_checker_thread = None
         self.resources_with_updates: list[UpdateInfo] = []  # <-- 类型提示为 UpdateInfo 列表
+        self.auto_update_downloaders: dict[str, UpdateDownloader] = {}  # 下载线程记录（串行仍保留引用避免重复）
+        self.auto_update_pending: list[UpdateInfo] = []  # 待自动更新的资源列表（顺序处理）
+        self.current_auto_update: UpdateInfo | None = None  # 当前正在处理的更新
+        self.installer = UpdateInstallerFactory()
+        # 监听安装结果以刷新界面/配置
+        self.installer.install_completed.connect(self._handle_install_completed)
+        self.installer.install_failed.connect(self._handle_install_failed)
+        self.installer.restart_required.connect(self._handle_restart_required)
+        _set_startup_updating(False)
 
     def check_for_updates(self):
         """检查是否需要自动检查资源更新"""
@@ -161,10 +179,12 @@ class StartupResourceUpdateChecker:
                 auto_check = False
 
             if auto_check:
+                _set_startup_updating(True)
                 logger.info("自动检查资源更新已启用，开始检查...")
                 resources = self._get_installed_resources()
                 if not resources:
                     logger.info("没有已安装的资源需要检查更新")
+                    _set_startup_updating(False)
                     return
 
                 notification_manager.show_info(
@@ -181,9 +201,11 @@ class StartupResourceUpdateChecker:
                 self.update_checker_thread.start()
             else:
                 logger.info("自动检查更新未启用")
+                _set_startup_updating(False)
 
         except Exception as e:
             logger.error(f"启动时检查更新配置失败: {e}", exc_info=True)
+            _set_startup_updating(False)
 
     def _get_installed_resources(self):
         """获取所有已安装的资源"""
@@ -205,6 +227,15 @@ class StartupResourceUpdateChecker:
 
         # 直接存储 UpdateInfo 对象
         self.resources_with_updates.append(update_info)
+
+        # 自动下载更新：先收集，待检查完成后串行处理
+        try:
+            if global_config.app_config.get_resource_auto_download(update_info.resource_name):
+                if not any(u.resource_name == update_info.resource_name for u in self.auto_update_pending):
+                    self.auto_update_pending.append(update_info)
+                    logger.info(f"{update_info.resource_name} 已加入自动更新列表，等待检查完成后处理。")
+        except Exception as e:
+            logger.error(f"自动更新 {update_info.resource_name} 时出错: {e}", exc_info=True)
 
     def _handle_resource_update_not_found(self, resource_name: str):
         """处理资源未发现更新的情况"""
@@ -248,3 +279,159 @@ class StartupResourceUpdateChecker:
                 self.main_window.set_resource_updates_available(True, self.resources_with_updates)
         else:
             logger.info("所有资源均为最新版本")
+
+        # 检查完成后开始顺序自动更新
+        if self.auto_update_pending and not self.current_auto_update:
+            self._start_next_auto_update()
+        if not self.auto_update_pending and not self.current_auto_update:
+            _set_startup_updating(False)
+
+    def _start_next_auto_update(self):
+        """开始处理下一个自动更新（顺序执行）"""
+        if self.current_auto_update is not None:
+            return
+        if not self.auto_update_pending:
+            logger.info("自动更新列表已空。")
+            _set_startup_updating(False)
+            return
+
+        update_info = self.auto_update_pending.pop(0)
+        self.current_auto_update = update_info
+        logger.info(f"开始处理自动更新: {update_info.resource_name}")
+        self._start_auto_update(update_info)
+
+    def _start_auto_update(self, update_info: UpdateInfo):
+        """为开启自动下载的资源启动下载/安装流程"""
+        resource = global_config.resource_configs.get(update_info.resource_name)
+
+        if not resource and update_info.resource_name != "MFWPH 主程序":
+            logger.warning(f"未找到资源 {update_info.resource_name} 的本地配置，跳过自动更新。")
+            if self.current_auto_update and self.current_auto_update.resource_name == update_info.resource_name:
+                self.current_auto_update = None
+                self._start_next_auto_update()
+            if not self.auto_update_pending and not self.current_auto_update:
+                _set_startup_updating(False)
+            return
+
+        # 避免重复下载
+        if update_info.resource_name in self.auto_update_downloaders:
+            logger.info(f"{update_info.resource_name} 的自动更新下载已在进行中，跳过重复启动。")
+            return
+
+        notification_manager.show_info(
+            f"发现 '{update_info.resource_name}' 的新版本 {update_info.new_version}，正在自动下载...",
+            "自动更新"
+        )
+
+        # 如果是 Git 仓库且本地是 Git repo，则直接调用安装器处理（内部会拉取）
+        is_git_repo = False
+        if update_info.source == UpdateSource.GITHUB and resource:
+            resource_path = Path(resource.source_file).parent
+            if shutil.which('git') is not None:
+                try:
+                    import git
+                    git.Repo(resource_path)
+                    is_git_repo = True
+                except Exception:
+                    is_git_repo = False
+
+        if is_git_repo:
+            logger.info(f"{update_info.resource_name} 检测到 Git 仓库，直接执行安装流程。")
+            self.installer.install_update(update_info, file_path=None, resource=resource)
+            return
+
+        temp_dir = Path("assets/temp")
+        downloader = UpdateDownloader(update_info, temp_dir)
+        downloader.download_completed.connect(self._handle_auto_download_completed)
+        downloader.download_failed.connect(self._handle_auto_download_failed)
+        downloader.finished.connect(lambda: self.auto_update_downloaders.pop(update_info.resource_name, None))
+        self.auto_update_downloaders[update_info.resource_name] = downloader
+        downloader.start()
+
+    def _handle_auto_download_completed(self, update_info: UpdateInfo, file_path: str):
+        """自动下载完成后执行安装"""
+        logger.info(f"{update_info.resource_name} 自动下载完成，开始安装。")
+        resource = global_config.resource_configs.get(update_info.resource_name)
+
+        if not resource and update_info.resource_name != "MFWPH 主程序":
+            logger.error(f"自动安装失败：找不到 {update_info.resource_name} 的资源配置。")
+            if self.current_auto_update and self.current_auto_update.resource_name == update_info.resource_name:
+                self.current_auto_update = None
+                self._start_next_auto_update()
+            if not self.auto_update_pending and not self.current_auto_update:
+                _set_startup_updating(False)
+            return
+
+        self.installer.install_update(update_info, file_path, resource)
+
+    def _handle_auto_download_failed(self, resource_name: str, error: str):
+        logger.error(f"自动下载 {resource_name} 失败: {error}")
+        notification_manager.show_error(f"自动下载失败: {error}", resource_name)
+        # 失败后推进队列
+        if self.current_auto_update and self.current_auto_update.resource_name == resource_name:
+            self.current_auto_update = None
+            self._start_next_auto_update()
+        if not self.auto_update_pending and not self.current_auto_update:
+            _set_startup_updating(False)
+
+    # ---------------- 安装结果处理：刷新资源配置与界面 ---------------- #
+    def _handle_install_completed(self, resource_name: str, version: str, locked_files: list):
+        notification_manager.show_success(f"资源 {resource_name} 已自动更新至版本 {version}", "自动更新成功")
+
+        # 重新加载资源配置，确保最新版本号写回界面
+        try:
+            global_config.load_all_resources_from_directory("assets/resource")
+        except Exception as e:
+            logger.error(f"自动更新后重载资源配置失败: {e}", exc_info=True)
+
+        download_page = None
+        try:
+            if hasattr(self.main_window, "pages") and isinstance(self.main_window.pages, dict):
+                download_page = self.main_window.pages.get("download")
+        except Exception:
+            download_page = None
+
+        if download_page:
+            try:
+                download_page.load_resources()
+                for res in global_config.get_all_resource_configs():
+                    if res.resource_name == resource_name:
+                        download_page._on_resource_selected(res)
+                        download_page.detail_view.set_latest_version()
+                        break
+            except Exception as e:
+                logger.error(f"刷新下载页面时出错: {e}", exc_info=True)
+
+        # 更新主窗口的更新提醒状态
+        try:
+            self.resources_with_updates = [
+                info for info in self.resources_with_updates if info.resource_name != resource_name
+            ]
+            if hasattr(self.main_window, 'set_resource_updates_available'):
+                self.main_window.set_resource_updates_available(bool(self.resources_with_updates),
+                                                                self.resources_with_updates)
+        except Exception as e:
+            logger.error(f"更新资源提醒状态时出错: {e}", exc_info=True)
+
+        # 推进队列
+        if self.current_auto_update and self.current_auto_update.resource_name == resource_name:
+            self.current_auto_update = None
+            self._start_next_auto_update()
+        if not self.auto_update_pending and not self.current_auto_update:
+            _set_startup_updating(False)
+
+    def _handle_install_failed(self, resource_name: str, error_message: str):
+        notification_manager.show_error(f"自动安装失败: {error_message}", resource_name)
+        # 失败后推进队列
+        if self.current_auto_update and self.current_auto_update.resource_name == resource_name:
+            self.current_auto_update = None
+            self._start_next_auto_update()
+        if not self.auto_update_pending and not self.current_auto_update:
+            _set_startup_updating(False)
+
+    def _handle_restart_required(self):
+        notification_manager.show_info(
+            "本次自动更新需要重启应用程序才能生效，程序将在 5 秒后自动重启。",
+            "即将重启"
+        )
+        QTimer.singleShot(5000, QCoreApplication.quit)

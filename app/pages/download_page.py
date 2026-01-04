@@ -9,8 +9,8 @@ from PySide6.QtCore import (QTimer, QCoreApplication, Qt, Signal, Property, QPro
 from PySide6.QtGui import QIcon, QPainter, QColor, QPen, QPixmap
 from PySide6.QtWidgets import (QWidget, QVBoxLayout, QLabel, QFrame, QPushButton,
                                QHBoxLayout, QMessageBox, QSizePolicy,
-                               QDialog, QStackedWidget,
-                               QScrollArea, QComboBox, QProgressBar, QTextBrowser)  # <-- 修改: 导入 QTextBrowser
+                               QDialog, QStackedWidget, QCheckBox,
+                               QScrollArea, QComboBox, QProgressBar, QTextBrowser)
 # from git import InvalidGitRepositoryError
 
 from app.models.config.app_config import ResourceUpdateConfig
@@ -231,11 +231,24 @@ class ResourceDetailView(QWidget):
         channel_layout.addWidget(channel_label)
         channel_layout.addWidget(self.channel_combo)
 
+        auto_download_layout = QVBoxLayout()
+        auto_download_layout.setSpacing(4)
+        auto_download_label = QLabel("自动更新")
+        auto_download_label.setObjectName("sourceLabel")
+        self.auto_download_checkbox = QCheckBox("自动下载")
+        self.auto_download_checkbox.setObjectName("autoDownloadCheckbox")
+        self.auto_download_checkbox.setCursor(Qt.PointingHandCursor)
+        self.auto_download_checkbox.setToolTip("检查更新时，如果发现新版本将自动下载并安装")
+        self.auto_download_checkbox.stateChanged.connect(self._on_auto_download_changed)
+        auto_download_layout.addWidget(auto_download_label)
+        auto_download_layout.addWidget(self.auto_download_checkbox)
+
         layout.addWidget(self.large_icon)
         layout.addLayout(info_layout, 1)
         layout.addStretch()
         layout.addLayout(source_layout)
         layout.addLayout(channel_layout)
+        layout.addLayout(auto_download_layout)
         return header_widget
 
     def _create_action_bar(self):
@@ -375,12 +388,16 @@ class ResourceDetailView(QWidget):
         self.desc_label.setText(resource.resource_description or "该资源暂无描述。")
         self.source_combo.blockSignals(True)
         self.channel_combo.blockSignals(True)
+        self.auto_download_checkbox.blockSignals(True)
         update_method = global_config.app_config.get_resource_update_method(resource.resource_name).lower()
         update_channel = global_config.app_config.get_resource_update_channel(resource.resource_name)
+        auto_download = global_config.app_config.get_resource_auto_download(resource.resource_name)
         self.source_combo.setCurrentText("Mirror酱" if 'mirrorchyan' in update_method else "GitHub")
         self.channel_combo.setCurrentText(REVERSE_CHANNEL_MAP.get(update_channel, "稳定版"))
+        self.auto_download_checkbox.setChecked(auto_download)
         self.source_combo.blockSignals(False)
         self.channel_combo.blockSignals(False)
+        self.auto_download_checkbox.blockSignals(False)
 
         self.changelog_card.hide()
         if cached_status:
@@ -443,6 +460,30 @@ class ResourceDetailView(QWidget):
 
     def _get_current_method_from_ui(self):
         return 'MirrorChyan' if self.source_combo.currentText() == "Mirror酱" else 'github'
+
+    def _on_auto_download_changed(self, state):
+        if not self.current_resource: return
+        resource_name = self.current_resource.resource_name
+        auto_download = state == Qt.CheckState.Checked.value
+
+        config = global_config.app_config.resource_update_methods.get(resource_name)
+
+        if config is None:
+            current_method = self._get_current_method_from_ui()
+            current_channel = CHANNEL_MAP.get(self.channel_combo.currentText(), 'stable')
+            config = ResourceUpdateConfig(
+                method=current_method,
+                channel=current_channel,
+                auto_download_update=auto_download
+            )
+            global_config.app_config.resource_update_methods[resource_name] = config
+        else:
+            config.auto_download_update = auto_download
+
+        global_config.save_all_configs()
+        status = "开启" if auto_download else "关闭"
+        notification_manager.show_info(
+            f"'{resource_name}' 的自动下载更新已{status}。", "设置已保存")
 
     def _on_check_clicked(self):
         if self.current_resource:
@@ -719,6 +760,9 @@ class DownloadPage(QWidget):
             #downloadProgressBar::chunk { background-color: #3b82f6; border-radius: 6px; }
             #cancelButton { background-color: #f1f5f9; color: #475569; border: 1px solid #e2e8f0; border-radius: 6px; font-size: 13px; font-weight: 500; padding: 0 12px; }
             #cancelButton:hover { background-color: #e2e8f0; border-color: #d1d5db; }
+            #autoDownloadCheckbox { font-size: 13px; color: #334155; padding: 6px 8px; border: 1px solid #e2e8f0; border-radius: 6px; background-color: white; }
+            #autoDownloadCheckbox::indicator { width: 14px; height: 14px; border-radius: 3px; border: 1px solid #cbd5e1; }
+            #autoDownloadCheckbox::indicator:checked { background-color: #3b82f6; border-color: #3b82f6; }
         """)
 
     def load_resources(self):
@@ -852,6 +896,20 @@ class DownloadPage(QWidget):
             item.set_update_status(True)
         if self.selected_resource and self.selected_resource.resource_name == update_info.resource_name:
             self.detail_view.set_update_available(update_info.new_version, update_info.release_note)
+
+        # 检查是否开启了自动下载更新
+        if global_config.app_config.get_resource_auto_download(update_info.resource_name):
+            # 找到对应的资源对象并开始下载
+            resource = next(
+                (r for r in global_config.get_all_resource_configs() if r.resource_name == update_info.resource_name),
+                None
+            )
+            if resource:
+                notification_manager.show_info(
+                    f"发现 '{update_info.resource_name}' 的新版本 {update_info.new_version}，正在自动下载...",
+                    "自动更新"
+                )
+                self._start_update(resource)
 
     def _handle_update_not_found(self, resource_name):
         self.update_status_cache[resource_name] = {'status': 'latest'}

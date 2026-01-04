@@ -181,6 +181,7 @@ class ResourceUpdateConfig:
     """记录资源的更新方式和更新频道。"""
     method: str
     channel: str = "stable"  # 默认为稳定版
+    auto_download_update: bool = False  # 是否自动下载更新
 
 
 def schedule_task_to_dict(schedule: ScheduleTask) -> Dict[str, Any]:
@@ -306,6 +307,15 @@ class AppConfig:
         if specific_config:
             return specific_config.channel
         return "beta" if self.receive_beta_update else "stable"
+
+    def get_resource_auto_download(self, resource_name: str) -> bool:
+        """
+        获取指定资源是否开启自动下载更新。
+        """
+        specific_config = self.resource_update_methods.get(resource_name)
+        if specific_config:
+            return specific_config.auto_download_update
+        return False
 
     def link_resources_to_config(self):
         """将所有资源链接到此 AppConfig 实例。"""
@@ -470,7 +480,8 @@ class AppConfig:
             elif isinstance(value, dict):
                 migrated_update_methods[name] = ResourceUpdateConfig(
                     method=value.get('method', ''),
-                    channel=value.get('channel', 'stable')
+                    channel=value.get('channel', 'stable'),
+                    auto_download_update=value.get('auto_download_update', False)
                 )
         config.resource_update_methods = migrated_update_methods
         config.update_method = data.get('update_method', 'github')

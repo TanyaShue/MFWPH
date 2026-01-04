@@ -131,8 +131,9 @@ def create_main_window(app, loop, base_path):
     patch_mainwindow_exit_logic(window, loop, app)
     window.show()
 
-    startup_checker = StartupResourceUpdateChecker(window)
-    QTimer.singleShot(1000, startup_checker.check_for_updates)
+    # 保持引用以防被GC提前回收导致定时任务不触发
+    window.startup_update_checker = StartupResourceUpdateChecker(window)
+    QTimer.singleShot(1000, window.startup_update_checker.check_for_updates)
 
     return window
 
