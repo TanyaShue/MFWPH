@@ -5,6 +5,7 @@ import time
 from pathlib import Path
 
 import psutil
+from PySide6.QtCore import QTimer, QCoreApplication
 from PySide6.QtGui import QPalette, QColor
 
 from app.models.config.global_config import global_config
@@ -118,40 +119,7 @@ def kill_processes():
                     app_logger.error(f"清理 agent 进程组 {proc.pid} 失败: {e}")
     except Exception as e:
         app_logger.error(f"处理 agent 进程组终止时发生错误: {e}")
-
-
-    # ---------- 2. 杀掉 adb ----------
-    # current_process = psutil.Process(os.getpid())
-    # current_process_name = current_process.name()
-    #
-    # for proc in psutil.process_iter(['name', 'pid']):
-    #     if proc.info.get('name', '').lower() == "adb.exe":
-    #         try:
-    #             proc.kill()
-    #             app_logger.info(f"已终止 adb.exe 进程，PID: {proc.pid}")
-    #         except Exception as e:
-    #             app_logger.error(f"终止 adb.exe 进程 (PID: {proc.pid}) 失败: {e}")
-
-    # ---------- 3. 杀掉同名程序 ----------
-    # for proc in psutil.process_iter(['name', 'pid']):
-    #     try:
-    #         if proc.info['name'] == current_process_name and proc.pid != current_process.pid:
-    #             for child in proc.children(recursive=True):
-    #                 try:
-    #                     child.kill()
-    #                     app_logger.info(f"已终止子进程 {child.name()}，PID: {child.pid}")
-    #                 except Exception as e:
-    #                     app_logger.error(f"终止子进程 (PID: {child.pid}) 失败: {e}")
-    #             proc.kill()
-    #             app_logger.info(f"已终止同名进程 {current_process_name}，PID: {proc.pid}")
-    #     except Exception as e:
-    #         app_logger.error(f"处理进程时发生错误: {e}")
-    #
-    time.sleep(0.5)
     app_logger.info("进程清理完成")
-
-
-logger = log_manager.get_app_logger()
 
 
 class StartupResourceUpdateChecker:

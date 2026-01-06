@@ -360,10 +360,6 @@ class TaskExecutor(QObject):
                 if self._process_log_protocol(focus, recog_key_map, noti_type):
                     return
 
-                if noti_type in (NotificationType.Succeeded, NotificationType.Failed):
-                    status_text = '成功' if noti_type == NotificationType.Succeeded else '失败'
-                    self.executor.logger.debug(f"识别: {detail.name} - {status_text}")
-
             def on_node_action(self, context, noti_type: NotificationType, detail: ContextEventSink.NodeActionDetail):
                 if not detail or not hasattr(detail, "focus") or not detail.focus:
                     return
