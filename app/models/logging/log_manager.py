@@ -56,8 +56,8 @@ class LogManager(QObject):
         self.handle_to_device: Dict[Any, str] = {}
         self.context_to_logger: Dict[Any, logging.Logger] = {}
         
-        # 使用队列处理器实现异步日志
-        self.log_queue = Queue(-1)  # 无限容量队列
+        # 使用队列处理器实现异步日志 - 使用有界队列避免内存溢出
+        self.log_queue = Queue(maxsize=1000)  # 最大1000条日志队列
         self.queue_listener: Optional[logging.handlers.QueueListener] = None
         self.file_handlers: Dict[str, logging.FileHandler] = {}
 
@@ -334,9 +334,16 @@ class AppLogSignalHandler(logging.Handler):
     def __init__(self, log_manager):
         super().__init__()
         self.log_manager = log_manager
+        self._last_emit_time = 0
+        self._emit_interval = 0.1  # 最小发射间隔100ms
 
     def emit(self, record):
-        self.log_manager.app_log_updated.emit()
+        import time
+        current_time = time.time()
+        # 限制信号发射频率，避免过于频繁的UI更新
+        if current_time - self._last_emit_time >= self._emit_interval:
+            self.log_manager.app_log_updated.emit()
+            self._last_emit_time = current_time
 
 
 class DeviceLogSignalHandler(logging.Handler):
@@ -345,9 +352,16 @@ class DeviceLogSignalHandler(logging.Handler):
         super().__init__()
         self.device_name = device_name
         self.log_manager = log_manager
+        self._last_emit_time = 0
+        self._emit_interval = 0.1  # 最小发射间隔100ms
 
     def emit(self, record):
-        self.log_manager.device_log_updated.emit(self.device_name)
+        import time
+        current_time = time.time()
+        # 限制信号发射频率，避免过于频繁的UI更新
+        if current_time - self._last_emit_time >= self._emit_interval:
+            self.log_manager.device_log_updated.emit(self.device_name)
+            self._last_emit_time = current_time
 
 
 class ContextLogger:

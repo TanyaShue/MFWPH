@@ -80,8 +80,8 @@ class TaskExecutor(QObject):
         # Windows Job Object 句柄，用于防止僵尸进程
         self._agent_job_handle = None
 
-        # 线程池
-        self._executor = ThreadPoolExecutor(max_workers=10, thread_name_prefix=f"TaskExec_{self.device_name}")
+        # 线程池 - 减少工作线程数量，避免过度消耗资源
+        self._executor = ThreadPoolExecutor(max_workers=4, thread_name_prefix=f"TaskExec_{self.device_name}")
         # 通知处理器
         self._notification_handler = self._create_notification_handler()
 
@@ -740,19 +740,39 @@ class TaskExecutor(QObject):
             self.logger.error(f"Agent进程启动后立即退出了")
 
     def _start_log_threads(self):
-        """启动日志捕获线程"""
+        """启动日志捕获线程 - 优化版本，使用队列避免阻塞"""
 
         def log_output(pipe, prefix):
             try:
+                buffer = []
+                buffer_size = 10  # 每10行批量处理一次
+
                 for line in iter(pipe.readline, ''):
-                    if line: self.logger.debug(f"[Agent {prefix}] {line.rstrip()}")
-            except Exception:
-                pass
+                    if line:
+                        buffer.append(f"[Agent {prefix}] {line.rstrip()}")
+
+                        # 达到缓冲区大小时批量记录
+                        if len(buffer) >= buffer_size:
+                            for buffered_line in buffer:
+                                self.logger.debug(buffered_line)
+                            buffer.clear()
+
+                            # 短暂休眠，避免过度占用CPU
+                            time.sleep(0.01)
+
+                # 处理剩余的缓冲区内容
+                for buffered_line in buffer:
+                    self.logger.debug(buffered_line)
+
+            except Exception as e:
+                self.logger.warning(f"日志线程 {prefix} 异常退出: {e}")
             finally:
                 pipe.close()
 
         for pipe, prefix in [(self._agent_process.stdout, 'stdout'), (self._agent_process.stderr, 'stderr')]:
-            threading.Thread(target=log_output, args=(pipe, prefix), daemon=True).start()
+            thread = threading.Thread(target=log_output, args=(pipe, prefix), daemon=True)
+            thread.name = f"AgentLog_{self.device_name}_{prefix}"
+            thread.start()
 
     async def _cleanup_agent(self, force_kill: bool = False):
         """

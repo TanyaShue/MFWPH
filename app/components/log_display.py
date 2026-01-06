@@ -332,27 +332,50 @@ class LogDisplay(QFrame):
             self.device_selector.setCurrentIndex(self.device_selector.count() - 1)
 
     def on_app_log_updated(self):
-        """Handle app log update signal"""
-        # Get the latest logs from log manager
+        """Handle app log update signal - 优化版本，避免重复处理"""
+        # 使用缓存的日志，避免每次都重新读取文件
+        if not hasattr(self, '_last_app_log_count'):
+            self._last_app_log_count = 0
+
         all_logs = log_manager.get_all_logs()
 
+        # 只处理新增的日志
+        new_logs = all_logs[self._last_app_log_count:]
+        self._last_app_log_count = len(all_logs)
+
         # Only process new logs from current session
-        for log in all_logs:
+        for log in new_logs:
             if self.is_log_from_current_session(log):
                 # Check if this log is already in our session logs
                 if not any(entry['log'] == log for entry in self.session_logs):
                     self.add_session_log(log, None)
 
         if self.current_device == "all":
-            self.refresh_display()
+            # 使用定时器延迟刷新，避免过于频繁的UI更新
+            if not hasattr(self, '_refresh_timer'):
+                from PySide6.QtCore import QTimer
+                self._refresh_timer = QTimer()
+                self._refresh_timer.setSingleShot(True)
+                self._refresh_timer.timeout.connect(self.refresh_display)
+
+            self._refresh_timer.start(50)  # 50ms延迟
 
     def on_device_log_updated(self, device_name):
-        """Handle device log update signal"""
-        # Get device logs from log manager
+        """Handle device log update signal - 优化版本，避免重复处理"""
+        # 使用缓存的日志计数，避免每次都重新读取文件
+        cache_key = f'_last_{device_name}_log_count'
+        if not hasattr(self, cache_key):
+            setattr(self, cache_key, 0)
+
         device_logs = log_manager.get_device_logs(device_name)
 
+        # 只处理新增的日志
+        last_count = getattr(self, cache_key)
+        new_logs = device_logs[last_count:]
+        setattr(self, cache_key, len(device_logs))
+
         # Only process new logs from current session
-        for log in device_logs:
+        for log in new_logs:
             if self.is_log_from_current_session(log):
                 # Check if this log is already in our session logs
                 if not any(entry['log'] == log and entry['device'] == device_name
@@ -360,7 +383,14 @@ class LogDisplay(QFrame):
                     self.add_session_log(log, device_name)
 
         if self.current_device == device_name or self.current_device == "all":
-            self.refresh_display()
+            # 使用定时器延迟刷新，避免过于频繁的UI更新
+            if not hasattr(self, '_refresh_timer'):
+                from PySide6.QtCore import QTimer
+                self._refresh_timer = QTimer()
+                self._refresh_timer.setSingleShot(True)
+                self._refresh_timer.timeout.connect(self.refresh_display)
+
+            self._refresh_timer.start(50)  # 50ms延迟
 
     def set_device_handle(self, device_name, handle):
         """Set a handle for a device name"""
