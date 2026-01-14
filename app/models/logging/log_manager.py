@@ -1,3 +1,9 @@
+# -*- coding: UTF-8 -*-
+"""
+日志管理器 - 重构版
+使用内存缓冲区替代文件读取，优化UI显示性能
+"""
+
 import functools
 import logging
 import logging.handlers
@@ -5,8 +11,11 @@ import os
 import sys
 import zipfile
 import atexit
+from collections import defaultdict, deque
+from dataclasses import dataclass, field
 from datetime import datetime
-from typing import Dict, List, Any, Callable, Optional
+from typing import Dict, List, Any, Callable, Optional, Deque
+
 from queue import Queue
 
 # 尝试导入Qt，如果失败则使用纯Python实现
@@ -39,14 +48,87 @@ except ImportError:
                     pass
 
 
+@dataclass
+class LogRecord:
+    """日志记录数据类，用于内存缓冲和UI显示"""
+    timestamp: datetime
+    level: str
+    message: str
+    device_name: Optional[str] = None  # None表示app日志
+    
+    def to_formatted_string(self) -> str:
+        """转换为格式化的日志字符串"""
+        time_str = self.timestamp.strftime('%Y-%m-%d %H:%M:%S')
+        return f"{time_str} - {self.level} - {self.message}"
+    
+    def to_display_string(self) -> str:
+        """转换为用于UI显示的简化字符串（仅时间和消息）"""
+        time_str = self.timestamp.strftime('%H:%M:%S')
+        return f"{time_str} {self.message}"
+
+
+class LogBuffer:
+    """
+    内存日志缓冲区
+    维护当前会话的日志记录，供UI快速读取
+    """
+    def __init__(self, max_size: int = 2000):
+        self.max_size = max_size
+        self.app_logs: Deque[LogRecord] = deque(maxlen=max_size)
+        self.device_logs: Dict[str, Deque[LogRecord]] = defaultdict(
+            lambda: deque(maxlen=max_size)
+        )
+        self._lock = None  # 可以添加线程锁如果需要
+    
+    def add_app_log(self, record: LogRecord) -> None:
+        """添加应用程序日志"""
+        self.app_logs.append(record)
+    
+    def add_device_log(self, device_name: str, record: LogRecord) -> None:
+        """添加设备日志"""
+        record.device_name = device_name
+        self.device_logs[device_name].append(record)
+    
+    def get_app_logs(self) -> List[LogRecord]:
+        """获取所有应用程序日志"""
+        return list(self.app_logs)
+    
+    def get_device_logs(self, device_name: str) -> List[LogRecord]:
+        """获取指定设备的所有日志"""
+        return list(self.device_logs.get(device_name, []))
+    
+    def get_all_logs(self) -> List[LogRecord]:
+        """获取所有日志（app + 所有设备），按时间排序"""
+        all_records = list(self.app_logs)
+        for device_logs in self.device_logs.values():
+            all_records.extend(device_logs)
+        return sorted(all_records, key=lambda r: r.timestamp)
+    
+    def clear(self) -> None:
+        """清空所有日志"""
+        self.app_logs.clear()
+        self.device_logs.clear()
+    
+    def clear_device(self, device_name: str) -> None:
+        """清空指定设备的日志"""
+        if device_name in self.device_logs:
+            self.device_logs[device_name].clear()
+
+
 class LogManager(QObject):
     """
-    管理应用程序日志，支持全局日志和设备特定日志
-    使用QueueHandler + QueueListener实现异步日志写入，确保日志不丢失
+    日志管理器 - 重构版
+    - 使用内存缓冲区存储当前会话日志
+    - 信号携带LogRecord对象，无节流
+    - 保持文件异步写入
     """
-    # 日志更新信号
+    # 新信号：携带日志记录对象
+    app_log_added = Signal(object)          # LogRecord
+    device_log_added = Signal(str, object)  # device_name, LogRecord
+    
+    # 保留旧信号以保持兼容性（但不再推荐使用）
     app_log_updated = Signal()
-    device_log_updated = Signal(str)  # device_name
+    device_log_updated = Signal(str)
 
     def __init__(self):
         super().__init__()
@@ -56,8 +138,11 @@ class LogManager(QObject):
         self.handle_to_device: Dict[Any, str] = {}
         self.context_to_logger: Dict[Any, logging.Logger] = {}
         
-        # 使用队列处理器实现异步日志 - 使用有界队列避免内存溢出
-        self.log_queue = Queue(maxsize=1000)  # 最大1000条日志队列
+        # 内存日志缓冲区
+        self.log_buffer = LogBuffer(max_size=2000)
+        
+        # 使用队列处理器实现异步日志写入
+        self.log_queue = Queue(maxsize=1000)
         self.queue_listener: Optional[logging.handlers.QueueListener] = None
         self.file_handlers: Dict[str, logging.FileHandler] = {}
 
@@ -81,9 +166,7 @@ class LogManager(QObject):
         atexit.register(self.shutdown)
 
     def _start_queue_listener(self):
-        """启动队列监听器，负责从队列中取出日志并写入"""
-        # QueueListener会在后台线程中处理所有的handler
-        # 我们暂时创建一个空的listener，稍后添加handlers
+        """启动队列监听器，负责从队列中取出日志并写入文件"""
         self.queue_listener = logging.handlers.QueueListener(
             self.log_queue,
             respect_handler_level=True
@@ -150,7 +233,7 @@ class LogManager(QObject):
 
         logger = logging.getLogger(name)
         logger.setLevel(logging.DEBUG)
-        logger.propagate = False  # 不传播到父logger
+        logger.propagate = False
 
         # 清除任何现有的处理器以避免重复
         for handler in logger.handlers[:]:
@@ -159,7 +242,7 @@ class LogManager(QObject):
         sanitized_log_file = self._sanitize_filename(log_file)
         file_path = os.path.join(self.log_dir, sanitized_log_file)
 
-        # 创建文件处理器（直接写入文件，不缓冲）
+        # 创建文件处理器
         file_handler = logging.FileHandler(file_path, encoding='utf-8', mode='a')
         file_handler.setLevel(logging.DEBUG)
         formatter = logging.Formatter(
@@ -169,7 +252,7 @@ class LogManager(QObject):
         file_handler.setFormatter(formatter)
         self.file_handlers[name] = file_handler
 
-        # 创建控制台处理器（直接输出到控制台）
+        # 创建控制台处理器
         console_handler = logging.StreamHandler(sys.stdout)
         console_handler.setLevel(logging.INFO)
         console_formatter = logging.Formatter(
@@ -178,15 +261,11 @@ class LogManager(QObject):
         )
         console_handler.setFormatter(console_formatter)
 
-        # 将handlers添加到队列监听器
-        # 停止现有的listener，添加新的handler，然后重启
+        # 更新队列监听器
         if self.queue_listener:
             self.queue_listener.stop()
         
-        # 收集所有现有的handlers
         all_handlers = list(self.file_handlers.values())
-        
-        # 重新创建listener包含所有handlers
         self.queue_listener = logging.handlers.QueueListener(
             self.log_queue,
             *all_handlers,
@@ -195,11 +274,11 @@ class LogManager(QObject):
         )
         self.queue_listener.start()
 
-        # 为logger添加队列处理器
+        # 为logger添加队列处理器（用于异步文件写入）
         queue_handler = logging.handlers.QueueHandler(self.log_queue)
         logger.addHandler(queue_handler)
 
-        # 添加信号处理器（直接添加到logger，不通过队列）
+        # 添加信号处理器（用于UI更新和内存缓冲）
         if name == "app":
             signal_handler = AppLogSignalHandler(self)
             signal_handler.setLevel(logging.DEBUG)
@@ -288,80 +367,139 @@ class LogManager(QObject):
         self.handle_to_device[handle] = device_name
         self.context_to_logger.clear()
 
+    # ========== 新API：从内存缓冲区获取日志 ==========
+    
+    def get_app_log_records(self) -> List[LogRecord]:
+        """获取应用程序日志记录列表"""
+        return self.log_buffer.get_app_logs()
+    
+    def get_device_log_records(self, device_name: str) -> List[LogRecord]:
+        """获取设备日志记录列表"""
+        return self.log_buffer.get_device_logs(device_name)
+    
+    def get_all_log_records(self) -> List[LogRecord]:
+        """获取所有日志记录，按时间排序"""
+        return self.log_buffer.get_all_logs()
+
+    # ========== 兼容旧API：返回格式化字符串 ==========
+    
     def get_device_logs(self, device_name: str) -> List[str]:
-        """从当前会话检索特定设备的所有日志"""
-        log_file = os.path.join(self.log_dir, f"{device_name}.log")
-        if not os.path.exists(log_file):
-            return []
-
-        with open(log_file, 'r', encoding='utf-8') as f:
-            all_lines = f.readlines()
-
-        session_lines = []
-        for line in all_lines:
-            try:
-                timestamp_str = line.split(' - ')[0].strip()
-                log_time = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
-                if log_time >= self.session_start_time:
-                    session_lines.append(line)
-            except (ValueError, IndexError):
-                session_lines.append(line)
-        return session_lines
+        """从内存缓冲区获取设备日志（兼容旧API）"""
+        records = self.log_buffer.get_device_logs(device_name)
+        return [record.to_formatted_string() for record in records]
 
     def get_all_logs(self) -> List[str]:
-        """从当前会话检索主应用程序日志的所有日志"""
-        log_file = os.path.join(self.log_dir, "app.log")
-        if not os.path.exists(log_file):
-            return []
-
-        with open(log_file, 'r', encoding='utf-8') as f:
-            all_lines = f.readlines()
-
-        session_lines = []
-        for line in all_lines:
-            try:
-                timestamp_str = line.split(' - ')[0].strip()
-                log_time = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
-                if log_time >= self.session_start_time:
-                    session_lines.append(line)
-            except (ValueError, IndexError):
-                session_lines.append(line)
-        return session_lines
+        """从内存缓冲区获取应用日志（兼容旧API）"""
+        records = self.log_buffer.get_app_logs()
+        return [record.to_formatted_string() for record in records]
+    
+    def add_device_log(self, device_name: str, log_entry: str) -> None:
+        """手动添加设备日志条目（兼容旧API）"""
+        # 解析日志条目
+        try:
+            parts = log_entry.split(' - ', 2)
+            if len(parts) >= 3:
+                timestamp_str = parts[0].strip()
+                level = parts[1].strip()
+                message = parts[2].strip()
+                timestamp = datetime.strptime(timestamp_str, '%Y-%m-%d %H:%M:%S')
+            else:
+                timestamp = datetime.now()
+                level = "INFO"
+                message = log_entry
+        except Exception:
+            timestamp = datetime.now()
+            level = "INFO"
+            message = log_entry
+        
+        record = LogRecord(
+            timestamp=timestamp,
+            level=level,
+            message=message,
+            device_name=device_name
+        )
+        self.log_buffer.add_device_log(device_name, record)
+        self.device_log_added.emit(device_name, record)
+        self.device_log_updated.emit(device_name)
 
 
 class AppLogSignalHandler(logging.Handler):
-    """自定义日志处理器，在应用日志更新时发出信号"""
-    def __init__(self, log_manager):
+    """
+    应用日志信号处理器
+    - 将日志记录添加到内存缓冲区
+    - 发出携带LogRecord的信号
+    - 无节流限制，保证实时性
+    """
+    def __init__(self, log_manager: LogManager):
         super().__init__()
         self.log_manager = log_manager
-        self._last_emit_time = 0
-        self._emit_interval = 0.1  # 最小发射间隔100ms
 
-    def emit(self, record):
-        import time
-        current_time = time.time()
-        # 限制信号发射频率，避免过于频繁的UI更新
-        if current_time - self._last_emit_time >= self._emit_interval:
+    def emit(self, record: logging.LogRecord):
+        try:
+            # 创建LogRecord对象
+            log_record = LogRecord(
+                timestamp=datetime.fromtimestamp(record.created),
+                level=record.levelname,
+                message=self.format_message(record),
+                device_name=None
+            )
+            
+            # 添加到内存缓冲区
+            self.log_manager.log_buffer.add_app_log(log_record)
+            
+            # 发出新信号（携带日志记录）
+            self.log_manager.app_log_added.emit(log_record)
+            
+            # 发出旧信号（兼容性）
             self.log_manager.app_log_updated.emit()
-            self._last_emit_time = current_time
+            
+        except Exception:
+            # 日志处理器不应抛出异常
+            pass
+    
+    def format_message(self, record: logging.LogRecord) -> str:
+        """格式化日志消息"""
+        return record.getMessage()
 
 
 class DeviceLogSignalHandler(logging.Handler):
-    """自定义日志处理器，在设备日志更新时发出信号"""
-    def __init__(self, device_name, log_manager):
+    """
+    设备日志信号处理器
+    - 将日志记录添加到设备专属的内存缓冲区
+    - 发出携带LogRecord的信号
+    - 无节流限制，保证实时性
+    """
+    def __init__(self, device_name: str, log_manager: LogManager):
         super().__init__()
         self.device_name = device_name
         self.log_manager = log_manager
-        self._last_emit_time = 0
-        self._emit_interval = 0.1  # 最小发射间隔100ms
 
-    def emit(self, record):
-        import time
-        current_time = time.time()
-        # 限制信号发射频率，避免过于频繁的UI更新
-        if current_time - self._last_emit_time >= self._emit_interval:
+    def emit(self, record: logging.LogRecord):
+        try:
+            # 创建LogRecord对象
+            log_record = LogRecord(
+                timestamp=datetime.fromtimestamp(record.created),
+                level=record.levelname,
+                message=self.format_message(record),
+                device_name=self.device_name
+            )
+            
+            # 添加到设备日志缓冲区
+            self.log_manager.log_buffer.add_device_log(self.device_name, log_record)
+            
+            # 发出新信号（携带设备名和日志记录）
+            self.log_manager.device_log_added.emit(self.device_name, log_record)
+            
+            # 发出旧信号（兼容性）
             self.log_manager.device_log_updated.emit(self.device_name)
-            self._last_emit_time = current_time
+            
+        except Exception:
+            # 日志处理器不应抛出异常
+            pass
+    
+    def format_message(self, record: logging.LogRecord) -> str:
+        """格式化日志消息"""
+        return record.getMessage()
 
 
 class ContextLogger:
