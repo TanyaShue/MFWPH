@@ -51,6 +51,9 @@ class ScheduledTaskManager(QObject):
                 self._timers[task.schedule_id] = task_info
             all_tasks_for_ui.append(task_info)
 
+        # 按设定时间 time 升序排序
+        all_tasks_for_ui.sort(key=lambda x: x.get('time', '00:00:00'))
+
         self.logger.info(f"从配置中加载了 {len(all_tasks_for_ui)} 个定时任务")
         return all_tasks_for_ui
 

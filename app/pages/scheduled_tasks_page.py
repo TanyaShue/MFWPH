@@ -232,25 +232,27 @@ class TaskPlanTableWidget(QWidget):
         delete_btn = QPushButton("删除")
         delete_btn.setFixedSize(35, 22)
         delete_btn.setStyleSheet(""" QPushButton { background: #f44336; color: white; ...} """)
-        toggle_btn.clicked.connect(lambda _, r=row: self.toggle_task(r))
-        edit_btn.clicked.connect(lambda _, r=row: self.edit_task(r))
-        delete_btn.clicked.connect(lambda _, r=row: self.delete_task(r))
+        # 绑定 tid=task_id，而不是 row
+        # toggle_btn.clicked.connect(lambda _, r=row: self.toggle_task(r))
+        task_id = str(task_data.get('id', ''))
+        toggle_btn.clicked.connect(lambda _, tid=task_id: self.toggle_task(tid))
+        edit_btn.clicked.connect(lambda _, tid=task_id: self.edit_task(tid))
+        delete_btn.clicked.connect(lambda _, tid=task_id: self.delete_task(tid))
         op_layout.addWidget(toggle_btn)
         op_layout.addWidget(edit_btn)
         op_layout.addWidget(delete_btn)
         self.table.setCellWidget(row, 9, op_widget)
 
-    @asyncSlot()
-    async def toggle_task(self, row):
-        id_item = self.table.item(row, 0)
-        if id_item and self.task_manager:
-            task_data = id_item.data(Qt.UserRole)
-            await self.task_manager.toggle_task_status(task_data['id'], task_data['status'] != "活动")
+    @asyncSlot(str)
+    async def toggle_task(self, task_id):
+        # 通过 ID 找到任务数据
+        task_data = next((t for t in self.all_tasks if str(t.get('id')) == task_id), None)
+        if task_data and self.task_manager:
+            await self.task_manager.toggle_task_status(task_id, task_data['status'] != "活动")
 
-    def edit_task(self, row):
-        id_item = self.table.item(row, 0)
-        if id_item:
-            task_data = id_item.data(Qt.UserRole)
+    def edit_task(self, task_id):
+        task_data = next((t for t in self.all_tasks if str(t.get('id')) == task_id), None)
+        if task_data:
             dialog = CreateTaskDialog(self, task_info=task_data)
             dialog.task_saved.connect(self.on_task_edited)
             dialog.exec()
@@ -261,15 +263,10 @@ class TaskPlanTableWidget(QWidget):
             await self.task_manager.update_task(updated_task_info)
             notification_manager.show_success("更新定时任务成功", f"ID: {updated_task_info['id']} 已更新", 1000)
 
-    @asyncSlot()
-    async def delete_task(self, row):
-        id_item = self.table.item(row, 0)
-        if not id_item: return
-        task_data = id_item.data(Qt.UserRole)
-        task_id = task_data.get('id')
-
-        if task_id and self.task_manager:
-            reply = QMessageBox.question(self, "确认删除", f"确定要删除任务 ID:{task_id} 吗？",
+    @asyncSlot(str)
+    async def delete_task(self, task_id):
+        if self.task_manager:
+            reply = QMessageBox.question(self, "确认删除", f"确定要删除任务 {task_id} 吗？",
                                          QMessageBox.Yes | QMessageBox.No)
             if reply == QMessageBox.Yes:
                 await self.task_manager.remove_task(task_id)
@@ -314,6 +311,8 @@ class TaskPlanTableWidget(QWidget):
 
     def apply_filter(self):
         self.table.setRowCount(0)
+        # 渲染前按 time 排序
+        self.all_tasks.sort(key=lambda x: x.get('time', '00:00:00'))
         for task in self.all_tasks:
             if self._task_matches_filter(task):
                 self.add_task_to_table(task)
