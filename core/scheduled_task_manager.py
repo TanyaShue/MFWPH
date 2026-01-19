@@ -236,6 +236,8 @@ class ScheduledTaskManager(QObject):
             schedule_type = task_info.get('schedule_type', '每日执行')
             target_time = time.fromisoformat(time_str)
             now = datetime.now()
+            # 增加一个10秒的缓冲区，解决定时器精度导致的重复运行
+            now_with_buffer = now + timedelta(seconds=10)
 
             self.logger.debug(
                 f"开始为任务 {task_info['id']} 计算下次时间。当前时间: {now.strftime('%Y-%m-%d %H:%M:%S %A')}, 目标时间: {target_time}, 类型: {schedule_type}")
@@ -243,7 +245,7 @@ class ScheduledTaskManager(QObject):
             if schedule_type in ['每日执行', '单次执行']:
                 target_datetime = now.replace(hour=target_time.hour, minute=target_time.minute,
                                               second=target_time.second, microsecond=0)
-                if target_datetime <= now:
+                if target_datetime <= now_with_buffer:
                     target_datetime += timedelta(days=1)
                 return target_datetime
 
@@ -260,7 +262,7 @@ class ScheduledTaskManager(QObject):
                     next_day_candidate = now + timedelta(days=i)
                     if next_day_candidate.weekday() in target_weekdays:
                         target_datetime = datetime.combine(next_day_candidate.date(), target_time)
-                        if target_datetime > now:
+                        if target_datetime > now_with_buffer:
                             self.logger.debug(
                                 f"找到下一个匹配时间点: {target_datetime.strftime('%Y-%m-%d %H:%M:%S %A')}")
                             return target_datetime
