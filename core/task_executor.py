@@ -41,6 +41,8 @@ from core.python_runtime_manager import python_runtime_manager
 from core.device_state_machine import SimpleStateManager, DeviceState
 from core.device_status_manager import device_status_manager
 
+import weakref
+import gc
 
 @dataclass
 class Task:
@@ -175,6 +177,15 @@ class TaskExecutor(QObject):
         """停止所有活动并清理资源，用于执行器销毁前"""
         self.logger.info(f"正在为执行器实例 {id(self)} 执行全面清理")
 
+        # 1. 优先停止 MAA 任务
+        try:
+            if self._tasker:
+                await self._run_in_executor(self._tasker.post_stop)
+                self._tasker = None
+        except Exception as e:
+            self.logger.warning(f"停止 MAA tasker 时出错: {e}")
+
+        # 2. 清理 Agent
         try:
             # 强制清理 Agent - 确保即使被取消也能完成基本清理
             await asyncio.wait_for(self._cleanup_agent(force_kill=True), timeout=10.0)
@@ -195,18 +206,24 @@ class TaskExecutor(QObject):
             # 重新抛出取消异常，让调用方知道被取消了
             raise
 
-        try:
-            # 停止MAA任务
-            if self._tasker:
-                await self._run_in_executor(self._tasker.post_stop)
-        except Exception as e:
-            self.logger.warning(f"停止 MAA tasker 时出错: {e}")
+        # 3. 关闭线程池
+        if self._executor:
+            # Python 3.9+ 建议使用 cancel_futures=True 强制结束等待中的任务
+            try:
+                self._executor.shutdown(wait=False, cancel_futures=True)
+            except TypeError: # 兼容 3.9 以下版本
+                self._executor.shutdown(wait=False)
+            self._executor = None
 
-        self._executor.shutdown(wait=False)
-
-        # 断开控制器
+        # 4. 断开控制器
         self._controller = None
+        self._resource = None
+        self._notification_handler = None
         self.device_manager.set_state(DeviceState.DISCONNECTED)
+
+        # 5. 强制一次 GC 回收
+        gc.collect()
+
         self.logger.info("执行器资源已完全清理")
 
     # -------------------------------------------------------------------------
@@ -322,12 +339,18 @@ class TaskExecutor(QObject):
         class Handler(ContextEventSink):
             def __init__(self, executor):
                 super().__init__()
-                self.executor = executor
+                # 使用弱引用，避免循环引用阻止垃圾回收
+                self.executor_ref = weakref.ref(executor)
                 # 预编译正则：匹配 [info]消息内容，忽略大小写
                 self._log_pattern = re.compile(r"^\[(info|debug|warning|error|critical)\](.*)", re.IGNORECASE)
 
+            @property
+            def executor(self):
+                return self.executor_ref()
+
             def _process_log_protocol(self, focus_data, key_map, noti_type):
-                if not focus_data or not isinstance(focus_data, dict):
+                exec_obj = self.executor
+                if not exec_obj or not focus_data or not isinstance(focus_data, dict):
                     return False
 
                 protocol_key = key_map.get(noti_type)
@@ -342,10 +365,10 @@ class TaskExecutor(QObject):
                     if match:
                         level_str = match.group(1).lower()
                         content = match.group(2)
-                        log_func = getattr(self.executor.logger, level_str, self.executor.logger.info)
+                        log_func = getattr(exec_obj.logger, level_str, exec_obj.logger.info)
                         log_func(content)
                     else:
-                        self.executor.logger.info(msg)
+                        exec_obj.logger.info(msg)
 
                 return True
 
@@ -361,7 +384,8 @@ class TaskExecutor(QObject):
                     return
 
             def on_node_action(self, context, noti_type: NotificationType, detail: ContextEventSink.NodeActionDetail):
-                if not detail or not hasattr(detail, "focus") or not detail.focus:
+                exec_obj = self.executor
+                if not exec_obj or not detail or not hasattr(detail, "focus") or not detail.focus:
                     return
                 focus = detail.focus
 
@@ -375,9 +399,9 @@ class TaskExecutor(QObject):
                     return
 
                 old_protocol_map = {
-                    NotificationType.Succeeded: ("succeeded", self.executor.logger.info),
-                    NotificationType.Failed: ("failed", self.executor.logger.error),
-                    NotificationType.Starting: ("start", self.executor.logger.info),
+                    NotificationType.Succeeded: ("succeeded", exec_obj.logger.info),
+                    NotificationType.Failed: ("failed", exec_obj.logger.error),
+                    NotificationType.Starting: ("start", exec_obj.logger.info),
                 }
 
                 if noti_type in old_protocol_map:
@@ -387,7 +411,7 @@ class TaskExecutor(QObject):
                     if isinstance(level_config, dict):
                         log_level_str = level_config.get(key)
                         if log_level_str:
-                            log_func = getattr(self.executor.logger, log_level_str, default_log_func)
+                            log_func = getattr(exec_obj.logger, log_level_str, default_log_func)
 
                     if key in focus:
                         values = focus[key]
@@ -816,3 +840,4 @@ class TaskExecutor(QObject):
                 await self._run_in_executor(self._agent.disconnect)
             except Exception:
                 pass
+            self._agent = None
