@@ -76,13 +76,21 @@ class TaskerManager(QObject):
                     self.logger.info(f"设备 {device_name} 从队列中获取新任务，准备执行...")
 
                     # 每次都创建一个新的执行器实例
-                    executor = TaskExecutor(device_config, parent=self)
+                    # 移除 parent=self。避免 executor 被 Manager 强引用。
+                    executor = TaskExecutor(device_config, parent=None)
 
                     # 连接信号，处理任务状态变化
                     executor.task_state_changed.connect(self._on_task_state_changed)
 
-                    # 执行完整的任务生命周期
-                    await executor.run_task_lifecycle(task_data)
+                    try:
+                        # 执行完整的任务生命周期
+                        await executor.run_task_lifecycle(task_data)
+                    finally:
+                        # 显式断开信号并销毁对象
+                        executor.task_state_changed.disconnect(self._on_task_state_changed)
+                        executor.deleteLater()
+                        executor = None
+                        self.logger.debug(f"设备 {device_name} 的执行器已标记为待销毁 (deleteLater)")
 
                     queue.task_done()
                     self.logger.info(f"设备 {device_name} 的一批任务已处理完毕。")
@@ -283,6 +291,7 @@ class TaskerManager(QObject):
         self.logger.info(f"为设备 {device_config.device_name} 一键启动所有已启用资源任务")
         enabled_resources = [r for r in device_config.resources if r.enable]
 
+        """ 创建线程运行get_all_runtime_configs会产生无法回收的Dummy线程，且开销更大
         def get_all_runtime_configs():
             return [
                 config for r in enabled_resources
@@ -291,6 +300,11 @@ class TaskerManager(QObject):
             ]
 
         runtime_configs = await asyncio.to_thread(get_all_runtime_configs)
+        """
+        runtime_configs = [
+            config for r in enabled_resources
+            if (config := global_config.get_runtime_configs_for_resource(r.resource_name, device_config.device_name))
+        ]
         self.logger.info(f"当前任务的配置为:{runtime_configs}")
 
         if not runtime_configs:
